@@ -219,6 +219,8 @@ async fn run_inference(
     let device = Device::Cpu;
 
     let mut client_guard = state.client.lock().await;
+    let mut failed_peers: std::collections::HashSet<libp2p::PeerId> =
+        std::collections::HashSet::new();
 
     loop {
         let (shape, data) = token_ids_to_bytes(&current_ids);
@@ -238,6 +240,7 @@ async fn run_inference(
             seq_pos as u32,
             request,
             Some(&state.our_peer_id),
+            &mut failed_peers,
         )
         .await
         {

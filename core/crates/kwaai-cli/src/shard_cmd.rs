@@ -931,8 +931,10 @@ pub async fn cmd_shard_run(args: ShardRunArgs) -> Result<()> {
     let mut generated_ids: Vec<u32> = Vec::new();
     let mut seq_pos: usize = 0;
     let mut current_ids = token_ids.clone();
-    let is_prefill_first = true;
-    let _ = is_prefill_first; // used below
+    // Track peers that fail with protocol errors (no `shard serve` running)
+    // so we skip them on subsequent tokens instead of retrying every time.
+    let mut failed_peers: std::collections::HashSet<PeerId> =
+        std::collections::HashSet::new();
 
     print!("  Assistant: ");
     use std::io::Write as _;
@@ -958,6 +960,7 @@ pub async fn cmd_shard_run(args: ShardRunArgs) -> Result<()> {
             seq_pos as u32,
             request,
             Some(&our_peer_id),
+            &mut failed_peers,
         )
         .await?;
 
@@ -1508,6 +1511,7 @@ pub async fn forward_through_chain(
     seq_pos: u32,
     first_request: InferenceRequest,
     our_peer_id: Option<&PeerId>,
+    failed_peers: &mut std::collections::HashSet<PeerId>,
 ) -> Result<crate::block_rpc::InferenceResponse> {
     use crate::block_rpc::InferenceResponse;
 
@@ -1521,15 +1525,17 @@ pub async fn forward_through_chain(
     let mut pos = 0;
 
     while pos < total_blocks {
-        // All nodes whose range covers `pos`, widest first
+        // All nodes whose range covers `pos`, widest first.
+        // Skip peers that already failed with protocol errors in this session.
         let mut candidates: Vec<&BlockServerEntry> = chain
             .iter()
             .filter(|e| e.start_block <= pos && e.end_block > pos)
+            .filter(|e| !failed_peers.contains(&e.peer_id))
             .collect();
         candidates.sort_by(|a, b| b.end_block.cmp(&a.end_block));
 
         if candidates.is_empty() {
-            anyhow::bail!("No server covers block {} — chain has a gap", pos);
+            anyhow::bail!("No server covers block {} — chain has a gap (all candidates failed or blacklisted)", pos);
         }
 
         let mut succeeded = false;
@@ -1564,16 +1570,34 @@ pub async fn forward_through_chain(
                     break;
                 }
                 Err(e) => {
-                    print_warning(&format!(
-                        "Peer {} ({}) failed: {e:#}",
-                        candidate
-                            .peer_id
-                            .to_base58()
-                            .chars()
-                            .take(12)
-                            .collect::<String>(),
-                        candidate.public_name,
-                    ));
+                    let err_str = format!("{e:#}");
+                    // Protocol negotiation failures mean the peer has no inference
+                    // handler registered (running `kwaainet start` but not
+                    // `kwaainet shard serve`).  Blacklist for this session.
+                    if err_str.contains("protocols not supported") {
+                        failed_peers.insert(candidate.peer_id.clone());
+                        print_warning(&format!(
+                            "Peer {} ({}) has no inference handler — skipping for this session",
+                            candidate
+                                .peer_id
+                                .to_base58()
+                                .chars()
+                                .take(12)
+                                .collect::<String>(),
+                            candidate.public_name,
+                        ));
+                    } else {
+                        print_warning(&format!(
+                            "Peer {} ({}) failed: {e:#}",
+                            candidate
+                                .peer_id
+                                .to_base58()
+                                .chars()
+                                .take(12)
+                                .collect::<String>(),
+                            candidate.public_name,
+                        ));
+                    }
                 }
             }
         }
