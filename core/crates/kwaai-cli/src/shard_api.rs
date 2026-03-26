@@ -222,6 +222,17 @@ async fn run_inference(
     let mut failed_peers: std::collections::HashSet<libp2p::PeerId> =
         std::collections::HashSet::new();
 
+    // Pin peer path for this request so KV-caches stay coherent.
+    let mut pinned_path =
+        match crate::shard_cmd::build_pinned_path(&state.chain, state.total_blocks, &failed_peers)
+        {
+            Ok(p) => p,
+            Err(e) => {
+                let _ = tx.send(format!("[chain error: {e}]")).await;
+                return;
+            }
+        };
+
     loop {
         let (shape, data) = token_ids_to_bytes(&current_ids);
         let request = InferenceRequest {
@@ -234,7 +245,7 @@ async fn run_inference(
 
         let logits_bytes = match forward_through_chain(
             &mut client_guard,
-            &state.chain,
+            &pinned_path,
             state.total_blocks,
             session_id,
             seq_pos as u32,
@@ -246,8 +257,48 @@ async fn run_inference(
         {
             Ok(r) => r,
             Err(e) => {
-                let _ = tx.send(format!("[inference error: {e}]")).await;
-                break;
+                // Try rebuilding path excluding failed peer
+                match crate::shard_cmd::build_pinned_path(
+                    &state.chain,
+                    state.total_blocks,
+                    &failed_peers,
+                ) {
+                    Ok(new_path) => {
+                        pinned_path = new_path;
+                        // Retry once with rebuilt path
+                        let (s2, d2) = token_ids_to_bytes(&current_ids);
+                        let retry = InferenceRequest {
+                            session_id,
+                            seq_pos: seq_pos as u32,
+                            payload_type: PayloadType::TokenIds,
+                            shape: s2,
+                            data: d2,
+                        };
+                        match forward_through_chain(
+                            &mut client_guard,
+                            &pinned_path,
+                            state.total_blocks,
+                            session_id,
+                            seq_pos as u32,
+                            retry,
+                            Some(&state.our_peer_id),
+                            &mut failed_peers,
+                        )
+                        .await
+                        {
+                            Ok(r) => r,
+                            Err(e2) => {
+                                let _ =
+                                    tx.send(format!("[inference error after retry: {e2}]")).await;
+                                break;
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        let _ = tx.send(format!("[inference error: {e}]")).await;
+                        break;
+                    }
+                }
             }
         };
 

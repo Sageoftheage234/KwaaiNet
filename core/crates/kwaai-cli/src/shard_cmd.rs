@@ -931,10 +931,24 @@ pub async fn cmd_shard_run(args: ShardRunArgs) -> Result<()> {
     let mut generated_ids: Vec<u32> = Vec::new();
     let mut seq_pos: usize = 0;
     let mut current_ids = token_ids.clone();
-    // Track peers that fail with protocol errors (no `shard serve` running)
-    // so we skip them on subsequent tokens instead of retrying every time.
     let mut failed_peers: std::collections::HashSet<PeerId> =
         std::collections::HashSet::new();
+
+    // Pin the peer path for this session — same peers handle the same blocks
+    // on every token so their KV-caches stay coherent.
+    let mut pinned_path = build_pinned_path(&chain, total_blocks, &failed_peers)?;
+
+    println!("  Pinned path:");
+    for (i, entry) in pinned_path.iter().enumerate() {
+        println!(
+            "    [{:>2}] blocks {:>3}–{:>3}  {}",
+            i + 1,
+            entry.start_block,
+            entry.end_block - 1,
+            entry.public_name,
+        );
+    }
+    println!();
 
     print!("  Assistant: ");
     use std::io::Write as _;
@@ -951,10 +965,10 @@ pub async fn cmd_shard_run(args: ShardRunArgs) -> Result<()> {
             data,
         };
 
-        // Forward through chain
-        let logits_bytes = forward_through_chain(
+        // Forward through the pinned path
+        let logits_bytes = match forward_through_chain(
             &mut client,
-            &chain,
+            &pinned_path,
             total_blocks,
             session_id,
             seq_pos as u32,
@@ -962,7 +976,37 @@ pub async fn cmd_shard_run(args: ShardRunArgs) -> Result<()> {
             Some(&our_peer_id),
             &mut failed_peers,
         )
-        .await?;
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                // Peer failed — rebuild path excluding it (KV-cache lost for those blocks)
+                print_warning(&format!(
+                    "{e:#} — rebuilding path (KV-cache lost, output may degrade)"
+                ));
+                pinned_path = build_pinned_path(&chain, total_blocks, &failed_peers)?;
+                // Retry this token with the new path
+                let (shape2, data2) = token_ids_to_bytes(&current_ids);
+                let retry_req = InferenceRequest {
+                    session_id,
+                    seq_pos: seq_pos as u32,
+                    payload_type: PayloadType::TokenIds,
+                    shape: shape2,
+                    data: data2,
+                };
+                forward_through_chain(
+                    &mut client,
+                    &pinned_path,
+                    total_blocks,
+                    session_id,
+                    seq_pos as u32,
+                    retry_req,
+                    Some(&our_peer_id),
+                    &mut failed_peers,
+                )
+                .await?
+            }
+        };
 
         // logits_bytes.data is f16 bytes of shape [1, 1, vocab_size] or [1, seq_len, vocab_size]
         // We need only the last position
@@ -1323,8 +1367,12 @@ async fn pick_gap_blocks(
 /// synthesise a stable key from `public_name:start_block` so they still count
 /// for gap detection even though they cannot be routed to directly.
 fn decode_server_info_regular(bytes: &[u8]) -> Option<(String, BlockServerEntry)> {
-    let (start_block, end_block, public_name, peer_id_b58, version) =
+    let (state, start_block, end_block, public_name, peer_id_b58, version) =
         decode_server_info_ext(bytes)?;
+    // Only include ONLINE nodes (state=2); skip JOINING (0) and OFFLINE (-1).
+    if state != 2 {
+        return None;
+    }
     if !version_meets_minimum(&version) {
         return None;
     }
@@ -1403,9 +1451,12 @@ fn decode_server_info_dictionary(bytes: &[u8], out: &mut HashMap<String, BlockSe
             Err(_) => continue,
         };
 
-        if let Some((start_block, end_block, public_name, _, version)) =
+        if let Some((state, start_block, end_block, public_name, _, version)) =
             decode_server_info_ext(value_bytes)
         {
+            if state != 2 {
+                continue;
+            }
             if !version_meets_minimum(&version) {
                 continue;
             }
@@ -1457,8 +1508,8 @@ pub fn snap_to_valid_blocks(n: usize) -> usize {
 }
 
 /// Core decoder: `Ext(64, msgpack([state, throughput, {start_block, end_block, …}]))`
-/// Returns `(start_block, end_block, public_name, peer_id_b58, version)`.
-fn decode_server_info_ext(bytes: &[u8]) -> Option<(usize, usize, String, String, String)> {
+/// Returns `(state, start_block, end_block, public_name, peer_id_b58, version)`.
+fn decode_server_info_ext(bytes: &[u8]) -> Option<(i32, usize, usize, String, String, String)> {
     let val = rmpv::decode::read_value(&mut &bytes[..]).ok()?;
     let inner_bytes = match &val {
         rmpv::Value::Ext(64, b) => b.as_slice(),
@@ -1484,13 +1535,52 @@ fn decode_server_info_ext(bytes: &[u8]) -> Option<(usize, usize, String, String,
             .to_string()
     };
 
+    let state = arr[0].as_i64().unwrap_or(0) as i32;
     let start_block = get_i("start_block")? as usize;
     let end_block = get_i("end_block")? as usize;
     let public_name = get_s("public_name");
     let peer_id_b58 = get_s("peer_id");
     let version = get_s("version");
 
-    Some((start_block, end_block, public_name, peer_id_b58, version))
+    Some((state, start_block, end_block, public_name, peer_id_b58, version))
+}
+
+// ── Pinned path ──────────────────────────────────────────────────────────────
+
+/// Build a deterministic, non-overlapping peer path for a session.
+///
+/// Greedy walk from block 0: at each position, pick the widest-coverage
+/// candidate (largest `end_block`) not in `failed_peers`, then advance to
+/// that candidate's `end_block`.  Returns an ordered list of entries that
+/// together cover `[0, total_blocks)`.
+pub fn build_pinned_path(
+    chain: &[BlockServerEntry],
+    total_blocks: usize,
+    failed_peers: &std::collections::HashSet<PeerId>,
+) -> Result<Vec<BlockServerEntry>> {
+    let mut path = Vec::new();
+    let mut pos = 0;
+    while pos < total_blocks {
+        let best = chain
+            .iter()
+            .filter(|e| e.start_block <= pos && e.end_block > pos)
+            .filter(|e| !failed_peers.contains(&e.peer_id))
+            .max_by_key(|e| e.end_block);
+        match best {
+            Some(entry) => {
+                pos = entry.end_block;
+                path.push(entry.clone());
+            }
+            None => {
+                anyhow::bail!(
+                    "No server covers block {} — chain has a gap \
+                     (or all candidates blacklisted)",
+                    pos
+                );
+            }
+        }
+    }
+    Ok(path)
 }
 
 // ── Forward through chain ─────────────────────────────────────────────────────
