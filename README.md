@@ -7,7 +7,7 @@ KwaaiNet is a decentralized AI node architecture for **Layer 8** — the trust a
 Each KwaaiNet node combines:
 
 - A **decentralized trust graph** (cryptographic identity, verifiable credentials, local trust scores).
-- **Shared, sharded LLM compute** over heterogeneous CPUs/GPUs using Petals-style distributed inference.
+- **Shared, sharded LLM compute** over heterogeneous CPUs/GPUs using Petals-style distributed inference with Metal (Apple Silicon) and CUDA acceleration.
 - **Secure multi-tenant knowledge storage** via Virtual Private Knowledge (VPK) with encrypted vector search.
 - **Intent-based, peer-to-peer networking** that routes based on "what I need" (model, trust tier, latency), not just IP addresses.
 
@@ -45,6 +45,9 @@ Today, a KwaaiNet node can:
 - Compute a local, time-decayed trust score for peers, grouped into tiers (`Unknown`, `Known`, `Verified`, `Trusted`).
 - Join a libp2p + Kademlia DHT swarm compatible with Petals/Hivemind for node discovery and health checks.
 - Serve and consume **block-sharded LLM inference** (CandelEngine): SafeTensors loading, RoPE, GQA, SwiGLU, per-session KV-cache, and temperature/top-k/top-p sampling, exposed through an OpenAI-compatible HTTP API.
+- Run **distributed inference across multiple machines** with session-pinned peer paths that keep KV-caches coherent, automatic gap-filling, and graceful failover when peers go offline.
+- Download models selectively with `kwaainet shard download --start-block N --blocks M` — fetch only the weight files needed for your block range (10x reduction for large models).
+- **GPU acceleration** on Apple Silicon (Metal) and NVIDIA (CUDA) — weights load directly on the GPU with no CPU staging.
 - Auto-detect local models and network state to smart-select what to serve, and appear on the public map when properly configured at [map.kwaai.ai](https://map.kwaai.ai).
 
 See the [latest GitHub Release](https://github.com/Kwaai-AI-Lab/KwaaiNet/releases/latest) for the most recent feature list and release notes.
@@ -97,6 +100,16 @@ nix develop github:Kwaai-AI-Lab/KwaaiNet
 ```
 
 See **[nix/README.md](nix/README.md)** for the full Nix guide.
+
+**RISC-V (cross-compile via Nix):**
+
+```bash
+nix build github:Kwaai-AI-Lab/KwaaiNet#kwaainet-riscv64-linux-gnu
+file result-kwaainet-riscv64-linux-gnu/bin/kwaainet
+# → ELF 64-bit LSB pie executable, UCB RISC-V
+```
+
+Copy the binary to your RISC-V board and run. See **[nix/README.md](nix/README.md)** for all cross-compilation targets (aarch64-musl, x86_64-musl, riscv64-gnu).
 
 **Build from source:**
 
@@ -151,6 +164,34 @@ This sends a chat-completion request to your local node, which may route it thro
 
 For a full walkthrough including platform specifics, model discovery, and Python/JS examples see **[docs/getting-started-node.md](docs/getting-started-node.md)** and **[docs/api-quickstart.md](docs/api-quickstart.md)**.
 
+### 4. Distributed inference across the network
+
+Download the model (or just the blocks you need):
+
+```bash
+kwaainet shard download
+```
+
+Run inference across the live KwaaiNet peer network:
+
+```bash
+kwaainet shard run "What is the capital of France?"
+```
+
+The coordinator discovers block servers via DHT, pins a stable peer path for the session, and forwards activations through the chain:
+
+```
+Pinned path:
+  [ 1] blocks   0– 23  john-linux-draak-x86_64/v0.3.27
+  [ 2] blocks  24– 31  john-linux-draca-x86_64/v0.3.27
+
+  Assistant: The capital of France is Paris.
+```
+
+Add `--stats` to see per-token timing breakdown (prefill, decode, throughput). For local-only inference without networking: `kwaainet shard run "prompt" --local`.
+
+See **[docs/sharded-llm-processing.md](docs/sharded-llm-processing.md)** for the full architecture of block-sharded inference, KV-cache management, and data flow diagrams.
+
 ---
 
 ## Roadmap: destination vs current implementation
@@ -160,7 +201,7 @@ KwaaiNet's roadmap is defined as the **gap** between the aspirational Layer 8 ar
 | Area    | Aspirational (whitepapers)                                                                 | Current implementation (Rust node)                                       |
 |---------|--------------------------------------------------------------------------------------------|---------------------------------------------------------------------------|
 | Trust   | 5-layer trust pipeline including Testable Credentials (PVP-1) and EigenTrust propagation. | Identity + VC wallet + local time-decayed trust scores shipped; ToIP work in progress. |
-| Compute | Sharded inference, decentralized training, safe tool-calling with trust-gated policies.   | Petals-style block-sharded inference and OpenAI-compatible API shipped. |
+| Compute | Sharded inference, decentralized training, safe tool-calling with trust-gated policies.   | Multi-machine block-sharded inference with session-pinned paths, Metal/CUDA GPU acceleration, selective model download, OpenAI-compatible API, and per-hop timing instrumentation shipped. |
 | Storage | Fully distributed personal AI memory via cross-node VPK sharding and DHT-backed resolution. | VPK process, roles (bob/eve/both), encrypted vector search, and DHT advertisement shipped. |
 | Network | Intent-casting as a Layer 8 business protocol with economic settlement and neutrality guarantees. | libp2p + Kademlia DHT, trust-gated routing by model/trust/latency shipped. |
 
@@ -197,6 +238,7 @@ Learn more at [kwaai.ai](https://www.kwaai.ai) and the [Kwaai-AI-Lab GitHub orga
 | [docs/api-quickstart.md](docs/api-quickstart.md) | Call the OpenAI-compatible API from curl, Python, and JS |
 | [docs/roadmap.md](docs/roadmap.md) | Layer 8 destination vs current implementation vs gaps |
 | [docs/reputation.md](docs/reputation.md) | Local trust scores, EigenTrust propagation, endorsement accountability |
+| [docs/sharded-llm-processing.md](docs/sharded-llm-processing.md) | Block-sharded inference pipeline, KV-cache, and activation data flows |
 | [docs/network-and-intent-routing.md](docs/network-and-intent-routing.md) | P2P fabric, trust-gated routing, and the full intent lifecycle |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Node architecture, lobes, and Layer 8 stack |
 | [docs/WHITEPAPER.md](docs/WHITEPAPER.md) | Layer 8: The Decentralized AI Trust Layer (whitepaper) |
