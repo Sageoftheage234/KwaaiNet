@@ -237,14 +237,25 @@ fn main() {
     }
 
     // 4. Build the daemon
+    //
+    // On Linux, set CGO_ENABLED=0 so the Go binary is statically linked and
+    // runs on any distro regardless of glibc version (e.g. Rocky Linux 8 ships
+    // glibc 2.28 but a default Go build may link against newer symbols).
     println!("cargo:warning=Building p2pd daemon from source...");
 
-    let build_status = Command::new("go")
+    let mut go_cmd = Command::new("go");
+    go_cmd
         .args(["build", "-o"])
         .arg(&daemon_binary)
         .arg("./p2pd")
-        .current_dir(&repo_dir)
-        .status();
+        .current_dir(&repo_dir);
+
+    if cfg!(target_os = "linux") {
+        go_cmd.env("CGO_ENABLED", "0");
+        println!("cargo:warning=CGO_ENABLED=0 (static binary for Linux)");
+    }
+
+    let build_status = go_cmd.status();
 
     match build_status {
         Ok(status) if status.success() => {
