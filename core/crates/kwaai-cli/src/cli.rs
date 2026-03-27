@@ -351,13 +351,21 @@ pub struct GenerateArgs {
 
 #[derive(Args)]
 pub struct BenchmarkArgs {
-    /// Model to benchmark (Ollama: `llama3.1:8b`, HF: `owner/model`).
+    /// Model to benchmark (HF: `owner/model`).
     /// Defaults to the model in ~/.kwaainet/config.yaml.
     pub model: Option<String>,
 
     /// Number of decode steps to time (after a warm-up pass).
     #[arg(long, default_value = "20")]
     pub steps: usize,
+
+    /// Force CPU-only inference (skip Metal / CUDA).
+    #[arg(long)]
+    pub no_gpu: bool,
+
+    /// Path to model directory (skip HF cache resolution).
+    #[arg(long, value_name = "PATH")]
+    pub model_path: Option<std::path::PathBuf>,
 }
 
 // ---------------------------------------------------------------------------

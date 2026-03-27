@@ -24,7 +24,7 @@ mod uninstall;
 mod updater;
 mod vpk;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use clap::Parser;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -927,87 +927,173 @@ async fn main() -> Result<()> {
         // benchmark
         // -------------------------------------------------------------------
         Command::Benchmark(args) => {
+            use kwaai_inference::tokenizer::Tokenizer as _;
+            use kwaai_inference::TransformerShard;
+
             let cfg = KwaaiNetConfig::load_or_create()?;
             let model = args.model.as_deref().unwrap_or(&cfg.model).to_string();
 
+            let device_type = if args.no_gpu {
+                kwaai_inference::DeviceType::Cpu
+            } else {
+                kwaai_inference::DeviceType::detect_best()
+            };
+
             print_box_header("⚡ KwaaiNet Benchmark");
             println!("  Model:  {}", model);
+            println!("  Device: {:?}", device_type);
             println!("  Steps:  {} (+ 5 warm-up)", args.steps);
             println!();
 
-            let system_ram = {
-                use sysinfo::System;
-                let mut sys = System::new();
-                sys.refresh_memory();
-                sys.total_memory()
-            };
-            let engine_config = EngineConfig {
-                max_memory: ((system_ram as f64 * 0.85) as usize).max(4 * 1024 * 1024 * 1024),
-                ..EngineConfig::default()
-            };
-
-            let mut engine = match InferenceEngine::new(engine_config) {
-                Ok(e) => e,
-                Err(e) => {
-                    print_error(&format!("Engine init failed: {e}"));
-                    return Ok(());
-                }
-            };
-
-            let is_hf = model.contains('/') && !model.starts_with("hf.co/");
-            let handle = if is_hf {
-                let snapshot = match hf::resolve_snapshot(&model) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        print_error(&format!("{e}"));
-                        return Ok(());
-                    }
-                };
-                println!("  Loading SafeTensors shards…");
-                match engine.load_model(&snapshot, ModelFormat::SafeTensors) {
-                    Ok(h) => h,
-                    Err(e) => {
-                        print_error(&format!("{e}"));
-                        return Ok(());
-                    }
-                }
+            // Resolve model directory
+            let model_dir = if let Some(p) = &args.model_path {
+                p.clone()
             } else {
-                let blob = match ollama::resolve_model_blob(&model) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        print_error(&format!("{e}"));
-                        return Ok(());
-                    }
-                };
-                println!("  Loading GGUF blob…");
-                match engine.load_model(&blob, ModelFormat::Gguf) {
-                    Ok(h) => h,
-                    Err(e) => {
-                        print_error(&format!("{e}"));
-                        return Ok(());
-                    }
-                }
+                hf::resolve_snapshot(&model)?
             };
+            let config_path = model_dir.join("config.json");
+            let total_blocks = cfg.model_total_blocks() as usize;
 
-            let info = engine.model_info(&handle).ok();
-            let hidden_size = info.as_ref().map(|i| i.hidden_dim).unwrap_or(4096);
-            println!("  Model loaded.  (hidden_dim={})", hidden_size);
+            // Collect safetensors shards
+            let mut paths: Vec<std::path::PathBuf> = std::fs::read_dir(&model_dir)
+                .context("read model dir")?
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("safetensors"))
+                .collect();
+            paths.sort();
+            if paths.is_empty() {
+                print_error(&format!(
+                    "No .safetensors files found in {}",
+                    model_dir.display()
+                ));
+                return Ok(());
+            }
+
+            let device = device_type
+                .to_candle_device()
+                .context("Failed to create compute device")?;
+
+            // Load TransformerShard (same path as shard run --local)
+            println!("  Loading TransformerShard ({} blocks)…", total_blocks);
+            let load_start = std::time::Instant::now();
+            let path_refs: Vec<&std::path::Path> = paths.iter().map(|p| p.as_path()).collect();
+            let shard = std::sync::Arc::new(
+                TransformerShard::load(&path_refs, &config_path, &device, 0, total_blocks)
+                    .context("Failed to load model")?,
+            );
+            let load_secs = load_start.elapsed().as_secs_f64();
+            print_success(&format!(
+                "Model loaded ({} blocks, {:.1}s)",
+                total_blocks, load_secs
+            ));
             println!();
-            println!("  Warming up…");
 
-            match engine.benchmark(&handle, args.steps) {
-                Ok(tps) => {
-                    println!();
-                    print_success(&format!("Throughput: {:.1} tok/s", tps));
-                    println!("  Steps:    {}", args.steps);
-                    println!("  Device:   {:?}", engine.device());
-                    if let Err(e) = throughput::save(&model, tps, hidden_size) {
-                        eprintln!("  Warning: could not save throughput cache: {e}");
-                    } else {
-                        println!("  Cached ✓  (~/.kwaainet/throughput_cache.json)");
+            let hidden_size = shard.cfg.hidden_dim;
+
+            // Tokenize a fixed benchmark prompt
+            let prompt = "<|start_header_id|>user<|end_header_id|>\n\nThe capital of France is<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n";
+            let mut token_ids: Vec<u32> = {
+                use kwaai_inference::tokenizer::Tokenizer as _;
+                shard.tokenizer.encode(prompt).context("encode prompt")?
+            };
+            if let Some(bos) = shard.tokenizer.bos_token_id() {
+                token_ids.insert(0, bos);
+            }
+
+            // ── Warm-up (5 steps, separate session) ──────────────────────────
+            println!("  Warming up (5 steps)…");
+            {
+                let warmup_shard = shard.clone();
+                let warmup_ids = token_ids.clone();
+                tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+                    let session = 0xDEAD_BEEF_u64;
+                    let mut ids = warmup_ids;
+                    let mut sp = 0usize;
+                    for _ in 0..5 {
+                        let logits = warmup_shard
+                            .forward_full(session, &ids, sp)
+                            .map_err(|e| anyhow::anyhow!("{e}"))?;
+                        let logits_cpu = logits.to_device(&candle_core::Device::Cpu)?;
+                        let flat = logits_cpu.flatten_all()?;
+                        let next = shard_cmd::sample_token(&flat, 1.0, 0, 1.0)? as u32;
+                        sp += ids.len();
+                        ids = vec![next];
                     }
-                }
-                Err(e) => print_error(&format!("Benchmark failed: {e}")),
+                    Ok(())
+                })
+                .await
+                .map_err(|e| anyhow::anyhow!("warm-up join: {e}"))??;
+            }
+
+            // ── Prefill measurement ──────────────────────────────────────────
+            let n_prompt = token_ids.len();
+            let prefill_shard = shard.clone();
+            let prefill_ids = token_ids.clone();
+            let (prefill_ms, first_logits) = tokio::task::spawn_blocking(
+                move || -> anyhow::Result<(f64, candle_core::Tensor)> {
+                    let session = 0xBE_0001_u64;
+                    let start = std::time::Instant::now();
+                    let logits = prefill_shard
+                        .forward_full(session, &prefill_ids, 0)
+                        .map_err(|e| anyhow::anyhow!("{e}"))?;
+                    let ms = start.elapsed().as_secs_f64() * 1000.0;
+                    Ok((ms, logits))
+                },
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("prefill join: {e}"))??;
+
+            // Sample first token from prefill
+            let first_logits_cpu = first_logits.to_device(&candle_core::Device::Cpu)?;
+            let flat = first_logits_cpu.flatten_all()?;
+            let next_id = shard_cmd::sample_token(&flat, 1.0, 0, 1.0)? as u32;
+
+            // ── Decode measurement ───────────────────────────────────────────
+            let n_steps = args.steps;
+            println!("  Measuring ({n_steps} decode steps)…");
+            let decode_shard = shard.clone();
+            let decode_ms =
+                tokio::task::spawn_blocking(move || -> anyhow::Result<f64> {
+                    let session = 0xBE_0001_u64;
+                    let mut sp = n_prompt;
+                    let mut id = next_id;
+                    let start = std::time::Instant::now();
+                    for _ in 0..n_steps {
+                        let logits = decode_shard
+                            .forward_full(session, &[id], sp)
+                            .map_err(|e| anyhow::anyhow!("{e}"))?;
+                        let logits_cpu = logits.to_device(&candle_core::Device::Cpu)?;
+                        let flat = logits_cpu.flatten_all()?;
+                        id = shard_cmd::sample_token(&flat, 1.0, 0, 1.0)? as u32;
+                        sp += 1;
+                    }
+                    let ms = start.elapsed().as_secs_f64() * 1000.0;
+                    Ok(ms)
+                })
+                .await
+                .map_err(|e| anyhow::anyhow!("decode join: {e}"))??;
+
+            let prefill_tps = n_prompt as f64 / (prefill_ms / 1000.0);
+            let decode_tps = n_steps as f64 / (decode_ms / 1000.0);
+
+            println!();
+            println!("  ── Results ───────────────────────────────────────────────");
+            println!(
+                "  Prefill:     {:>7.1} tok/s  ({} tokens in {:.0}ms)",
+                prefill_tps, n_prompt, prefill_ms
+            );
+            println!(
+                "  Decode:      {:>7.1} tok/s  ({} tokens in {:.0}ms)",
+                decode_tps, n_steps, decode_ms
+            );
+            println!("  Load time:   {:>7.1}s", load_secs);
+            println!("  Device:      {:?}", device_type);
+
+            if let Err(e) = throughput::save(&model, decode_tps, hidden_size) {
+                eprintln!("  Warning: could not save throughput cache: {e}");
+            } else {
+                println!("  Cached ✓     (~/.kwaainet/throughput_cache.json)");
             }
 
             print_separator();
