@@ -250,6 +250,7 @@ impl ShardBlock {
         let device = x.device();
 
         // ── Self-attention ─────────────────────────────────────────────────────
+        let t0 = Instant::now();
         let residual = x.clone();
         let normed = self
             .input_layernorm
@@ -278,10 +279,15 @@ impl ShardBlock {
             .transpose(1, 2)
             .map_err(InferenceError::from)?;
 
+        let t_qkv = t0.elapsed();
+
         // Apply rotary position embeddings
+        let t1 = Instant::now();
         let (q, k) = rope.apply(&q, &k, seq_pos)?;
+        let t_rope = t1.elapsed();
 
         // Append to KV-cache and update it
+        let t2 = Instant::now();
         let (k, v) = if let Some((ck, cv)) = kv.take() {
             let k = Tensor::cat(&[&ck, &k], 2).map_err(InferenceError::from)?;
             let v = Tensor::cat(&[&cv, &v], 2).map_err(InferenceError::from)?;
@@ -290,10 +296,12 @@ impl ShardBlock {
             (k, v)
         };
         *kv = Some((k.clone(), v.clone()));
+        let t_kv = t2.elapsed();
 
         let kv_seq = k.dim(2).map_err(InferenceError::from)?; // total keys
 
         // GQA: repeat K and V to match query heads
+        let t3 = Instant::now();
         let k_full = repeat_kv(&k, self.cfg.n_rep())?;
         let v_full = repeat_kv(&v, self.cfg.n_rep())?;
 
@@ -333,8 +341,10 @@ impl ShardBlock {
             .forward(&attn_out)
             .map_err(InferenceError::from)?;
         let x = (&residual + &attn_out).map_err(InferenceError::from)?;
+        let t_attn = t3.elapsed();
 
         // ── SwiGLU MLP ────────────────────────────────────────────────────────
+        let t4 = Instant::now();
         let residual = x.clone();
         let normed = self
             .post_attn_layernorm
@@ -353,8 +363,21 @@ impl ShardBlock {
         let gate = candle_nn::ops::silu(&gate).map_err(InferenceError::from)?;
         let ff = (gate * up).map_err(InferenceError::from)?;
         let ff = self.down_proj.forward(&ff).map_err(InferenceError::from)?;
+        let result = (&residual + &ff).map_err(InferenceError::from)?;
+        let t_mlp = t4.elapsed();
 
-        (&residual + &ff).map_err(InferenceError::from)
+        debug!(
+            seq_len = s,
+            qkv_ms = format!("{:.1}", t_qkv.as_secs_f64() * 1000.0),
+            rope_ms = format!("{:.1}", t_rope.as_secs_f64() * 1000.0),
+            kv_ms = format!("{:.1}", t_kv.as_secs_f64() * 1000.0),
+            attn_ms = format!("{:.1}", t_attn.as_secs_f64() * 1000.0),
+            mlp_ms = format!("{:.1}", t_mlp.as_secs_f64() * 1000.0),
+            total_ms = format!("{:.1}", t0.elapsed().as_secs_f64() * 1000.0),
+            "block forward"
+        );
+
+        Ok(result)
     }
 }
 
@@ -577,6 +600,7 @@ impl TransformerShard {
         seq_pos: usize,
         session_id: u64,
     ) -> InferenceResult<Tensor> {
+        let run_start = Instant::now();
         let mut sessions = self.sessions.lock().unwrap();
         let session = sessions
             .entry(session_id)
@@ -586,6 +610,17 @@ impl TransformerShard {
         for (local_idx, block) in self.blocks.iter().enumerate() {
             x = block.forward(&x, seq_pos, &mut session.kv[local_idx], &self.rope)?;
         }
+
+        let total = run_start.elapsed();
+        if total.as_millis() > 500 {
+            eprintln!(
+                "[PERF] run_blocks: {} blocks in {:.0}ms ({:.0}ms/block)",
+                self.blocks.len(),
+                total.as_secs_f64() * 1000.0,
+                total.as_secs_f64() * 1000.0 / self.blocks.len() as f64
+            );
+        }
+
         Ok(x)
     }
 
@@ -663,15 +698,37 @@ impl TransformerShard {
             )
         })?;
 
+        let t_start = Instant::now();
         let tok = Tensor::new(token_ids, emb.embeddings().device())
             .and_then(|t| t.unsqueeze(0))
             .map_err(InferenceError::from)?;
         let hidden = emb.forward(&tok).map_err(InferenceError::from)?;
+        let t_embed = t_start.elapsed();
+
+        let t_blocks = Instant::now();
         let x = self.run_blocks(hidden, seq_pos, session_id)?;
+        let t_blocks = t_blocks.elapsed();
+
+        let t_head = Instant::now();
         let seq_len = x.dim(1).map_err(InferenceError::from)?;
         let x_last = x.narrow(1, seq_len - 1, 1).map_err(InferenceError::from)?;
         let x_last = norm.forward(&x_last).map_err(InferenceError::from)?;
-        lm_head.forward(&x_last).map_err(InferenceError::from)
+        let logits = lm_head.forward(&x_last).map_err(InferenceError::from)?;
+        let t_head = t_head.elapsed();
+
+        let total = t_start.elapsed();
+        if total.as_millis() > 500 {
+            eprintln!(
+                "[PERF] forward_full: {} tok, embed={:.1}ms blocks={:.0}ms head={:.1}ms total={:.0}ms",
+                token_ids.len(),
+                t_embed.as_secs_f64() * 1000.0,
+                t_blocks.as_secs_f64() * 1000.0,
+                t_head.as_secs_f64() * 1000.0,
+                total.as_secs_f64() * 1000.0,
+            );
+        }
+
+        Ok(logits)
     }
 
     /// **Last node**: receive hidden states, run blocks, apply norm + LM head, return logits.
