@@ -561,6 +561,10 @@ pub struct ShardServeArgs {
     #[arg(long)]
     pub no_gpu: bool,
 
+    /// Force GPU even on Metal (experimental — Metal decode is currently 10x slower than CPU)
+    #[arg(long)]
+    pub use_gpu: bool,
+
     /// Auto-discover which blocks are unserved and load those instead of config start_block.
     /// Uses --blocks (or config.blocks) as the target count.
     /// This is now the default when --start-block is not given; kept as a no-op alias.
