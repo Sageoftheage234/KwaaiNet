@@ -234,7 +234,27 @@ Current distributed inference runs at ~0.17 tok/s (2-hop chain) vs ~3 tok/s loca
 
 ## Benchmark — Realistic Shard Throughput
 
-- [ ] **Rewrite `kwaainet benchmark` to use TransformerShard** — Current benchmark uses `InferenceEngine` → `candle_transformers::Llama::load()`, a different code path from actual sharded inference. Metal reports 0.3 tok/s (vs 2.5 tok/s CPU) because candle_transformers isn't Metal-optimized. Fix: replace with `TransformerShard::load()` + `forward_full()` — the same path as `shard run --local`. Measure prefill tok/s (prompt processing) and decode tok/s (autoregressive generation) separately. Add `--no-gpu` and `--model-path` flags. Update `throughput_cache.json` to store both metrics. Changes to `main.rs` (rewrite Benchmark arm), `cli.rs` (new flags), `throughput.rs` (prefill field). No new deps. See plan: `.claude/plans/glistening-seeking-dijkstra.md`.
+- [x] **Rewrite `kwaainet benchmark` to use TransformerShard** — ✅ Done in v0.3.33. Now uses `TransformerShard::forward_full()` (same path as `shard run --local`). Reports prefill + decode tok/s separately. Defaults to CPU (candle Metal is 650x slower for decode). `--gpu` flag to opt in.
+
+---
+
+## Metal GPU Performance — 650x Decode Slowdown
+
+> Full analysis: [`docs/METAL_PERFORMANCE_ANALYSIS.md`](METAL_PERFORMANCE_ANALYSIS.md)
+
+Metal decode is 130s/token while CPU is 0.2s/token. Prefill is the opposite (Metal 23x faster). Root cause: candle 0.8.4's Metal backend launches 23 separate GPU kernels per transformer block per token — for single-token decode the kernel launch overhead (~100µs each) dwarfs the actual compute (~1.6µs per matmul). PyTorch's Metal backend fuses these into ~3-4 kernels via `scaled_dot_product_attention`. Tiered fix plan:
+
+- [ ] **Tier 0: Diagnostic instrumentation** — Add per-block and per-op timing inside `ShardBlock::forward()` and GPU→CPU transfer timing. Determine whether the 130s is in the forward pass or the `to_device(CPU)` pipeline stall. (1 day)
+
+- [ ] **Tier 1: Eliminate GPU→CPU round-trip** — Do argmax/sampling on GPU instead of transferring [1,1,128000] logits to CPU every token. Only transfer the single u32 token ID back. Could eliminate pipeline stall entirely. (1 day)
+
+- [ ] **Tier 2: Hybrid Metal prefill + CPU decode** — Use Metal for prefill (23x faster), then transfer hidden states to CPU and decode on CPU (4.8 tok/s). Best of both worlds with minimal code change. (1 day)
+
+- [ ] **Tier 3: Fused Metal kernels** — Combine QKV projection (3→1 kernel), RoPE (8→1), attention (6→1), and in-place KV-cache (eliminate `Tensor::cat` allocation+copy). Reduces from ~23 to ~8 kernel launches per block. (1 week)
+
+- [ ] **Tier 4: Upgrade candle or custom MPS kernels** — Check if candle 0.9+ has Metal decode fixes. Write custom Metal shading language kernels for the attention hot path. (1-2 weeks)
+
+- [ ] **Tier 5: MLX backend** — Apple's MLX framework is purpose-built for Apple Silicon (unified memory, lazy eval, automatic fusion). Reports ~30 tok/s Llama 8B on M2 Pro. Add as alternative behind `DeviceType` enum. (2-4 weeks)
 
 ---
 
