@@ -296,7 +296,9 @@ impl MlxTransformerShard {
             y.eval().map_err(|e| load_err(e))?;
             eprintln!("[DIAG] model weight matmul: {:.1}ms", t.elapsed().as_secs_f64()*1e3);
         }
-        info!("MLX: Shard [{start}..{end}) ready — emb={is_f} head={is_l}");
+        // Enable MLX global compilation — caches compiled graphs automatically
+        mlx_rs::transforms::compile::enable_compile();
+        info!("MLX: Shard [{start}..{end}) ready — emb={is_f} head={is_l} (compile enabled)");
         Ok(Self { embedding, blocks, norm, lm_head, lm_head_wt, tokenizer: tok, start_block: start, end_block: end, cfg: c, sessions: Mutex::new(HashMap::new()) })
     }
     pub fn is_first(&self) -> bool { self.start_block==0 }
