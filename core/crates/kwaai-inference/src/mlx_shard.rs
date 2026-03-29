@@ -23,17 +23,29 @@ fn scalar(v: f32) -> Array { Array::from_slice::<f32>(&[v], &[1]) }
 fn load_tensor(shards: &[safetensors::SafeTensors<'_>], name: &str) -> InferenceResult<Array> {
     for st in shards {
         if let Ok(view) = st.tensor(name) {
+            // Convert SafeTensors data to Float16 via Rust Vec copy.
+            // Array::try_from(TensorView) creates arrays with a memory layout
+            // that causes 1000x slower matmul on Metal. Copying through from_slice
+            // ensures proper GPU-friendly contiguous layout.
             let arr = Array::try_from(view).map_err(|e| load_err(format!("{name}: {e}")))?;
-            // Convert to Float16 and materialize immediately.
-            // Without eval, as_dtype creates a lazy chain that gets re-evaluated
-            // on every forward pass through nn::Linear (which does W.t() internally).
             let arr = if arr.dtype() != mlx_rs::Dtype::Float16 {
                 arr.as_dtype(mlx_rs::Dtype::Float16).map_err(|e| load_err(format!("{name} dtype: {e}")))?
             } else {
                 arr
             };
             arr.eval().map_err(|e| load_err(format!("{name} eval: {e}")))?;
-            return Ok(arr);
+            // Force contiguous GPU copy: convert to F32, rebuild from slice, convert back.
+            // This ensures the MLX array has proper GPU-friendly contiguous layout.
+            let f32_arr = arr.as_dtype(mlx_rs::Dtype::Float32)
+                .map_err(|e| load_err(format!("{name} to_f32: {e}")))?;
+            f32_arr.eval().map_err(|e| load_err(format!("{name} eval_f32: {e}")))?;
+            let shape: Vec<i32> = f32_arr.shape().to_vec();
+            let data: &[f32] = f32_arr.as_slice::<f32>();
+            let fresh = Array::from_slice::<f32>(data, &shape)
+                .as_dtype(mlx_rs::Dtype::Float16)
+                .map_err(|e| load_err(format!("{name} back_f16: {e}")))?;
+            fresh.eval().map_err(|e| load_err(format!("{name} fresh_eval: {e}")))?;
+            return Ok(fresh);
         }
     }
     Err(load_err(format!("tensor '{name}' not found")))
