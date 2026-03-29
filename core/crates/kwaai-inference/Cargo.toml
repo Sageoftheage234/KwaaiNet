@@ -35,7 +35,7 @@ tracing = { workspace = true }
 tokio-test = "0.4"
 tracing-subscriber = { workspace = true }
 criterion = { workspace = true }
-safetensors = "0.4"
+safetensors = "0.6"
 dirs = "5"
 
 [[bench]]
@@ -43,7 +43,7 @@ name = "inference_bench"
 harness = false
 
 [target.'cfg(target_os = "macos")'.dependencies]
-mlx-rs = { version = "0.25", optional = true }
+mlx-rs = { version = "0.25", optional = true, features = ["safetensors"] }
 
 [features]
 default = ["cpu"]

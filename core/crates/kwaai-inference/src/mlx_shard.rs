@@ -24,6 +24,7 @@ pub fn mlx_available() -> bool {
 #[cfg(test)]
 mod tests {
     use mlx_rs::module::Module;
+    use mlx_rs::ops::indexing::IndexOp;
     use mlx_rs::Array;
 
     // ── Step 1: Primitive ops ────────────────────────────────────────────────
@@ -51,12 +52,11 @@ mod tests {
         let c = a.matmul(&b).expect("matmul");
         assert_eq!(c.shape(), &[2, 2]);
         c.eval().expect("eval");
-        // c[0,0] = 1*1 + 2*3 + 3*5 = 22
-        let flat: Vec<f32> = (0..4).map(|i| {
-            let idx = Array::from_slice::<i32>(&[i / 2, i % 2], &[2]);
-            c.try_index(&idx).unwrap_or_else(|_| Array::from_slice::<f32>(&[0.0], &[1])).item::<f32>()
-        }).collect();
-        eprintln!("[OK] test_mlx_matmul — result shape {:?}", c.shape());
+        // Flatten to 1D and check first element: c[0,0] = 1*1 + 2*3 + 3*5 = 22
+        let flat = c.reshape(&[4]).expect("flatten");
+        let v0: f32 = flat.index(0).item();
+        assert!((v0 - 22.0).abs() < 0.01, "c[0,0] = {v0}, expected 22.0");
+        eprintln!("[OK] test_mlx_matmul — c[0,0]={v0}, shape {:?}", c.shape());
     }
 
     #[test]
@@ -132,7 +132,7 @@ mod tests {
         let c = a.add(&b).expect("add"); // lazy — not computed yet
         // Force evaluation
         c.eval().expect("eval");
-        let v0: f32 = c.try_index(0).expect("idx").item();
+        let v0: f32 = c.index(0).item();
         assert!((v0 - 4.0).abs() < 0.01);
         eprintln!("[OK] test_mlx_eval_lazy — 1+3={v0}");
     }
