@@ -44,10 +44,11 @@ harness = false
 
 [target.'cfg(target_os = "macos")'.dependencies]
 mlx-rs = { version = "0.25", optional = true, features = ["safetensors"] }
+safetensors = { version = "0.6", optional = true }
 
 [features]
 default = ["cpu"]
 cpu = []
 cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
 metal = ["candle-core/metal", "candle-nn/metal", "candle-transformers/metal"]
-mlx = ["mlx-rs"]
+mlx = ["mlx-rs", "safetensors"]
