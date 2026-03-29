@@ -23,12 +23,28 @@ fn scalar(v: f32) -> Array { Array::from_slice::<f32>(&[v], &[1]) }
 fn load_tensor(shards: &[safetensors::SafeTensors<'_>], name: &str) -> InferenceResult<Array> {
     for st in shards {
         if let Ok(view) = st.tensor(name) {
-            return Array::try_from(view).map_err(|e| load_err(format!("{name}: {e}")));
+            let arr = Array::try_from(view).map_err(|e| load_err(format!("{name}: {e}")))?;
+            // Convert to Float16 — MLX Metal kernels are optimized for F16,
+            // and BFloat16 (common in HF SafeTensors) is not natively supported
+            // on Apple Silicon GPU.
+            if arr.dtype() != mlx_rs::Dtype::Float16 {
+                return arr.as_dtype(mlx_rs::Dtype::Float16).map_err(|e| load_err(format!("{name} dtype: {e}")));
+            }
+            return Ok(arr);
         }
     }
     Err(load_err(format!("tensor '{name}' not found")))
 }
 fn set_linear(l: &mut nn::Linear, s: &[safetensors::SafeTensors<'_>], p: &str) -> InferenceResult<()> { *l.weight = load_tensor(s, &format!("{p}.weight"))?; Ok(()) }
+
+/// Quantize a Linear layer in-place to 4-bit (reduces memory 4x, faster matmul).
+fn quantize_linear(l: &mut nn::Linear) -> InferenceResult<()> {
+    // nn::quantize converts Linear → QuantizedLinear internally.
+    // For now we just ensure weights are Float16 — full quantization
+    // requires replacing Linear with QuantizedLinear throughout.
+    // TODO: Replace nn::Linear with nn::QuantizedLinear for 4-bit inference.
+    Ok(())
+}
 fn set_rms(n: &mut nn::RmsNorm, s: &[safetensors::SafeTensors<'_>], p: &str) -> InferenceResult<()> { *n.weight = load_tensor(s, &format!("{p}.weight"))?; Ok(()) }
 
 #[derive(Clone)]
@@ -182,6 +198,59 @@ impl MlxTransformerShard {
             set_linear(&mut l,&shards,"lm_head")?; (Some(n),Some(l))
         } else { (None,None) };
         let tok = BpeTokenizer::from_file(&cfg_path.parent().unwrap_or(Path::new(".")).join("tokenizer.json"))?;
+        // Diagnostic: check dtype and do a test matmul to verify GPU works
+        if is_f {
+            let emb_dtype = embedding.as_ref().unwrap().weight.dtype();
+            info!("MLX: embedding dtype={:?}", emb_dtype);
+        }
+        if !blocks.is_empty() {
+            let w_dtype = blocks[0].gate.weight.dtype();
+            info!("MLX: gate_proj weight dtype={:?} shape={:?}", w_dtype, blocks[0].gate.weight.shape());
+            // Quick matmul test
+            let test_data = vec![1.0f32; c.hidden_dim];
+            let test_in = Array::from_slice::<f32>(&test_data, &[1, c.hidden_dim as i32])
+                .as_dtype(mlx_rs::Dtype::Float16).map_err(|e| load_err(e))?;
+            let t = Instant::now();
+            let _ = blocks[0].gate.forward(&test_in).map_err(|e| load_err(e))?;
+            let _ = test_in.eval();
+            info!("MLX: test matmul [{},{}] took {:.1}ms", c.hidden_dim, c.intermediate_dim, t.elapsed().as_secs_f64()*1e3);
+        }
+        // Force-eval all weights to bring them into GPU memory
+        // (SafeTensors arrays may be lazy/mmap'd references to disk)
+        eprintln!("[DIAG] Evaluating all weights into GPU memory...");
+        let t_eval = Instant::now();
+        if let Some(ref emb) = embedding { emb.weight.eval().map_err(|e| load_err(e))?; }
+        for b in &blocks {
+            b.in_n.weight.eval().map_err(|e| load_err(e))?;
+            b.attn.q_proj.weight.eval().map_err(|e| load_err(e))?;
+            b.attn.k_proj.weight.eval().map_err(|e| load_err(e))?;
+            b.attn.v_proj.weight.eval().map_err(|e| load_err(e))?;
+            b.attn.o_proj.weight.eval().map_err(|e| load_err(e))?;
+            b.post_n.weight.eval().map_err(|e| load_err(e))?;
+            b.gate.weight.eval().map_err(|e| load_err(e))?;
+            b.up.weight.eval().map_err(|e| load_err(e))?;
+            b.down.weight.eval().map_err(|e| load_err(e))?;
+        }
+        if let Some(ref n) = norm { n.weight.eval().map_err(|e| load_err(e))?; }
+        if let Some(ref lh) = lm_head { lh.weight.eval().map_err(|e| load_err(e))?; }
+        eprintln!("[DIAG] Weights evaluated in {:.1}s", t_eval.elapsed().as_secs_f64());
+
+        // Test actual model weight matmul speed
+        if !blocks.is_empty() {
+            let w = &blocks[0].gate.weight;
+            eprintln!("[DIAG] gate weight dtype={:?} shape={:?}", w.dtype(), w.shape());
+            let test_data = vec![1.0f32; c.hidden_dim];
+            let x = Array::from_slice::<f32>(&test_data, &[1, c.hidden_dim as i32])
+                .as_dtype(mlx_rs::Dtype::Float16).map_err(|e| load_err(e))?;
+            // Warm up
+            let wt = w.as_ref().transpose_axes(&[1,0]).map_err(|e| load_err(e))?;
+            let _ = x.matmul(&wt).map_err(|e| load_err(e))?.eval();
+            // Timed
+            let t = Instant::now();
+            let y = x.matmul(&wt).map_err(|e| load_err(e))?;
+            y.eval().map_err(|e| load_err(e))?;
+            eprintln!("[DIAG] model weight matmul: {:.1}ms", t.elapsed().as_secs_f64()*1e3);
+        }
         info!("MLX: Shard [{start}..{end}) ready — emb={is_f} head={is_l}");
         Ok(Self { embedding, blocks, norm, lm_head, tokenizer: tok, start_block: start, end_block: end, cfg: c, sessions: Mutex::new(HashMap::new()) })
     }
@@ -192,8 +261,14 @@ impl MlxTransformerShard {
         let mut ss = self.sessions.lock().unwrap();
         let s = ss.entry(sid).or_insert_with(|| MlxSession::new(self.blocks.len()));
         s.last_access = Instant::now();
-        for (i,b) in self.blocks.iter_mut().enumerate() { x = b.forward(&x,&mut s.kv[i],sp)?; }
-        x.eval().map_err(|e| err(e))?; Ok(x)
+        for (i,b) in self.blocks.iter_mut().enumerate() {
+            x = b.forward(&x,&mut s.kv[i],sp)?;
+            // Eval after each block to keep the lazy graph small.
+            // Large graphs (32 blocks × 20 ops) cause MLX graph compilation
+            // to take ~100s. Per-block eval keeps it fast.
+            x.eval().map_err(|e| err(e))?;
+        }
+        Ok(x)
     }
     pub fn forward_full(&mut self, sid: u64, tids: &[u32], sp: usize) -> InferenceResult<Array> {
         let emb = self.embedding.as_mut().ok_or_else(|| err("no emb"))?;
@@ -232,6 +307,25 @@ mod tests {
     use mlx_rs::ops::indexing::IndexOp;
     use mlx_rs::Array;
     use std::time::Instant;
+
+    #[test] fn test_mlx_raw_matmul_speed() {
+        // Raw matmul at Llama scale — should be ~1ms on Metal if GPU is working
+        let h = 4096i32;
+        let inter = 11008i32;
+        let xd = vec![1.0f32; h as usize];
+        let wd = vec![0.01f32; (h as usize) * (inter as usize)];
+        let x = Array::from_slice::<f32>(&xd, &[1, h]).as_dtype(mlx_rs::Dtype::Float16).unwrap();
+        let w = Array::from_slice::<f32>(&wd, &[inter, h]).as_dtype(mlx_rs::Dtype::Float16).unwrap();
+        let wt = w.transpose_axes(&[1, 0]).unwrap();
+        // Warm up
+        let _ = x.matmul(&wt).unwrap().eval();
+        // Timed
+        let t = Instant::now();
+        let y = x.matmul(&wt).unwrap();
+        y.eval().unwrap();
+        let ms = t.elapsed().as_secs_f64() * 1000.0;
+        eprintln!("[OK] raw_matmul [1,{h}]x[{inter},{h}]^T = {ms:.1}ms (expect <5ms on Metal)");
+    }
 
     #[test] fn test_mlx_array_basic() { let a=Array::from_slice::<f32>(&[1.0,2.0,3.0,4.0,5.0,6.0],&[2,3]); assert_eq!(a.shape(),&[2,3]); assert_eq!(a.reshape(&[3,2]).unwrap().shape(),&[3,2]); eprintln!("[OK] array_basic"); }
     #[test] fn test_mlx_matmul() { let c=Array::from_slice::<f32>(&[1.0,2.0,3.0,4.0,5.0,6.0],&[2,3]).matmul(&Array::from_slice::<f32>(&[1.0,2.0,3.0,4.0,5.0,6.0],&[3,2])).unwrap(); c.eval().unwrap(); let v:f32=c.reshape(&[4]).unwrap().index(0).item(); assert!((v-22.0).abs()<0.01); eprintln!("[OK] matmul {v}"); }
@@ -300,5 +394,76 @@ mod tests {
         let next:i32=mlx_rs::ops::indexing::argmax(&flat, None).unwrap().item();
         let decoded=shard.tokenizer.decode(&[next as u32]).unwrap_or("?".into());
         eprintln!("[OK] forward_full — next='{decoded}' (id={next})");
+    }
+
+    /// Benchmark: warm-up + prefill + 5 decode steps. Measures steady-state tok/s.
+    #[test] fn test_mlx_benchmark() {
+        let home = dirs::home_dir().expect("home");
+        let mut md = None;
+        for b in &[".cache/huggingface/models--unsloth--Llama-3.1-8B-Instruct/snapshots",
+                    ".cache/huggingface/hub/models--unsloth--Llama-3.1-8B-Instruct/snapshots"] {
+            let d = home.join(b); if !d.exists() { continue; }
+            if let Some(s) = std::fs::read_dir(&d).ok()
+                .and_then(|r| r.filter_map(|e| e.ok()).map(|e| e.path()).next()) { md = Some(s); break; }
+        }
+        let Some(md) = md else { eprintln!("[SKIP] benchmark"); return; };
+        let cp = md.join("config.json"); if !cp.exists() { eprintln!("[SKIP] no config"); return; }
+        let mut ps: Vec<std::path::PathBuf> = std::fs::read_dir(&md).unwrap()
+            .filter_map(|e| e.ok()).map(|e| e.path())
+            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("safetensors")).collect();
+        ps.sort();
+        let refs: Vec<&std::path::Path> = ps.iter().map(|p| p.as_path()).collect();
+
+        eprintln!("  Loading Llama 8B via MLX...");
+        let t0 = Instant::now();
+        let mut shard = super::MlxTransformerShard::load(&refs, &cp, 0, 32).expect("load");
+        eprintln!("  Loaded in {:.1}s", t0.elapsed().as_secs_f64());
+
+        use crate::tokenizer::Tokenizer as _;
+        let prompt = "The capital of France is";
+        let mut ids: Vec<u32> = shard.tokenizer.encode(prompt).unwrap();
+        if let Some(bos) = shard.tokenizer.bos_token_id() { ids.insert(0, bos); }
+
+        // ── Warm-up (2 forward passes, separate session) ─────────────────
+        eprintln!("  Warm-up (2 steps)...");
+        let _ = shard.forward_full(0xAAAA_u64, &ids, 0);
+        let logits = shard.forward_full(0xAAAA_u64, &[1u32], ids.len()).expect("warm-up 2");
+        logits.eval().ok();
+        eprintln!("  Warm-up done.");
+
+        // ── Prefill (timed) ──────────────────────────────────────────────
+        let session = 0xBBBB_u64;
+        let t_pre = Instant::now();
+        let logits = shard.forward_full(session, &ids, 0).expect("prefill");
+        let prefill_ms = t_pre.elapsed().as_secs_f64() * 1000.0;
+
+        // Sample first token
+        let flat = logits.reshape(&[-1]).unwrap();
+        let mut next: i32 = mlx_rs::ops::indexing::argmax(&flat, None).unwrap().item();
+        let first_tok = shard.tokenizer.decode(&[next as u32]).unwrap_or("?".into());
+
+        // ── Decode (5 steps, timed) ──────────────────────────────────────
+        let n_decode = 5;
+        eprintln!("  Decode ({n_decode} steps)...");
+        let mut sp = ids.len();
+        let t_dec = Instant::now();
+        for _ in 0..n_decode {
+            let logits = shard.forward_full(session, &[next as u32], sp).expect("decode");
+            let flat = logits.reshape(&[-1]).unwrap();
+            next = mlx_rs::ops::indexing::argmax(&flat, None).unwrap().item();
+            sp += 1;
+        }
+        let decode_ms = t_dec.elapsed().as_secs_f64() * 1000.0;
+
+        let prefill_tps = ids.len() as f64 / (prefill_ms / 1000.0);
+        let decode_tps = n_decode as f64 / (decode_ms / 1000.0);
+
+        eprintln!();
+        eprintln!("  ── MLX Benchmark Results ──────────────────────────────");
+        eprintln!("  Prefill:  {prefill_tps:>7.1} tok/s  ({} tokens in {prefill_ms:.0}ms)", ids.len());
+        eprintln!("  Decode:   {decode_tps:>7.1} tok/s  ({n_decode} tokens in {decode_ms:.0}ms)");
+        eprintln!("  First:    '{first_tok}'");
+        eprintln!("  ───────────────────────────────────────────────────────");
+        eprintln!("[OK] test_mlx_benchmark");
     }
 }
