@@ -33,16 +33,19 @@ use clap::{Args, Parser, Subcommand};
     • Forward the chosen TCP port in your router
     • Verify: kwaainet status  →  look for \"using_relay: false\"
 
-─── Distributed inference ────────────────────────────────────────────
-  # Single machine — full model
-  kwaainet shard serve --blocks 32
-  kwaainet shard run \"What is the capital of France?\"
+─── Local inference (30+ tok/s on Apple Silicon) ────────────────────
+  kwaainet shard run \"What is the capital of France?\" --local
+  kwaainet benchmark                       measure local throughput
 
-  # Two machines — split the model
+─── Distributed inference ────────────────────────────────────────────
+  kwaainet shard circuit create            pre-form a peer path
+  kwaainet shard run \"Hello\" --circuit ID  use the circuit
+  kwaainet shard run \"Hello\" --stats       show per-token timing
+
+  # Multi-machine — split the model
   #  Machine A                             Machine B
   shard serve --blocks 28                  shard serve --start-block 28 --blocks 4
-  shard chain --total-blocks 32            # verify full coverage before running
-  shard run \"Hello\"                        # coordinate inference across the chain
+  shard chain --total-blocks 32            # verify full coverage
 
 ─── OpenAI-compatible API ────────────────────────────────────────────
   kwaainet shard api --port 8080
