@@ -175,3 +175,45 @@ pub fn run_inference(
 pub fn is_available() -> bool {
     cfg!(feature = "llama-cpp")
 }
+
+#[cfg(all(test, feature = "llama-cpp"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_llama_local_inference() {
+        let model_path = dirs::home_dir()
+            .expect("home")
+            .join(".kwaainet/models/llama-3.1-8b-instruct-q4_k_m.gguf");
+
+        if !model_path.exists() {
+            eprintln!("[SKIP] test_llama_local_inference — GGUF model not found");
+            return;
+        }
+
+        eprintln!("  Loading model via llama.cpp...");
+        let t0 = std::time::Instant::now();
+        let result = run_inference(&model_path, "The capital of France is", 20, 0.0)
+            .expect("inference failed");
+        let total = t0.elapsed().as_secs_f64();
+
+        let tps = if result.decode_ms > 0.0 {
+            result.tokens_generated as f64 / (result.decode_ms / 1000.0)
+        } else {
+            0.0
+        };
+
+        eprintln!();
+        eprintln!("  ── llama.cpp Results ──────────────────────────────");
+        eprintln!("  Text:      {:?}", result.text.trim());
+        eprintln!("  Tokens:    {}", result.tokens_generated);
+        eprintln!("  Prefill:   {:.0}ms", result.prefill_ms);
+        eprintln!("  Decode:    {:.0}ms ({:.1} tok/s)", result.decode_ms, tps);
+        eprintln!("  Total:     {:.1}s", total);
+        eprintln!("  ──────────────────────────────────────────────────");
+        eprintln!("[OK] test_llama_local_inference");
+
+        assert!(result.tokens_generated > 0, "should generate at least 1 token");
+        assert!(result.text.to_lowercase().contains("paris"), "should mention Paris");
+    }
+}
