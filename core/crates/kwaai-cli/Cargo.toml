@@ -81,5 +81,9 @@ nix = { version = "0.27", features = ["signal", "process", "fs"] }
 # Cargo merges features from target-specific sections with the base [dependencies] entry.
 [target.'cfg(target_os = "macos")'.dependencies]
 kwaai-inference = { workspace = true, features = ["metal"] }
+llama-cpp-2 = { version = "0.1", optional = true }
+
+[features]
+llama-cpp = ["llama-cpp-2"]
 
 

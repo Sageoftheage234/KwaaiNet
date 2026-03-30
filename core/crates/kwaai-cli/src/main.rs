@@ -10,6 +10,7 @@ mod display;
 mod health;
 mod hf;
 mod identity;
+mod llama_local;
 mod map;
 mod monitor;
 mod node;
