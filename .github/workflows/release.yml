@@ -282,6 +282,66 @@ jobs:
             ${{ steps.cargo-dist.outputs.paths }}
             ${{ env.BUILD_MANIFEST_NAME }}
 
+  # Build CUDA-enabled Linux x86_64 binary.
+  # Runs alongside cargo-dist builds.  The CUDA toolkit is installed on the
+  # runner (no GPU required — only nvcc).  The resulting archive is uploaded
+  # to the GitHub Release as an extra asset; the shell installer detects
+  # nvidia-smi on the target machine and prefers this variant automatically.
+  build-cuda-artifacts:
+    name: build-cuda-artifacts (x86_64-unknown-linux-gnu)
+    needs:
+      - plan
+    if: ${{ needs.plan.outputs.publishing == 'true' }}
+    runs-on: "ubuntu-22.04"
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install Go (required by kwaai-p2p-daemon build script)
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: false
+      - name: Install CUDA toolkit
+        run: |
+          wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update -q
+          sudo apt-get install -y -q cuda-toolkit-12-6 libssl-dev pkg-config
+          echo "/usr/local/cuda-12.6/bin" >> $GITHUB_PATH
+      - name: Create target/release for p2pd build script
+        run: mkdir -p core/target/release
+      - name: Build kwaainet with CUDA
+        working-directory: core
+        run: |
+          nvcc --version
+          cargo build --release -p kwaainet --features cuda
+      - name: Package CUDA archive
+        working-directory: core
+        run: |
+          TAG="${{ needs.plan.outputs.tag }}"
+          LABEL="kwaainet-x86_64-unknown-linux-gnu-cuda"
+          mkdir -p "${LABEL}"
+          cp target/release/kwaainet "${LABEL}/"
+          # Include p2pd if it was built by kwaai-p2p-daemon build.rs
+          [ -f target/release/p2pd ] && cp target/release/p2pd "${LABEL}/"
+          chmod +x "${LABEL}"/*
+          tar -cJf "${LABEL}.tar.xz" "${LABEL}"
+          sha256sum "${LABEL}.tar.xz" | awk '{print $1}' > "${LABEL}.tar.xz.sha256"
+          echo "CUDA archive: $(ls -lh ${LABEL}.tar.xz)"
+      - name: "Upload CUDA artifact"
+        uses: actions/upload-artifact@v6
+        with:
+          name: artifacts-build-cuda
+          path: |
+            core/kwaainet-x86_64-unknown-linux-gnu-cuda.tar.xz
+            core/kwaainet-x86_64-unknown-linux-gnu-cuda.tar.xz.sha256
+
   # Build and package all the platform-agnostic(ish) things
   build-global-artifacts:
     needs:
@@ -323,6 +383,8 @@ jobs:
           if [ -f "target/distrib/kwaainet-installer.sh" ]; then
             sed -i 's/_bins="kwaainet"/_bins="kwaainet p2pd"/g' target/distrib/kwaainet-installer.sh
             echo "Patched kwaainet-installer.sh: p2pd added to _bins"
+            # Add NVIDIA GPU detection — auto-selects CUDA archive when nvidia-smi is present
+            bash ../scripts/patch-installer-cuda.sh target/distrib/kwaainet-installer.sh
           else
             echo "WARNING: kwaainet-installer.sh not found at target/distrib/"
             find . -name "kwaainet-installer.sh" 2>/dev/null
@@ -355,8 +417,9 @@ jobs:
       - plan
       - build-local-artifacts
       - build-global-artifacts
-    # Only run if we're "publishing", and only if plan, local and global didn't fail (skipped is fine)
-    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.publishing == 'true' && (needs.build-global-artifacts.result == 'skipped' || needs.build-global-artifacts.result == 'success') && (needs.build-local-artifacts.result == 'skipped' || needs.build-local-artifacts.result == 'success') }}
+      - build-cuda-artifacts
+    # Only run if we're "publishing", and only if plan, local, global, and cuda didn't fail (skipped is fine)
+    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.publishing == 'true' && (needs.build-global-artifacts.result == 'skipped' || needs.build-global-artifacts.result == 'success') && (needs.build-local-artifacts.result == 'skipped' || needs.build-local-artifacts.result == 'success') && (needs.build-cuda-artifacts.result == 'skipped' || needs.build-cuda-artifacts.result == 'success') }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     runs-on: "ubuntu-22.04"
