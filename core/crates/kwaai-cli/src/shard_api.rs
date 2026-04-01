@@ -223,15 +223,17 @@ async fn run_inference(
         std::collections::HashSet::new();
 
     // Pin peer path for this request so KV-caches stay coherent.
-    let mut pinned_path =
-        match crate::shard_cmd::build_pinned_path(&state.chain, state.total_blocks, &failed_peers)
-        {
-            Ok(p) => p,
-            Err(e) => {
-                let _ = tx.send(format!("[chain error: {e}]")).await;
-                return;
-            }
-        };
+    let mut pinned_path = match crate::shard_cmd::build_pinned_path(
+        &state.chain,
+        state.total_blocks,
+        &failed_peers,
+    ) {
+        Ok(p) => p,
+        Err(e) => {
+            let _ = tx.send(format!("[chain error: {e}]")).await;
+            return;
+        }
+    };
 
     loop {
         let (shape, data) = token_ids_to_bytes(&current_ids);
@@ -288,8 +290,9 @@ async fn run_inference(
                         {
                             Ok(r) => r,
                             Err(e2) => {
-                                let _ =
-                                    tx.send(format!("[inference error after retry: {e2}]")).await;
+                                let _ = tx
+                                    .send(format!("[inference error after retry: {e2}]"))
+                                    .await;
                                 break;
                             }
                         }

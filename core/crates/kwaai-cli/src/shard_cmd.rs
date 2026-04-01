@@ -99,13 +99,22 @@ pub async fn cmd_shard_download(args: ShardDownloadArgs) -> Result<()> {
             let end = (start + blocks).min(total);
             let is_first = start == 0;
             let is_last = end >= total;
-            println!("  Blocks: [{}, {}) of {} (selective download)", start, end, total);
+            println!(
+                "  Blocks: [{}, {}) of {} (selective download)",
+                start, end, total
+            );
             println!();
-            hf::download_for_blocks(&model_id, start, end, is_first, is_last, args.hf_token.as_deref()).await?
+            hf::download_for_blocks(
+                &model_id,
+                start,
+                end,
+                is_first,
+                is_last,
+                args.hf_token.as_deref(),
+            )
+            .await?
         }
-        _ => {
-            hf::download(&model_id, args.hf_token.as_deref()).await?
-        }
+        _ => hf::download(&model_id, args.hf_token.as_deref()).await?,
     };
 
     println!();
@@ -819,11 +828,8 @@ pub async fn cmd_shard_run(args: ShardRunArgs) -> Result<()> {
         }
         let _ = save_circuits(&all);
 
-        let entries: Vec<BlockServerEntry> = circuit
-            .chain
-            .iter()
-            .filter_map(|e| e.to_entry())
-            .collect();
+        let entries: Vec<BlockServerEntry> =
+            circuit.chain.iter().filter_map(|e| e.to_entry()).collect();
         println!("  Circuit:      {}", circuit.id);
         println!("  Nodes:        {} (from circuit)", entries.len());
         (entries, true)
@@ -966,8 +972,7 @@ pub async fn cmd_shard_run(args: ShardRunArgs) -> Result<()> {
     let mut generated_ids: Vec<u32> = Vec::new();
     let mut seq_pos: usize = 0;
     let mut current_ids = token_ids.clone();
-    let mut failed_peers: std::collections::HashSet<PeerId> =
-        std::collections::HashSet::new();
+    let mut failed_peers: std::collections::HashSet<PeerId> = std::collections::HashSet::new();
 
     // Pin the peer path for this session — same peers handle the same blocks
     // on every token so their KV-caches stay coherent.
@@ -1631,7 +1636,14 @@ fn decode_server_info_ext(bytes: &[u8]) -> Option<(i32, usize, usize, String, St
     let peer_id_b58 = get_s("peer_id");
     let version = get_s("version");
 
-    Some((state, start_block, end_block, public_name, peer_id_b58, version))
+    Some((
+        state,
+        start_block,
+        end_block,
+        public_name,
+        peer_id_b58,
+        version,
+    ))
 }
 
 // ── Pinned path ──────────────────────────────────────────────────────────────
@@ -1831,7 +1843,10 @@ async fn cmd_circuit_create(args: CircuitCreateArgs) -> Result<()> {
 
     let circuit = Circuit {
         id: id.clone(),
-        pinned_path: pinned_path.iter().map(SerializableEntry::from_entry).collect(),
+        pinned_path: pinned_path
+            .iter()
+            .map(SerializableEntry::from_entry)
+            .collect(),
         chain: chain.iter().map(SerializableEntry::from_entry).collect(),
         total_blocks,
         ttl_secs: args.ttl_minutes * 60,
@@ -1858,10 +1873,7 @@ async fn cmd_circuit_create(args: CircuitCreateArgs) -> Result<()> {
         );
     }
     println!();
-    println!(
-        "  TTL: {} minutes",
-        args.ttl_minutes
-    );
+    println!("  TTL: {} minutes", args.ttl_minutes);
     print_info(&format!(
         "Use: kwaainet shard run \"prompt\" --circuit {}",
         id

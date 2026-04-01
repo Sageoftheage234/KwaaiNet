@@ -42,10 +42,7 @@ pub async fn get_nodes(State(state): State<SharedState>) -> impl IntoResponse {
 
 // ── WS /api/live ──────────────────────────────────────────────────────────────
 
-pub async fn ws_live(
-    ws: WebSocketUpgrade,
-    State(state): State<SharedState>,
-) -> impl IntoResponse {
+pub async fn ws_live(ws: WebSocketUpgrade, State(state): State<SharedState>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_live(socket, state))
 }
 

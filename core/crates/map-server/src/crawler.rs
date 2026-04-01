@@ -18,7 +18,7 @@ use anyhow::Result;
 use chrono::Utc;
 use kwaai_hivemind_dht::protocol::{FindRequest, FindResponse, NodeInfo, RequestAuthInfo};
 use kwaai_p2p::NetworkConfig;
-use kwaai_p2p_daemon::{DEFAULT_SOCKET_NAME, P2PClient};
+use kwaai_p2p_daemon::{P2PClient, DEFAULT_SOCKET_NAME};
 use libp2p::PeerId;
 use prost::Message as _;
 use sha1::{Digest, Sha1};
@@ -52,8 +52,8 @@ pub async fn run_crawler(cache: Arc<NodeCache>, bootstrap_peers: Vec<String>) {
 }
 
 async fn crawl_once(cache: &NodeCache, bootstrap_peers: &[String]) -> Result<()> {
-    let raw_sock = std::env::var("KWAAINET_SOCKET")
-        .unwrap_or_else(|_| DEFAULT_SOCKET_NAME.to_string());
+    let raw_sock =
+        std::env::var("KWAAINET_SOCKET").unwrap_or_else(|_| DEFAULT_SOCKET_NAME.to_string());
     let socket = if cfg!(unix) {
         format!("/unix/{}", raw_sock)
     } else {
@@ -85,7 +85,8 @@ async fn crawl_once(cache: &NodeCache, bootstrap_peers: &[String]) -> Result<()>
     let mut discovered: HashMap<String, NodeEntry> = HashMap::new();
 
     // Step 1: discover registered model prefixes from _petals.models registry
-    let mut active_prefixes: Vec<String> = FALLBACK_PREFIXES.iter().map(|s| s.to_string()).collect();
+    let mut active_prefixes: Vec<String> =
+        FALLBACK_PREFIXES.iter().map(|s| s.to_string()).collect();
     if let Ok(extra) = fetch_model_prefixes(&mut client, &our_dhtid, &effective_bootstrap).await {
         for p in extra {
             if !active_prefixes.contains(&p) {
@@ -93,7 +94,11 @@ async fn crawl_once(cache: &NodeCache, bootstrap_peers: &[String]) -> Result<()>
             }
         }
     }
-    tracing::debug!("crawling {} prefix(es): {:?}", active_prefixes.len(), active_prefixes);
+    tracing::debug!(
+        "crawling {} prefix(es): {:?}",
+        active_prefixes.len(),
+        active_prefixes
+    );
 
     // Step 2: also crawl VPK nodes registry
     active_prefixes.push("_kwaai.vpk.nodes".to_string());
@@ -102,7 +107,9 @@ async fn crawl_once(cache: &NodeCache, bootstrap_peers: &[String]) -> Result<()>
         let keys: Vec<Vec<u8>> = if prefix.starts_with("_kwaai") {
             vec![dht_key(prefix)]
         } else {
-            (0..SCAN_BLOCKS).map(|b| dht_key(&format!("{}.{}", prefix, b))).collect()
+            (0..SCAN_BLOCKS)
+                .map(|b| dht_key(&format!("{}.{}", prefix, b)))
+                .collect()
         };
 
         let find_req = FindRequest {
@@ -153,14 +160,16 @@ async fn crawl_once(cache: &NodeCache, bootstrap_peers: &[String]) -> Result<()>
                 if result.value.is_empty() {
                     continue;
                 }
-                tracing::debug!("  result rt={} value_len={}", result.result_type, result.value.len());
+                tracing::debug!(
+                    "  result rt={} value_len={}",
+                    result.result_type,
+                    result.value.len()
+                );
                 match result.result_type {
                     1 => {
                         if let Some(entry) = decode_regular(&result.value) {
                             tracing::debug!("  → decoded peer {}", entry.peer_id);
-                            discovered
-                                .entry(entry.peer_id.clone())
-                                .or_insert(entry);
+                            discovered.entry(entry.peer_id.clone()).or_insert(entry);
                         } else {
                             tracing::debug!("  → decode_regular returned None");
                         }
@@ -198,25 +207,39 @@ async fn fetch_model_prefixes(
     let find_req = FindRequest {
         auth: Some(RequestAuthInfo::new()),
         keys: vec![dht_key("_petals.models")],
-        peer: Some(NodeInfo { node_id: our_dhtid.to_vec() }),
+        peer: Some(NodeInfo {
+            node_id: our_dhtid.to_vec(),
+        }),
     };
     let mut req_bytes = Vec::new();
     find_req.encode(&mut req_bytes)?;
 
     let mut prefixes = Vec::new();
     for addr in bootstrap_peers {
-        let Some(peer_str) = addr.split("/p2p/").nth(1) else { continue };
-        let Ok(bp) = peer_str.parse::<PeerId>() else { continue };
-        if client.connect_peer(addr).await.is_err() { continue }
+        let Some(peer_str) = addr.split("/p2p/").nth(1) else {
+            continue;
+        };
+        let Ok(bp) = peer_str.parse::<PeerId>() else {
+            continue;
+        };
+        if client.connect_peer(addr).await.is_err() {
+            continue;
+        }
         tokio::time::sleep(Duration::from_millis(200)).await;
         let Ok(resp_bytes) = client
             .call_unary_handler(&bp.to_bytes(), "DHTProtocol.rpc_find", &req_bytes)
             .await
-        else { continue };
-        let Ok(resp) = FindResponse::decode(&resp_bytes[..]) else { continue };
+        else {
+            continue;
+        };
+        let Ok(resp) = FindResponse::decode(&resp_bytes[..]) else {
+            continue;
+        };
 
         for result in resp.results {
-            if result.value.is_empty() { continue }
+            if result.value.is_empty() {
+                continue;
+            }
             if result.result_type == 2 {
                 // FoundDictionary: subkeys are msgpack(prefix_string)
                 if let Some(subs) = extract_dict_subkeys(&result.value) {
@@ -224,7 +247,9 @@ async fn fetch_model_prefixes(
                 }
             }
         }
-        if !prefixes.is_empty() { break }
+        if !prefixes.is_empty() {
+            break;
+        }
     }
     Ok(prefixes)
 }
@@ -237,12 +262,16 @@ fn extract_dict_subkeys(bytes: &[u8]) -> Option<Vec<String>> {
     };
     let inner = rmpv::decode::read_value(&mut &inner_bytes[..]).ok()?;
     let arr = inner.as_array()?;
-    if arr.len() < 3 { return None }
+    if arr.len() < 3 {
+        return None;
+    }
     let entries = arr[2].as_array()?;
     let mut result = Vec::new();
     for entry in entries {
         let arr = entry.as_array()?;
-        if arr.is_empty() { continue }
+        if arr.is_empty() {
+            continue;
+        }
         let prefix = match &arr[0] {
             rmpv::Value::String(s) => s.as_str().unwrap_or("").to_string(),
             rmpv::Value::Binary(b) => match rmpv::decode::read_value(&mut b.as_slice()) {
@@ -251,7 +280,9 @@ fn extract_dict_subkeys(bytes: &[u8]) -> Option<Vec<String>> {
             },
             _ => continue,
         };
-        if !prefix.is_empty() { result.push(prefix) }
+        if !prefix.is_empty() {
+            result.push(prefix)
+        }
     }
     Some(result)
 }
@@ -297,9 +328,7 @@ fn decode_regular(bytes: &[u8]) -> Option<NodeEntry> {
     let public_name = get_s("public_name");
     let peer_id_b58 = get_s("peer_id");
     let version = get_s("version");
-    let vpk = map
-        .iter()
-        .any(|(k, _)| k.as_str() == Some("vpk"));
+    let vpk = map.iter().any(|(k, _)| k.as_str() == Some("vpk"));
 
     // Derive trust tier from trust_attestations count (VC-backed scoring TBD)
     let ta_count = map
@@ -376,8 +405,10 @@ fn decode_dictionary(bytes: &[u8], out: &mut HashMap<String, NodeEntry>) {
             _ => continue,
         };
         if let Some(entry) = decode_regular(val_bytes) {
-            out.entry(peer_id_b58.clone())
-                .or_insert(NodeEntry { peer_id: peer_id_b58, ..entry });
+            out.entry(peer_id_b58.clone()).or_insert(NodeEntry {
+                peer_id: peer_id_b58,
+                ..entry
+            });
         }
     }
 }

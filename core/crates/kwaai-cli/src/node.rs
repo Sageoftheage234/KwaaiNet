@@ -708,7 +708,15 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
     // Unannounce before shutting down p2pd so the map reflects the node as
     // offline immediately rather than waiting up to 360 s for TTL expiry.
     info!("Unannouncing from DHT...");
-    unannounce(&mut client, peer_id, &storage, &bootstrap_peers, &prefix, &server_info).await;
+    unannounce(
+        &mut client,
+        peer_id,
+        &storage,
+        &bootstrap_peers,
+        &prefix,
+        &server_info,
+    )
+    .await;
 
     let _ = daemon.shutdown().await;
     daemon_mgr.remove_pid();
@@ -757,11 +765,17 @@ async fn unannounce(
 
     let info_bytes = match offline_info.to_msgpack() {
         Ok(b) => b,
-        Err(e) => { warn!("Unannounce: failed to serialise server info: {}", e); return; }
+        Err(e) => {
+            warn!("Unannounce: failed to serialise server info: {}", e);
+            return;
+        }
     };
     let subkey = match rmp_serde::to_vec(&peer_id.to_base58()) {
         Ok(b) => b,
-        Err(e) => { warn!("Unannounce: failed to serialise subkey: {}", e); return; }
+        Err(e) => {
+            warn!("Unannounce: failed to serialise subkey: {}", e);
+            return;
+        }
     };
     let node_info = NodeInfo::from_peer_id(peer_id);
 

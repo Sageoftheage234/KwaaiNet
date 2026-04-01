@@ -1012,8 +1012,8 @@ async fn main() -> Result<()> {
             println!("  Warming up (5 steps)…");
             println!("  Measuring ({n_steps} decode steps)…");
 
-            let (prefill_ms, decode_ms) = tokio::task::spawn_blocking(
-                move || -> anyhow::Result<(f64, f64)> {
+            let (prefill_ms, decode_ms) =
+                tokio::task::spawn_blocking(move || -> anyhow::Result<(f64, f64)> {
                     // ── Warm-up (separate session, not timed) ────────────────
                     {
                         let session = 0xDEAD_BEEF_u64;
@@ -1025,8 +1025,7 @@ async fn main() -> Result<()> {
                                 .map_err(|e| anyhow::anyhow!("{e}"))?;
                             let logits_cpu = logits.to_device(&candle_core::Device::Cpu)?;
                             let flat = logits_cpu.flatten_all()?;
-                            let next =
-                                shard_cmd::sample_token(&flat, 1.0, 0, 1.0)? as u32;
+                            let next = shard_cmd::sample_token(&flat, 1.0, 0, 1.0)? as u32;
                             sp += ids.len();
                             ids = vec![next];
                         }
@@ -1059,10 +1058,9 @@ async fn main() -> Result<()> {
                     let decode_ms = decode_start.elapsed().as_secs_f64() * 1000.0;
 
                     Ok((prefill_ms, decode_ms))
-                },
-            )
-            .await
-            .map_err(|e| anyhow::anyhow!("benchmark join: {e}"))??;
+                })
+                .await
+                .map_err(|e| anyhow::anyhow!("benchmark join: {e}"))??;
 
             let prefill_tps = n_prompt as f64 / (prefill_ms / 1000.0);
             let decode_tps = n_steps as f64 / (decode_ms / 1000.0);

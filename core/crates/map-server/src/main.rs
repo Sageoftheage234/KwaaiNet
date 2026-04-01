@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use axum::{
-    routing::{get, any},
+    routing::{any, get},
     Router,
 };
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
@@ -62,8 +62,7 @@ async fn main() -> Result<()> {
     });
 
     // CORS: allow map.kwaai.ai in prod, everything in dev
-    let allowed_origins = std::env::var("ALLOWED_ORIGINS")
-        .unwrap_or_else(|_| "*".to_string());
+    let allowed_origins = std::env::var("ALLOWED_ORIGINS").unwrap_or_else(|_| "*".to_string());
     let cors = if allowed_origins == "*" {
         CorsLayer::permissive()
     } else {

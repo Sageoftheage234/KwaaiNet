@@ -55,8 +55,7 @@ pub fn run_inference(
         .map_err(|e| anyhow::anyhow!("Failed to load model: {e:?}"))?;
 
     // Create context
-    let ctx_params = LlamaContextParams::default()
-        .with_n_ctx(std::num::NonZeroU32::new(2048));
+    let ctx_params = LlamaContextParams::default().with_n_ctx(std::num::NonZeroU32::new(2048));
     let mut ctx = model
         .new_context(&backend, ctx_params)
         .map_err(|e| anyhow::anyhow!("Failed to create context: {e:?}"))?;
@@ -135,7 +134,11 @@ pub fn run_inference(
         }
 
         // Decode token to text
-        if let Ok(piece) = model.token_to_str(next_token, #[allow(deprecated)] llama_cpp_2::model::Special::Tokenize) {
+        if let Ok(piece) = model.token_to_str(
+            next_token,
+            #[allow(deprecated)]
+            llama_cpp_2::model::Special::Tokenize,
+        ) {
             print!("{piece}");
             std::io::stdout().flush().ok();
         }
@@ -158,7 +161,11 @@ pub fn run_inference(
     // Collect full text
     let mut text = String::new();
     for tok in &generated {
-        if let Ok(piece) = model.token_to_str(*tok, #[allow(deprecated)] llama_cpp_2::model::Special::Tokenize) {
+        if let Ok(piece) = model.token_to_str(
+            *tok,
+            #[allow(deprecated)]
+            llama_cpp_2::model::Special::Tokenize,
+        ) {
             text.push_str(&piece);
         }
     }
@@ -213,7 +220,13 @@ mod tests {
         eprintln!("  ──────────────────────────────────────────────────");
         eprintln!("[OK] test_llama_local_inference");
 
-        assert!(result.tokens_generated > 0, "should generate at least 1 token");
-        assert!(result.text.to_lowercase().contains("paris"), "should mention Paris");
+        assert!(
+            result.tokens_generated > 0,
+            "should generate at least 1 token"
+        );
+        assert!(
+            result.text.to_lowercase().contains("paris"),
+            "should mention Paris"
+        );
     }
 }
