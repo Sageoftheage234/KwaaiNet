@@ -635,7 +635,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // STEP 1: Start p2p-daemon
     // =========================================================================
     info!("[1/5] Starting p2p daemon with Petals bootstrap...");
-    let daemon = P2PDaemon::builder()
+    let mut daemon = P2PDaemon::builder()
         .dht(true) // Enable full DHT mode
         .relay(true) // Enable relay for NAT traversal
         .nat_portmap(true) // Try NAT port mapping

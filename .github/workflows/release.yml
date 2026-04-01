@@ -318,6 +318,8 @@ jobs:
         run: mkdir -p core/target/release
       - name: Build kwaainet with CUDA
         working-directory: core
+        env:
+          CUDA_COMPUTE_CAP: "80"
         run: |
           nvcc --version
           cargo build --release -p kwaainet --features cuda

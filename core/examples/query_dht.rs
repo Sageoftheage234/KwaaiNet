@@ -39,7 +39,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         println!("Bootstrap peer: {}\n", bootstrap_addr);
     }
 
-    let daemon = P2PDaemon::builder()
+    let mut daemon = P2PDaemon::builder()
         .dht(true)
         .nat_portmap(false)
         .bootstrap_peers(config.bootstrap_peers.clone())
