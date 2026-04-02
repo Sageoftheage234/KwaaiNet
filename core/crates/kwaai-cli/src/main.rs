@@ -664,10 +664,25 @@ async fn main() -> Result<()> {
                 format_bytes(hw.available_memory)
             );
             println!("    CPU cores: {}", hw.cpu_cores);
+            if let Some(ref gpu) = hw.gpu {
+                println!(
+                    "    GPU: {} ({} total / {} free)",
+                    gpu.name,
+                    format_bytes(gpu.total_vram),
+                    format_bytes(gpu.free_vram)
+                );
+            } else {
+                println!("    GPU: none detected");
+            }
             println!();
 
             let profile = engine.calibrate(&model);
             println!("  Total model blocks: {}", profile.total_blocks);
+            if profile.gpu_based {
+                println!("  Based on: GPU VRAM");
+            } else {
+                println!("  Based on: System RAM");
+            }
             println!();
             println!("  Recommendations:");
             println!("    🔹 Minimum:     {} blocks", profile.min_blocks);
