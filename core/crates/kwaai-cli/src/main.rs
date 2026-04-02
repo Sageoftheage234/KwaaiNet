@@ -935,14 +935,15 @@ async fn main() -> Result<()> {
             let model = args.model.as_deref().unwrap_or(&cfg.model).to_string();
 
             let device_type = if args.gpu {
-                kwaai_inference::DeviceType::detect_best()
+                kwaai_inference::DeviceType::require_gpu()
+                    .context("--gpu was specified but no GPU is available")?
             } else {
                 kwaai_inference::DeviceType::Cpu
             };
 
             print_box_header("⚡ KwaaiNet Benchmark");
             println!("  Model:  {}", model);
-            println!("  Device: {:?}", device_type);
+            println!("  Device: {}", device_type);
             println!("  Steps:  {} (+ 5 warm-up)", args.steps);
             println!();
 
@@ -1076,7 +1077,7 @@ async fn main() -> Result<()> {
                 decode_tps, n_steps, decode_ms
             );
             println!("  Load time:   {:>7.1}s", load_secs);
-            println!("  Device:      {:?}", device_type);
+            println!("  Device:      {}", device_type);
 
             if let Err(e) = throughput::save(&model, decode_tps, hidden_size) {
                 eprintln!("  Warning: could not save throughput cache: {e}");

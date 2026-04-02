@@ -64,7 +64,7 @@ chmod +x "$INSTALLER"
 rm -f "$CUDA_FUNC"
 
 # Inject the call to _try_cuda_upgrade just before the download.
-# The cargo-dist installer calls `download "$_url" "$_file"`.
-sed -i '/download "$_url" "$_file"/i\    _try_cuda_upgrade' "$INSTALLER"
+# The cargo-dist installer calls `downloader "$_url" "$_file"`.
+sed -i '/downloader "$_url" "$_file"/i\    _try_cuda_upgrade' "$INSTALLER"
 
 echo "Patched ${INSTALLER}: CUDA auto-detection added"

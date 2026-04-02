@@ -305,13 +305,12 @@ async fn cmd_shard_serve(args: ShardServeArgs) -> Result<ShardServeExit> {
     };
 
     // Detect device early (before any model I/O).
-    // detect_best() already skips Metal (too slow for decode) and logs why.
     let device_type = if args.no_gpu {
         DeviceType::Cpu
     } else if args.use_gpu {
-        DeviceType::detect_best()
+        DeviceType::require_gpu().context("--use-gpu was specified but no GPU is available")?
     } else if cfg.use_gpu {
-        DeviceType::detect_best()
+        DeviceType::detect_best_logged()
     } else {
         DeviceType::Cpu
     };
@@ -350,7 +349,7 @@ async fn cmd_shard_serve(args: ShardServeArgs) -> Result<ShardServeExit> {
 
     print_box_header("🧩 KwaaiNet Shard Server");
     println!("  Blocks:      [{}, {})", start_block, end_block);
-    println!("  Device:      {:?}", device_type);
+    println!("  Device:      {}", device_type);
     println!("  Model:       {}", cfg.model);
     println!();
     print_success(&format!(
@@ -661,7 +660,7 @@ async fn cmd_shard_run_local(args: ShardRunArgs) -> Result<()> {
     let device_type = if args.no_gpu {
         kwaai_inference::DeviceType::Cpu
     } else {
-        kwaai_inference::DeviceType::detect_best()
+        kwaai_inference::DeviceType::detect_best_logged()
     };
     let device = device_type
         .to_candle_device()

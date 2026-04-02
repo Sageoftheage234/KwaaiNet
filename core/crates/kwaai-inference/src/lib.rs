@@ -181,6 +181,83 @@ impl DeviceType {
         Self::Cpu
     }
 
+    /// Require a GPU device, erroring if none is available.
+    ///
+    /// Use this when the user explicitly asked for GPU (`--gpu`, `--use-gpu`).
+    /// Unlike `detect_best()`, this never silently falls back to CPU.
+    pub fn require_gpu() -> InferenceResult<Self> {
+        #[cfg(feature = "cuda")]
+        {
+            // cuda_is_available() is cfg!(feature = "cuda") — always true here.
+            // The real runtime check happens in to_candle_device() which calls
+            // cuInit(). But we know the binary was compiled with CUDA support.
+            tracing::info!("CUDA feature compiled in — selecting CUDA device");
+            return Ok(Self::Cuda(0));
+        }
+
+        #[cfg(feature = "mlx")]
+        if crate::mlx_shard::mlx_available() {
+            tracing::info!("MLX device detected");
+            return Ok(Self::Mlx);
+        }
+
+        // Build a diagnostic message
+        #[cfg(not(feature = "cuda"))]
+        {
+            let has_nvidia = std::process::Command::new("nvidia-smi")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok();
+
+            let msg = if has_nvidia {
+                "NVIDIA GPU detected but this binary was compiled without CUDA support.\n  \
+                 Reinstall with: curl -fsSL https://github.com/Kwaai-AI-Lab/KwaaiNet/releases/latest/download/kwaainet-installer.sh | bash"
+            } else {
+                "No GPU found. This binary was compiled without CUDA support and no NVIDIA GPU was detected."
+            };
+            return Err(InferenceError::DeviceNotAvailable(msg.to_string()));
+        }
+
+        #[allow(unreachable_code)]
+        Err(InferenceError::DeviceNotAvailable(
+            "No GPU available".to_string(),
+        ))
+    }
+
+    /// Detect the best device with a warning if GPU hardware is present but
+    /// the binary lacks GPU support.
+    ///
+    /// Use this for auto-detect paths where the user didn't explicitly request
+    /// GPU (config defaults, `shard run --local`, `shard serve`).
+    pub fn detect_best_logged() -> Self {
+        let device = Self::detect_best();
+        #[cfg(not(feature = "cuda"))]
+        if matches!(device, DeviceType::Cpu) {
+            if let Ok(output) = std::process::Command::new("nvidia-smi")
+                .args(["--query-gpu=name", "--format=csv,noheader"])
+                .output()
+            {
+                if output.status.success() {
+                    let gpu = String::from_utf8_lossy(&output.stdout);
+                    let gpu = gpu.trim();
+                    if !gpu.is_empty() {
+                        eprintln!(
+                            "\n  ⚠ NVIDIA GPU detected ({gpu}) but this binary lacks CUDA support.\n    \
+                             Reinstall with: curl -fsSL https://github.com/Kwaai-AI-Lab/KwaaiNet/releases/latest/download/kwaainet-installer.sh | bash\n"
+                        );
+                    }
+                }
+            }
+        }
+        device
+    }
+
+    /// Returns true if this device type uses a GPU.
+    pub fn is_gpu(&self) -> bool {
+        !matches!(self, DeviceType::Cpu)
+    }
+
     /// Convert to Candle device
     pub fn to_candle_device(&self) -> InferenceResult<candle_core::Device> {
         match self {
@@ -202,6 +279,17 @@ impl DeviceType {
                 // (callers should check for Mlx and use MlxTransformerShard directly)
                 Ok(candle_core::Device::Cpu)
             }
+        }
+    }
+}
+
+impl std::fmt::Display for DeviceType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DeviceType::Cpu => write!(f, "CPU"),
+            DeviceType::Cuda(ord) => write!(f, "CUDA (GPU {ord})"),
+            DeviceType::Metal(ord) => write!(f, "Metal (GPU {ord})"),
+            DeviceType::Mlx => write!(f, "MLX (Apple Silicon)"),
         }
     }
 }
