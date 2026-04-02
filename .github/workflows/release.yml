@@ -339,6 +339,18 @@ jobs:
           Start-Process -FilePath .\cuda_installer.exe -ArgumentList '-s','cudart_12.6','nvcc_12.6','cublas_12.6','cublas_dev_12.6','cusolver_12.6','cusolver_dev_12.6','curand_12.6','curand_dev_12.6','cufft_12.6','cufft_dev_12.6','cusparse_12.6','cusparse_dev_12.6','visual_studio_integration_12.6' -Wait -NoNewWindow
           echo "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           echo "CUDA_PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Set up MSVC developer environment (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Set OpenSSL paths (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dir = Get-ChildItem "C:\Program Files" -Filter "OpenSSL*" -ErrorAction SilentlyContinue |
+                 Select-Object -First 1 -ExpandProperty FullName
+          if ($dir) {
+            echo "OPENSSL_DIR=$dir" >> $env:GITHUB_ENV
+          }
       - name: Create target/release for p2pd build script
         run: mkdir -p core/target/release
         shell: bash
