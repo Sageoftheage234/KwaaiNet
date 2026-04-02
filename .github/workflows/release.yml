@@ -354,11 +354,21 @@ jobs:
       - name: Create target/release for p2pd build script
         run: mkdir -p core/target/release
         shell: bash
-      - name: Build kwaainet with CUDA
+      - name: Build kwaainet with CUDA (Linux)
+        if: runner.os == 'Linux'
         working-directory: core
         env:
           CUDA_COMPUTE_CAP: "80"
         shell: bash
+        run: |
+          nvcc --version
+          cargo build --release -p kwaainet --features cuda
+      - name: Build kwaainet with CUDA (Windows)
+        if: runner.os == 'Windows'
+        working-directory: core
+        env:
+          CUDA_COMPUTE_CAP: "80"
+        shell: pwsh
         run: |
           nvcc --version
           cargo build --release -p kwaainet --features cuda
