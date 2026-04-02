@@ -57,6 +57,8 @@ pub struct CalibrationProfile {
     pub min_blocks: u32,
     pub recommended_blocks: u32,
     pub max_blocks: u32,
+    /// What can run right now given current free memory.
+    pub available_now_blocks: u32,
     pub total_blocks: u32,
     /// Whether the recommendation is based on GPU VRAM (true) or system RAM (false).
     pub gpu_based: bool,
@@ -165,22 +167,31 @@ impl CalibrationEngine {
         let total_blocks = model_total_blocks(model);
         let bytes_per_block = bytes_per_block_f16(model);
 
-        // If GPU is available, use VRAM for block estimation.
-        // Reserve 512 MB for GPU overhead (driver, KV-cache scratch, etc.)
-        // For CPU-only, reserve 2 GB for OS + other processes.
-        let (usable, gpu_based) = if let Some(ref gpu) = self.hardware.gpu {
-            let reserve = 512 * 1024 * 1024;
-            (gpu.free_vram.saturating_sub(reserve), true)
-        } else {
-            let reserve = 2 * 1024 * 1024 * 1024;
-            (self.hardware.available_memory.saturating_sub(reserve), false)
-        };
+        // Reserve: 512 MB for GPU overhead, 2 GB for CPU/OS overhead.
+        let gpu_reserve: u64 = 512 * 1024 * 1024;
+        let cpu_reserve: u64 = 2 * 1024 * 1024 * 1024;
 
-        let max_blocks = ((usable as f64 / bytes_per_block as f64) as u32)
+        // Max blocks: based on total hardware capacity (what the machine can do).
+        // Available now: based on what is currently free.
+        let (total_capacity, free_capacity, gpu_based) =
+            if let Some(ref gpu) = self.hardware.gpu {
+                (gpu.total_vram, gpu.free_vram, true)
+            } else {
+                (self.hardware.total_memory, self.hardware.available_memory, false)
+            };
+
+        let reserve = if gpu_based { gpu_reserve } else { cpu_reserve };
+        let max_usable = total_capacity.saturating_sub(reserve);
+        let free_usable = free_capacity.saturating_sub(reserve);
+
+        let max_blocks = ((max_usable as f64 / bytes_per_block as f64) as u32)
+            .min(total_blocks)
+            .max(1);
+        let available_now_blocks = ((free_usable as f64 / bytes_per_block as f64) as u32)
             .min(total_blocks)
             .max(1);
 
-        // Recommended = 75% of max; min = 1 block or 25% of max
+        // Recommended = 75% of max; min = 25% of max
         let recommended_blocks = ((max_blocks as f64 * 0.75) as u32).max(1);
         let min_blocks = ((max_blocks as f64 * 0.25) as u32).max(1);
 
@@ -188,6 +199,7 @@ impl CalibrationEngine {
             min_blocks,
             recommended_blocks,
             max_blocks,
+            available_now_blocks,
             total_blocks,
             gpu_based,
         }

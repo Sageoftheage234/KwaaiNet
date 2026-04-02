@@ -685,9 +685,11 @@ async fn main() -> Result<()> {
             }
             println!();
             println!("  Recommendations:");
-            println!("    🔹 Minimum:     {} blocks", profile.min_blocks);
-            println!("    ⭐ Recommended: {} blocks", profile.recommended_blocks);
-            println!("    🔸 Maximum:     {} blocks", profile.max_blocks);
+            println!("    🔹 Minimum:       {} blocks", profile.min_blocks);
+            println!("    ⭐ Recommended:   {} blocks", profile.recommended_blocks);
+            println!("    🔸 Maximum:       {} blocks", profile.max_blocks);
+            println!();
+            println!("    📊 Available now: {} blocks", profile.available_now_blocks);
             print_separator();
 
             if let Some(ref apply) = args.apply {
