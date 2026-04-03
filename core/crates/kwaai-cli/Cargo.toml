@@ -77,11 +77,13 @@ dirs = { workspace = true }
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.27", features = ["signal", "process", "fs"] }
 
+# llama.cpp local inference — auto-detects Metal (macOS), CUDA (Linux/Windows), or CPU.
+llama-cpp-2 = { version = "0.1", optional = true }
+
 # Enable Metal GPU acceleration on macOS (Apple Silicon / M-series).
 # Cargo merges features from target-specific sections with the base [dependencies] entry.
 [target.'cfg(target_os = "macos")'.dependencies]
 kwaai-inference = { workspace = true, features = ["metal"] }
-llama-cpp-2 = { version = "0.1", optional = true }
 
 [features]
 cuda = ["kwaai-inference/cuda"]

@@ -687,7 +687,7 @@ pub struct ShardApiArgs {
     pub temperature: f32,
 
     /// Ollama model name for llama.cpp fast path (e.g. "llama3.1:8b").
-    /// Uses Metal-accelerated local inference when all blocks are hosted locally.
+    /// Uses GPU-accelerated local inference when all blocks are hosted locally.
     #[arg(long, value_name = "MODEL")]
     pub ollama_model: Option<String>,
 

@@ -63,7 +63,7 @@ struct AppState {
     eos_id: u32,
     bos_id: Option<u32>,
     our_peer_id: PeerId,
-    /// When set, use llama.cpp Metal inference instead of P2P chain.
+    /// When set, use llama.cpp GPU inference instead of P2P chain.
     /// Only populated when: llama-cpp feature + all blocks local + GGUF available.
     #[cfg(feature = "llama-cpp")]
     llama_model: Option<Arc<LlamaModelHolder>>,
@@ -821,7 +821,7 @@ pub async fn run(args: ShardApiArgs) -> Result<()> {
                 ));
                 match crate::llama_local::load_model(&gguf_path) {
                     Ok((backend, model)) => {
-                        print_success("llama.cpp fast path ACTIVE — Metal-accelerated inference");
+                        print_success("llama.cpp fast path ACTIVE — GPU-accelerated local inference");
                         Some(Arc::new(LlamaModelHolder { backend, model }))
                     }
                     Err(e) => {

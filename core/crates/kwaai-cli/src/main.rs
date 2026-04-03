@@ -1018,7 +1018,7 @@ async fn main() -> Result<()> {
 
                     print_box_header("⚡ KwaaiNet Benchmark");
                     println!("  Model:  {}", model);
-                    println!("  Device: llama.cpp (Metal)");
+                    println!("  Device: llama.cpp (GPU)");
                     println!("  GGUF:   {}", gguf_path.display());
                     println!("  Steps:  {}", n_steps);
                     println!();
@@ -1082,7 +1082,7 @@ async fn main() -> Result<()> {
                         decode_tps, result.tokens_generated, result.decode_ms
                     );
                     println!("  Load time:   {:>7.1}s", load_secs);
-                    println!("  Device:      llama.cpp (Metal)");
+                    println!("  Device:      llama.cpp (GPU)");
 
                     if let Err(e) = throughput::save(&model, decode_tps, hidden_size) {
                         eprintln!("  Warning: could not save throughput cache: {e}");
