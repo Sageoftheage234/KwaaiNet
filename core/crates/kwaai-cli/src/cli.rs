@@ -505,7 +505,7 @@ pub enum ShardAction {
     Run(ShardRunArgs),
     /// Show local shard configuration
     Status,
-    /// Query DHT and display block-chain coverage
+    /// Query DHT and display block-circuit coverage
     Chain(ShardChainArgs),
     /// Serve an OpenAI-compatible HTTP API backed by distributed shard inference
     Api(ShardApiArgs),

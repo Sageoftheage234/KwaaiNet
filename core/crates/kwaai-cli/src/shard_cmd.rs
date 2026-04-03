@@ -3,7 +3,7 @@
 //! Implements `kwaainet shard <subcommand>`:
 //!
 //! - **serve**  — Load model shard and register inference RPC handler with p2pd.
-//! - **run**    — Discover block chain from DHT and run distributed inference.
+//! - **run**    — Discover block circuit from DHT and run distributed inference.
 //! - **status** — Show local shard configuration from config.yaml.
 //! - **chain**  — Query DHT and display block coverage table.
 //!
@@ -834,7 +834,7 @@ pub async fn cmd_shard_run(args: ShardRunArgs) -> Result<()> {
         (entries, true)
     } else {
         // Fresh DHT discovery
-        print!("  Discovering block chain from DHT… ");
+        print!("  Discovering block circuit from DHT…");
         let bootstrap_peers: Vec<String> = if cfg.initial_peers.is_empty() {
             NetworkConfig::with_petals_bootstrap().bootstrap_peers
         } else {
@@ -886,7 +886,7 @@ pub async fn cmd_shard_run(args: ShardRunArgs) -> Result<()> {
     // Validate coverage
     let covered = coverage_check(&chain, total_blocks);
     if !covered {
-        print_warning("Block chain has gaps — inference may be incomplete.");
+        print_warning("Block circuit has gaps — inference may be incomplete.");
     }
 
     println!();
@@ -1182,7 +1182,7 @@ pub async fn cmd_shard_chain(args: ShardChainArgs) -> Result<()> {
 
     let total_blocks = args.total_blocks;
 
-    print_box_header("🗺  KwaaiNet Block Chain");
+    print_box_header("🗺  KwaaiNet Block Circuit");
     println!("  Model prefix: {}", dht_prefix);
     println!("  Querying {} blocks from DHT…", total_blocks);
     println!();
@@ -1806,7 +1806,7 @@ async fn cmd_circuit_create(args: CircuitCreateArgs) -> Result<()> {
         cfg.initial_peers.clone()
     };
 
-    print_info("Discovering block chain from DHT…");
+    print_info("Discovering block circuit from DHT…");
     let chain = discover_chain(
         &mut client,
         &our_peer_id,
@@ -1948,7 +1948,7 @@ async fn cmd_circuit_close(args: CircuitCloseArgs) -> Result<()> {
 
 /// Send an `InferenceRequest` to the first peer in the chain, routing the
 /// activation tensor through each subsequent peer until the last returns logits.
-/// Forward a request through the block chain, advancing greedily by block position.
+/// Forward a request through the block circuit, advancing greedily by block position.
 ///
 /// At each position, all candidates covering that position are tried in order of
 /// widest coverage (largest end_block first). This allows nodes running older code

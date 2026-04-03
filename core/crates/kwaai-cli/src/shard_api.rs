@@ -772,7 +772,7 @@ pub async fn run(args: ShardApiArgs) -> Result<()> {
     println!();
 
     use std::io::Write as _;
-    print!("  Discovering block chain… ");
+    print!("  Discovering block circuit…");
     std::io::stdout().flush().ok();
 
     let chain = discover_chain(
