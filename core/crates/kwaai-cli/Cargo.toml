@@ -70,6 +70,7 @@ kwaai-hivemind-dht = { workspace = true }
 kwaai-p2p-daemon = { workspace = true }
 kwaai-inference = { workspace = true }
 kwaai-trust = { workspace = true }
+kwaai-storage = { path = "../kwaai-storage" }
 
 # Trust graph dependencies
 dirs = { workspace = true }

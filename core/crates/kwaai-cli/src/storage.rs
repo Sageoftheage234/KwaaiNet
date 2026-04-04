@@ -21,6 +21,7 @@ pub async fn run(args: StorageArgs) -> Result<()> {
             pg_port,
         } => init(capacity_gb, data_path, port, endpoint, pg_port).await,
         StorageAction::Status => status().await,
+        StorageAction::Serve => serve().await,
         StorageAction::Start => start(),
         StorageAction::Stop => stop(),
         StorageAction::Destroy { yes } => destroy(yes),
@@ -322,6 +323,44 @@ async fn status() -> Result<()> {
     }
 
     print_separator();
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// serve — run the storage API in the foreground
+// ---------------------------------------------------------------------------
+
+async fn serve() -> Result<()> {
+    let cfg = KwaaiNetConfig::load_or_create()?;
+    let Some(ref storage) = cfg.storage else {
+        print_warning("Storage not initialized. Run: kwaainet storage init");
+        return Ok(());
+    };
+
+    let vpk_port = cfg.vpk_local_port.unwrap_or(7432);
+    let bind_addr = format!("0.0.0.0:{}", vpk_port);
+
+    print_box_header("Storage Fabric — API Server");
+    println!("  PG URL:   {}", storage.pg_url);
+    println!("  Bind:     {}", bind_addr);
+    println!("  Capacity: {:.1} GB", storage.capacity_gb);
+    println!();
+
+    // Connect to PG and run migrations
+    let db = kwaai_storage::StorageDb::connect(&storage.pg_url).await?;
+    db.migrate().await?;
+    print_success("Database connected, migrations applied");
+
+    // Get peer ID for health endpoint
+    let peer_id = crate::identity::NodeIdentity::load_or_create()
+        .map(|id| id.peer_id.to_base58())
+        .unwrap_or_else(|_| "unknown".to_string());
+
+    print_success(&format!("Starting API on {}", bind_addr));
+    print_separator();
+
+    kwaai_storage::run_storage_api(db, &bind_addr, storage.capacity_gb, peer_id).await?;
+
     Ok(())
 }
 

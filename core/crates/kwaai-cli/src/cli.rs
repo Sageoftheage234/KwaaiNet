@@ -518,6 +518,9 @@ pub enum StorageAction {
     /// Show storage health, disk usage, tenant count, and capacity
     Status,
 
+    /// Start the storage API server (runs in foreground)
+    Serve,
+
     /// Start the managed PostgreSQL instance
     Start,
 
