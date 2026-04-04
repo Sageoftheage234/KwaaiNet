@@ -212,6 +212,29 @@ When `--eve-endpoint` is omitted, targets local VPK. When provided, targets a re
 
 ---
 
+## Security: Search by Index Protocol
+
+A key security property of the storage fabric: **Eve never returns vectors, only indices and scores.**
+
+When Bob searches, Eve computes cosine similarity on stored vectors and returns only:
+- **Scrambled document IDs** (opaque integers — not real document IDs)
+- **Similarity scores**
+
+Eve never returns the stored vectors themselves. Bob then:
+1. Reverse-maps scrambled IDs → real document IDs using his **private index mapping table** (a secret held only by Bob)
+2. Looks up the actual documents in his **local knowledge base**
+
+This provides three security benefits:
+- **Bandwidth reduction**: returning indices + scores is 100-1000x less data than returning full vectors
+- **No vector leakage**: even if Eve is compromised, encrypted vectors never cross the network boundary during search
+- **Index mapping as a secret**: the scrambled_id ↔ real_doc_id mapping is known only to Bob, providing an additional layer of privacy beyond encryption
+
+The current API already returns only `{id, score}` pairs (no vectors). When encryption is added later, the `id` field becomes a scrambled ID that only Bob can decode, and vectors stored on Eve are encrypted so even Eve's database administrator cannot read them.
+
+> **Not yet implemented**: Index scrambling and mapping are part of the PHE encryption layer. The current plaintext implementation uses real document IDs. When PHE is integrated, Bob will scramble IDs before upload and unscramble after search.
+
+---
+
 ## Auth Model: Storage Intent Protocol
 
 Per [`network-and-intent-routing.md`](network-and-intent-routing.md), storage rental follows the same 6-phase intent lifecycle as inference:
