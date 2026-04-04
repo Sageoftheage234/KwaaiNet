@@ -48,6 +48,7 @@ KwaaiNet's compute layer (block-sharded inference) is shipped. The storage fabri
 | PG provisioning | **KwaaiNet-managed** | `kwaainet storage init` installs PG+pgvector, creates a dedicated data dir, runs migrations. Operators don't need to be DBAs. |
 | Auth (Phase 1) | **PeerId + tenant_secret** | Bob registers with PeerId, Eve issues a UUID API key. Simple, functional. Designed for upgrade to Ed25519-signed requests via intent protocol. |
 | HNSW tuning | **m=16, ef_construction=64** | Optimized for 10k–500k chunks per tenant per benchmarking results. |
+| Index strategy | **Flat first, HNSW optional** | See "Index Strategy" section below. When Bob shards across many Eves, each holds a small slice where brute-force beats HNSW. |
 
 ---
 
@@ -209,6 +210,36 @@ When `--eve-endpoint` is omitted, targets local VPK. When provided, targets a re
 **Enhanced `kwaainet vpk status`** — per-tenant breakdown from health endpoint.
 
 **DHT update** — add `total_vectors: u64` to `VpkInfo` struct in `node.rs`.
+
+---
+
+## Index Strategy: Flat vs HNSW
+
+The [vector DB benchmarking study](https://github.com/Kwaai-AI-Lab/vector_dbs_benchmarking) found that HNSW only delivers benefits at scale (10k+ vectors). Below that threshold, HNSW graphs suffer from sparse connectivity and poor layer distribution — the "warm-up phenomenon" shows up to 74% latency reduction as corpus grows from 1k to 50k chunks.
+
+**In a sharded deployment, each Eve holds a small slice.** A Bob with a 1GB knowledge base (~250k vectors at 384-dim) sharded across 100 Eves means each Eve holds ~2,500 vectors. At that scale:
+
+- Brute-force flat search (sequential scan) is O(n) but with tiny n
+- HNSW index adds write overhead (graph maintenance) with no read benefit
+- Flat search uses less memory (no graph structure)
+- PGVector's `<=>` operator works on both indexed and unindexed columns
+
+**Plan: default to flat (no index), with HNSW as a per-tenant opt-in when vector count exceeds a threshold.**
+
+The `ensure_table()` method should:
+1. Create the table without an HNSW index (flat search)
+2. When vector count crosses a configurable threshold (e.g., 10k), automatically create the HNSW index
+3. Expose the threshold as a config option so operators can tune it
+
+**Benchmark to validate:** We need to measure the crossover point on PGVector specifically:
+- Flat scan vs HNSW at 1k, 5k, 10k, 25k, 50k vectors (384-dim)
+- Measure: P50/P95 query latency, insert throughput, memory overhead
+- Test on typical Eve hardware (consumer machines, not cloud)
+- Compare with the benchmarking study's Chroma/FAISS/PGVector results
+
+This benchmark will tell us the exact threshold where HNSW pays for itself in the KwaaiNet deployment model.
+
+> **Current implementation**: HNSW index is always created. This will be changed to flat-first with auto-HNSW after the benchmark validates the crossover point.
 
 ---
 

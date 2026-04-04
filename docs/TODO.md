@@ -284,6 +284,11 @@ Metal decode is 130s/token while CPU is 0.2s/token. Prefill is the opposite (Met
 - [ ] **Default tenant bootstrap in `database/mod.rs`** — on first startup after migration, auto-create a "default" tenant and adopt existing NULL-tenant rows. Ensures seamless upgrade from single-tenant.
 - [ ] **`TenantQueries` in `database/queries.rs`** — CRUD operations for tenants table: create, get, list, update status, soft-delete.
 
+### Benchmark — Flat vs HNSW crossover point (KwaaiNet repo)
+
+- [ ] **PGVector flat vs HNSW benchmark** — Measure query latency (P50/P95) and insert throughput for flat scan vs HNSW index at 1k, 5k, 10k, 25k, 50k vectors (384-dim, f32) on consumer hardware. When Bob shards a 1GB KB across 100 Eves, each Eve holds ~2,500 vectors — HNSW warm-up penalty likely makes flat search faster at that scale. Find the exact crossover point. Use `kwaai-storage` crate's `VectorStore` directly. Compare with benchmarking study results.
+- [ ] **Auto-index threshold in VectorStore** — After benchmark, change `ensure_table()` to create tables without HNSW index by default. Add background task or trigger to create HNSW index when vector count exceeds threshold (e.g., 10k). Make threshold configurable per-tenant or globally.
+
 ### Phase 2 — PGVector Eve storage backend (PHE repo)
 
 - [ ] **`VectorStorage` trait in `vectordb/client.rs`** — extract async trait with `upload_vectors`, `search`, `delete_vectors`, `health_check`, `clear`, `count` methods. Rename `VectorDBClient` → `InMemoryVectorStorage`.
