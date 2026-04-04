@@ -264,6 +264,65 @@ Metal decode is 130s/token while CPU is 0.2s/token. Prefill is the opposite (Met
 
 ---
 
+## Storage Fabric — Multi-Tenant Eve Nodes
+
+> Full plan: [`docs/storage-fabric-plan.md`](storage-fabric-plan.md)
+> PHE repo: `github.com/Kwaai-AI-Lab/PHE`
+> Benchmarking rationale: `github.com/Kwaai-AI-Lab/vector_dbs_benchmarking`
+
+### Phase 0 — Eve operator CLI (KwaaiNet repo)
+
+- [ ] **`kwaainet storage init` command** — provision local PostgreSQL+pgvector, create database, download PHE binary, run migrations, save `StorageConfig` to `~/.kwaainet/config.yaml`. New file: `storage.rs`. Follow `setup.rs` pattern for dependency installation. macOS: `brew install postgresql@17 pgvector`. Linux: apt equivalent.
+- [ ] **`StorageConfig` in config.rs** — add `storage: Option<StorageConfig>` to `KwaaiNetConfig` with fields: `pg_url`, `data_path`, `capacity_gb`, `pg_port` (default 5433).
+- [ ] **`kwaainet storage status/start/stop/destroy`** — PG lifecycle management commands. `status` shows disk usage, tenant count, capacity remaining.
+- [ ] **PG+PHE lifecycle in `kwaainet start/stop`** — when `storage` config exists, start/stop PostgreSQL and PHE alongside p2pd. Wire into `node.rs` daemon lifecycle.
+- [ ] **`Storage(StorageArgs)` in cli.rs + main.rs** — add `Storage` command variant with `Init/Status/Start/Stop/Destroy` subcommands.
+
+### Phase 1 — Database migration for multi-tenancy (PHE repo)
+
+- [ ] **`migrations/20260404_004_multi_tenancy.sql`** — create `tenants` table (tenant_id UUID, peer_id, display_name, capacity_limit_mb, status, timestamps). Add nullable `tenant_id` column to `documents`, `index_mapping`, `audit_log`, `encryption_keys`.
+- [ ] **Default tenant bootstrap in `database/mod.rs`** — on first startup after migration, auto-create a "default" tenant and adopt existing NULL-tenant rows. Ensures seamless upgrade from single-tenant.
+- [ ] **`TenantQueries` in `database/queries.rs`** — CRUD operations for tenants table: create, get, list, update status, soft-delete.
+
+### Phase 2 — PGVector Eve storage backend (PHE repo)
+
+- [ ] **`VectorStorage` trait in `vectordb/client.rs`** — extract async trait with `upload_vectors`, `search`, `delete_vectors`, `health_check`, `clear`, `count` methods. Rename `VectorDBClient` → `InMemoryVectorStorage`.
+- [ ] **`PgVectorClient` in `vectordb/pgvector.rs`** — PGVector-backed storage. Per-tenant table (`eve_vectors_{tenant_hex8}`) with HNSW index (m=16, ef_construction=64). Methods: batch INSERT, `ORDER BY embedding <=> $1` search, `pg_total_relation_size()` capacity tracking.
+- [ ] **`EveStorageConfig` in `config.rs`** — backend enum (InMemory/PgVector), `pgvector_url`, HNSW params with defaults.
+- [ ] **Update `ShardManager` in `shard/manager.rs`** — change `Shard.client` from `Arc<VectorDBClient>` to `Arc<dyn VectorStorage>`. Accept factory fn or pre-built storage backends.
+- [ ] **Add `pgvector = "0.4"` to `Cargo.toml`** — verify compatibility with existing `tokio-postgres 0.7`.
+
+### Phase 3 — Tenant-aware VPK core (PHE repo)
+
+- [ ] **`TenantManager` in `tenant/manager.rs`** — create, delete (soft), list, get, stats, check_capacity. Uses `TenantQueries`.
+- [ ] **`TenantContext` in `vpk/core.rs`** — per-tenant crypto state: key_id, DimensionalScrambling, EncryptionPipeline, IndexScrambler, ShardManager. Lazy-loaded via `ensure_tenant_context(tenant_id)`.
+- [ ] **Thread `tenant_id` through VPK methods** — `upload_document`, `upload_documents`, `query` all gain `tenant_id: Uuid` parameter. `VPK` struct gains `tenant_manager` and `tenant_contexts: HashMap<Uuid, TenantContext>`.
+- [ ] **Tenant-scope `database/queries.rs`** — all query structs gain `WHERE tenant_id = $N` clauses. Existing parameterless methods route to default tenant.
+- [ ] **Per-tenant index mapping caches** — `index/mapping.rs` caches become `HashMap<Uuid, HashMap<i64, i64>>`.
+
+### Phase 4 — Eve HTTP API for remote Bobs (PHE repo)
+
+- [ ] **Tenant CRUD routes in `api/mod.rs`** — `POST /api/tenants` (create), `GET /api/tenants` (list), `GET /api/tenants/{id}` (info+stats), `DELETE /api/tenants/{id}` (soft-delete).
+- [ ] **Per-tenant vector routes** — `POST /api/tenants/{id}/vectors` (upload encrypted), `POST /api/tenants/{id}/search` (search encrypted), `DELETE /api/tenants/{id}/vectors` (delete). All endpoints accept already-encrypted data.
+- [ ] **Enhanced `/api/health` response** — add `tenant_count`, `total_vectors`, `capacity_gb_total`, `capacity_gb_available`, `version`, `peer_id` fields. Must be compatible with KwaaiNet's `check_vpk_health()` in `node.rs`.
+- [ ] **Backward-compatible legacy routes** — existing `/api/upload`, `/api/search` continue to work via default tenant.
+- [ ] **Tenant auth (Phase 1)** — tenant creation returns `tenant_secret` (UUID). Subsequent requests include `Authorization: Bearer <tenant_secret>`. All endpoints accept optional auth header. `peer_id` recorded in audit log.
+
+### Phase 5 — Remote shard client (PHE repo)
+
+- [ ] **`RemoteEveClient` in `vectordb/remote.rs`** — implements `VectorStorage` over HTTP. Maps trait methods to Eve's tenant API: `upload_vectors` → `POST /api/tenants/{id}/vectors`, `search` → `POST /api/tenants/{id}/search`, etc.
+- [ ] **Update `ShardEndpoint` in `config.rs`** — `endpoint` now carries remote Eve URL + tenant_id for production use.
+- [ ] **Bob's workflow integration** — discover Eves via DHT → create tenants → configure shard_configs → encrypt locally → fan out to remote Eves → merge results.
+
+### Phase 6 — KwaaiNet CLI updates (KwaaiNet repo)
+
+- [ ] **`TenantAction` subcommands in `cli.rs`** — `kwaainet vpk tenant create/list/info/delete` with `--eve-endpoint` flag (omitted = local, provided = remote Eve).
+- [ ] **Tenant CLI handlers in `vpk.rs`** — `tenant_create()`, `tenant_list()`, `tenant_info()`, `tenant_delete()`. HTTP calls to Eve tenant API, formatted with `display.rs`.
+- [ ] **Enhanced `vpk status`** — show per-tenant breakdown from enhanced health endpoint.
+- [ ] **DHT advertisement update in `node.rs`** — add `total_vectors: u64` to `VpkInfo`, emit in `to_msgpack_value()`.
+
+---
+
 ## Networking
 
 - [ ] **Fix relay fallback** — `metro@kwaai` (peer `...5bZ251`) connects via p2p-circuit relay through `76.91.214.120` instead of direct on configured public IP `75.141.127.202:8080`. Node should establish a direct connection. Investigate NAT traversal / port forwarding and `announceAddrs` config.
