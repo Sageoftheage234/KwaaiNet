@@ -34,7 +34,7 @@ use tracing_subscriber::EnvFilter;
 
 use cli::{Cli, Command, MonitorAction, ServeArgs, ServiceAction};
 use config::KwaaiNetConfig;
-use daemon::{DaemonManager, ShardManager};
+use daemon::{DaemonManager, ShardManager, StorageApiManager};
 use display::*;
 use kwaai_inference::{EngineConfig, InferenceEngine, InferenceProvider, ModelFormat};
 
@@ -285,6 +285,21 @@ async fn main() -> Result<()> {
                     }
                 }
 
+                // Auto-start storage API if Eve storage is configured
+                #[cfg(feature = "storage")]
+                if cfg.storage.is_some() {
+                    match StorageApiManager::spawn_storage_child() {
+                        Ok(storage_pid) => {
+                            StorageApiManager::new().write_pid(storage_pid);
+                            print_success(&format!("Storage API started    (PID {})", storage_pid));
+                            print_info("Storage logs: kwaainet logs --storage");
+                        }
+                        Err(e) => {
+                            print_warning(&format!("Could not start storage API: {e}"));
+                        }
+                    }
+                }
+
                 print_info("Check status: kwaainet status");
                 print_info("View logs:    kwaainet logs");
                 print_info("Stop daemon:  kwaainet stop");
@@ -301,11 +316,16 @@ async fn main() -> Result<()> {
         Command::Stop => {
             let mgr = DaemonManager::new();
             print_box_header("🛑 Stopping KwaaiNet Node");
-            // Stop shard server first (it depends on the p2p daemon)
+            // Stop dependents first before the main daemon
             let shard_mgr = ShardManager::new();
             if shard_mgr.is_running() {
                 shard_mgr.stop_process();
                 print_success("Shard server stopped");
+            }
+            let storage_mgr = StorageApiManager::new();
+            if storage_mgr.is_running() {
+                storage_mgr.stop_process();
+                print_success("Storage API stopped");
             }
             mgr.stop_process()?;
             print_success("KwaaiNet daemon stopped");
@@ -374,6 +394,21 @@ async fn main() -> Result<()> {
                 print_info("Start shard: kwaainet start --daemon --shard");
             }
 
+            // Show storage API status (only meaningful when storage is configured)
+            let storage_mgr = StorageApiManager::new();
+            let cfg = KwaaiNetConfig::load_or_create().unwrap_or_default();
+            if cfg.storage.is_some() {
+                println!();
+                if storage_mgr.is_running() {
+                    let storage_pid = storage_mgr.read_pid().unwrap_or(0);
+                    let port = cfg.vpk_local_port.unwrap_or(7432);
+                    println!("  🟢 Storage: Running (PID {}, port {})", storage_pid, port);
+                } else {
+                    println!("  🔴 Storage: Not running");
+                    print_info("Restart node: kwaainet stop && kwaainet start --daemon");
+                }
+            }
+
             print_separator();
         }
 
@@ -383,6 +418,8 @@ async fn main() -> Result<()> {
         Command::Logs(args) => {
             let log_path = if args.shard {
                 config::log_dir().join("shard.log")
+            } else if args.storage {
+                config::log_dir().join("storage_serve.log")
             } else {
                 config::log_file()
             };
