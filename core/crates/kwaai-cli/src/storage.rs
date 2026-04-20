@@ -14,8 +14,9 @@ pub async fn run(args: StorageArgs) -> Result<()> {
         StorageAction::Init {
             capacity_gb,
             port,
+            data_dir,
             endpoint,
-        } => init(capacity_gb, port, endpoint).await,
+        } => init(capacity_gb, port, data_dir, endpoint).await,
         StorageAction::Status => status().await,
         StorageAction::Serve => serve().await,
         StorageAction::Start => start(),
@@ -31,13 +32,14 @@ pub async fn run(args: StorageArgs) -> Result<()> {
 async fn init(
     capacity_gb: f64,
     vpk_port: u16,
+    data_dir_override: Option<PathBuf>,
     endpoint: Option<String>,
 ) -> Result<()> {
     print_box_header("Storage Fabric — Init");
 
     // 1. Open (or create) the embedded store -----------------------------------
     println!("  [1/2] Opening embedded vector store…");
-    let data_dir = default_data_dir();
+    let data_dir = data_dir_override.unwrap_or_else(default_data_dir);
     kwaai_storage::StorageDb::open(&data_dir)
         .with_context(|| format!("cannot open embedded store at {}", data_dir.display()))?;
     println!("         Store ready at {}", data_dir.display());

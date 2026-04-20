@@ -506,6 +506,11 @@ pub enum StorageAction {
         #[arg(long, default_value = "7432")]
         port: u16,
 
+        /// Path to store vector data (default: ~/.kwaainet/storage).
+        /// Use this to point to an external or secondary drive.
+        #[arg(long, value_name = "PATH")]
+        data_dir: Option<std::path::PathBuf>,
+
         /// Public endpoint to advertise on DHT (omit for local-only)
         #[arg(long, value_name = "URL")]
         endpoint: Option<String>,
@@ -523,7 +528,7 @@ pub enum StorageAction {
     /// Stop the storage API HTTP server
     Stop,
 
-    /// Remove storage configuration (does not touch the external PostgreSQL)
+    /// Remove storage configuration and delete the embedded vector store
     Destroy {
         /// Skip the confirmation prompt
         #[arg(long, short = 'y')]
