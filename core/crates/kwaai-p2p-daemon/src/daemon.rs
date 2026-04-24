@@ -27,6 +27,8 @@ pub struct DaemonBuilder {
     nat_portmap: bool,
     host_addrs: Vec<String>,
     announce_addrs: Vec<String>,
+    trusted_relays: Vec<String>,
+    force_reachability_private: bool,
     metrics: bool,
     metrics_addr: Option<String>,
     /// Path to a protobuf-encoded Ed25519 private key file (`-id` flag).
@@ -101,6 +103,30 @@ impl DaemonBuilder {
     {
         self.announce_addrs
             .extend(addrs.into_iter().map(|s| s.into()));
+        self
+    }
+
+    /// Set trusted relay peers for AutoRelay (`-trustedRelays` flag)
+    ///
+    /// These peers are tried as circuit relay servers. Typically the bootstrap
+    /// peers, which run with `-relay=1 -relayService=1`.
+    pub fn trusted_relays<I, S>(mut self, relays: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.trusted_relays
+            .extend(relays.into_iter().map(|s| s.into()));
+        self
+    }
+
+    /// Force the node to be treated as behind NAT (`-forceReachabilityPrivate`)
+    ///
+    /// Skips AutoNAT probing and immediately activates AutoRelay to obtain
+    /// relay circuit addresses. Without this, a NATed node must wait for 3+
+    /// peers to probe it — which may never happen in small networks.
+    pub fn force_reachability_private(mut self, enable: bool) -> Self {
+        self.force_reachability_private = enable;
         self
     }
 
@@ -215,11 +241,22 @@ impl DaemonBuilder {
         // AutoRelay (this node uses relay servers when behind NAT)
         if self.auto_relay {
             cmd.arg("-autoRelay");
+            // Use static trusted relays instead of DHT-based relay discovery
+            // when trusted relays are configured. DHT discovery requires a
+            // populated routing table which NATed nodes may not have.
+            if !self.trusted_relays.is_empty() {
+                cmd.arg("-relayDiscovery=false");
+            }
         }
 
         // AutoNAT
         if self.auto_nat {
             cmd.arg("-autonat");
+        }
+
+        // Force reachability private (skip AutoNAT, activate relay immediately)
+        if self.force_reachability_private {
+            cmd.arg("-forceReachabilityPrivate");
         }
 
         // NAT port mapping
@@ -235,6 +272,12 @@ impl DaemonBuilder {
         // Announce addrs (public addresses to advertise in the DHT)
         if !self.announce_addrs.is_empty() {
             cmd.arg("-announceAddrs").arg(self.announce_addrs.join(","));
+        }
+
+        // Trusted relay peers for AutoRelay
+        if !self.trusted_relays.is_empty() {
+            cmd.arg("-trustedRelays")
+                .arg(self.trusted_relays.join(","));
         }
 
         // Metrics
@@ -262,6 +305,11 @@ impl DaemonBuilder {
             cmd.arg("-id").arg(key_path);
         }
 
+        // Forward GOLOG_LOG_LEVEL to the Go daemon for diagnostics
+        if let Ok(level) = std::env::var("GOLOG_LOG_LEVEL") {
+            cmd.env("GOLOG_LOG_LEVEL", level);
+        }
+
         // Redirect stderr for logging
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
@@ -284,19 +332,24 @@ impl DaemonBuilder {
 
         info!("Daemon process spawned (PID: {:?})", child.id());
 
-        // Capture stderr in a background task so we can surface crash reasons
+        // Capture stderr in a background task so we can surface crash reasons.
+        // When GOLOG_LOG_LEVEL is set, also log lines as they arrive so
+        // go-libp2p diagnostics are visible in `docker compose logs`.
         let stderr_buf: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
         if let Some(stderr) = child.stderr.take() {
             let buf = stderr_buf.clone();
+            let forward_logs = std::env::var("GOLOG_LOG_LEVEL").is_ok();
             tokio::spawn(async move {
-                let mut reader = stderr;
+                use tokio::io::AsyncBufReadExt;
+                let mut lines = tokio::io::BufReader::new(stderr).lines();
                 let mut output = String::new();
-                // Read up to 8KB — enough for crash diagnostics
-                let mut raw = vec![0u8; 8192];
-                loop {
-                    match reader.read(&mut raw).await {
-                        Ok(0) | Err(_) => break,
-                        Ok(n) => output.push_str(&String::from_utf8_lossy(&raw[..n])),
+                while let Ok(Some(line)) = lines.next_line().await {
+                    if forward_logs {
+                        debug!(target: "p2pd", "{}", line);
+                    }
+                    if output.len() < 8192 {
+                        output.push_str(&line);
+                        output.push('\n');
                     }
                 }
                 *buf.lock().await = output;

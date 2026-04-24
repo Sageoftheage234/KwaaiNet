@@ -360,9 +360,11 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
         .relay(!config.no_relay)
         .auto_relay(true)
         .auto_nat(true)
+        .force_reachability_private(announce_addr.is_none() && !config.no_relay)
         .nat_portmap(true)
         .host_addrs([host_addr])
         .bootstrap_peers(bootstrap_peers.clone())
+        .trusted_relays(bootstrap_peers.clone())
         .with_identity_key(&identity_key_path);
 
     let builder = if let Some(ref addr) = announce_addr {
