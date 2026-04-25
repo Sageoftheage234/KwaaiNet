@@ -163,6 +163,194 @@ This generates `~/.kwaainet/identity.key` (Ed25519 keypair) and creates a defaul
 > If `kwaainet start` reports that `p2pd` is missing (e.g. manual install from a `.tar.xz`), run `kwaainet setup --get-deps` to download and install it automatically.
 
 Start the node:
+- ✅ **Smart Default Node Name** — `kwaainet setup` now generates `{USER}-{OS}-{ARCH}` (e.g. `alice-linux-aarch64`) instead of `anonymous@kwaai`, making nodes identifiable on the map without manual configuration
+- ✅ **v0.1.1 Released** — first public release with native pre-built binaries for all four platforms; install cycle validated stop → download → install → node on map in ~46 s (no build tools required)
+- ✅ **One-Command Install** — `curl -fsSL .../install.sh | bash` auto-detects platform, installs binaries, runs setup + benchmark, and starts the node; tested on macOS and Linux
+- ✅ **All Four Platform Binaries Tested** — macOS Apple Silicon (M4) and macOS Intel built and tested natively; Linux x86_64 built and tested by Metro on a remote machine; Windows x86_64 (Intel NUC) built and uploaded — all nodes confirmed live on [map.kwaai.ai](https://map.kwaai.ai)
+- ✅ **VPK P2P Vector Database Integration (Phase 1)** — `kwaainet vpk enable/disable/status/discover` commands; nodes advertise VPK capability via `_kwaai.vpk.nodes` DHT key; per-block `vpk` field added to DHT announcements; bridges KwaaiNet nodes to the PHE/VPK encrypted vector database
+- ✅ **Decentralized Trust Graph** — `kwaai-trust` crate implements the ToIP/DIF DTG framework: W3C Verifiable Credentials, `did:peer:` DIDs derived from libp2p PeerIds, Ed25519 signature verification, credential storage at `~/.kwaainet/credentials/`, weighted trust scoring with time-decay, and `kwaainet identity` CLI commands. Trust attestations are included in DHT announcements; map.kwaai.ai can now display trust badges alongside nodes
+- ✅ **Persistent Node Identity** — each node generates and stores a permanent Ed25519 keypair at `~/.kwaainet/identity.key`; the same `PeerId` (and `did:peer:`) is used across restarts, making Verifiable Credentials meaningful
+- ✅ **Bootstrap Resilience** — node announces to all configured bootstrap peers in parallel; if the primary is down the secondary takes over automatically, so `kwaainet start` succeeds even when `bootstrap-1` is unreachable
+- ✅ **`kwaainet start --daemon`** — one command starts a fully managed background node, confirmed **online** on [map.kwaai.ai](https://map.kwaai.ai)
+- ✅ **`kwaainet serve`** — OpenAI-compatible API server (`/v1/models`, `/v1/chat/completions`, `/v1/completions` with SSE streaming); any OpenAI client library works out of the box
+- ✅ **GGUF Tokenizer Special Tokens Fixed** — control tokens (e.g. `<|eot_id|>`) are now registered as `added_tokens` in the HuggingFace tokenizer; generation stops correctly at EOS instead of running to the token limit and leaking raw special-token strings into responses
+- ✅ **Native Rust CLI** — `kwaainet` binary runs nodes directly via `kwaai-p2p` + `kwaai-hivemind-dht` (no Python required)
+- ✅ **Smart Model Selection** — reads the live network map at startup, cross-references locally installed Ollama models, and auto-selects the best model to serve (most popular on the network that you have locally)
+- ✅ **Canonical DHT Prefix** — uses the map's official `dht_prefix` (e.g. `Llama-3-1-8B-Instruct-hf`) so your node joins the correct swarm instead of creating a broken separate entry
+- ✅ **Metal GPU Inference** — native Apple Silicon GPU acceleration via candle + Metal; **33+ tok/s** on M4 Pro with GGUF Q4_K_M
+- ✅ **`kwaainet benchmark`** — fast throughput measurement (warm-up + 20 timed decode steps, completes in <1 s) saved to cache for accurate DHT announcements
+- ✅ **Direct Connection Detection** — announces `using_relay: false` when a public IP is configured, giving full throughput credit on the map
+- ✅ **Full Petals/Hivemind DHT Compatibility** — DHT announcements, RPC health checks, 120-second re-announcement
+- 🌐 **Live Node**: `KwaaiNet-RUST-Node` serving `Llama-3.1-8B-Instruct` blocks 0–7 at **33.2 tok/s**
+
+**What This Means:** Download a single archive for your platform, run `kwaainet setup` once, and `kwaainet start --daemon` launches a production-ready distributed AI node in the background. No Python, no build tools, no configuration required. The node reads the network map, picks the best locally-available model, joins the correct DHT swarm, and appears on [map.kwaai.ai](https://map.kwaai.ai) — all in native Rust.
+
+## Vision
+
+KwaaiNet is creating a new paradigm for AI infrastructure - one where users maintain complete sovereignty over their computational contributions and personal data. We're building an open-source distributed AI platform that combines:
+
+- **Decentralized AI Compute**: Distributed inference across millions of devices
+- **Privacy-First Architecture**: User-controlled data processing
+- **Modular Integration**: Support for various storage/identity systems
+- **Environmental Accountability**: Carbon-negative computing tracking
+
+KwaaiNet is open-source infrastructure built collaboratively and owned by no single entity.
+
+https://youtu.be/ES9iQWkAFeY
+
+```mermaid
+graph TB
+    subgraph "🏢 Traditional AI (Big Tech)"
+        BigTech[Corporation Controls Everything]
+        TheirData[They Own Your Data]
+        TheirCompute[They Own Compute]
+        TheirProfit[Closed Source]
+    end
+
+    subgraph "👤 KwaaiNet Distributed AI"
+        You[Community-Driven Platform]
+        YourData[User Data Sovereignty]
+        YourCompute[Distributed Contribution]
+        YourControl[Open Source Control]
+    end
+
+    subgraph "🌍 Core Services"
+        AI[🤖 AI Compute<br/>Distributed Inference]
+        Storage[🔐 Optional Storage<br/>Modular Integration]
+        Identity[🆔 Optional Identity<br/>Multiple Providers]
+    end
+
+    subgraph "🌱 Accountability"
+        Contribute[Contribute Resources]
+        Track[Track Contributions]
+        Green[Carbon Footprint Tracking]
+    end
+
+    BigTech -.->|❌ Extracted| TheirData
+    BigTech -.->|❌ Centralized| TheirCompute
+    BigTech -.->|❌ Proprietary| TheirProfit
+
+    You -->|✅ Sovereign| YourData
+    You -->|✅ Distributed| YourCompute
+    You -->|✅ Open Source| YourControl
+
+    YourData --> Storage
+    YourCompute --> AI
+    YourControl --> Identity
+
+    AI --> Contribute
+    Storage --> Contribute
+    Identity --> Contribute
+    Contribute --> Track
+    Track --> Green
+
+    style You fill:#10B981,color:#fff,stroke:#059669
+    style BigTech fill:#EF4444,color:#fff,stroke:#DC2626
+    style AI fill:#3B82F6,color:#fff
+    style Storage fill:#8B5CF6,color:#fff
+    style Identity fill:#F59E0B,color:#fff
+    style Track fill:#10B981,color:#fff
+```
+
+**The shift is simple**: Instead of Big Tech controlling AI infrastructure, the community builds and maintains it collaboratively.
+
+---
+
+## Guiding Principles: GliaNet Fiduciary Pledge
+
+Kwaai is a proud signatory of the [**GliaNet Fiduciary Pledge**](https://www.glianetalliance.org/pledge), committing KwaaiNet to the highest standards of user protection. This pledge becomes a foundational principle for the entire network.
+
+### The PEP Model
+ 
+
+### Node Operator Trust Hierarchy
+
+The GliaNet Fiduciary Pledge is **optional for node operators** but directly impacts network trust:
+
+```mermaid
+graph LR
+    subgraph "Trust Levels"
+        Pledged[🏅 Fiduciary Node<br/>Signed GliaNet Pledge]
+        Standard[📦 Standard Node<br/>No Pledge]
+    end
+
+    subgraph "Benefits"
+        Priority[Priority Routing]
+        Premium[Premium Task Allocation]
+        Badge[Trust Badge Display]
+        Basic[Basic Participation]
+    end
+
+    Pledged -->|Higher Trust| Priority
+    Pledged -->|More Rewards| Premium
+    Pledged -->|Visible Status| Badge
+    Standard -->|Participates| Basic
+
+    style Pledged fill:#10B981,color:#fff
+    style Standard fill:#6B7280,color:#fff
+```
+
+**Fiduciary Nodes** that sign the pledge receive:
+- 🏅 **Trust Badge**: Visible "GliaNet Fiduciary" status on the network map
+- ⚡ **Priority Routing**: Preferred for sensitive/enterprise workloads
+- 🎯 **Enhanced Reputation**: `FiduciaryPledgeVC` adds 0.30 to the node's trust score (the single highest-weight credential)
+- 🤝 **Enterprise Eligibility**: Required for GDPR/HIPAA compliant workloads
+
+The pledge is enforced via the trust graph: signing generates a `FiduciaryPledgeVC` issued by the GliaNet Foundation and stored in the node's credential wallet. The credential travels with the node in every DHT announcement. Violation triggers VC revocation, immediately dropping the node's trust score.
+
+> *"By signing the GliaNet Fiduciary Pledge, node operators commit to putting users first—protecting their data, enhancing their experience, and promoting their interests above all else."*
+
+---
+
+## Decentralized Trust Graph (DTG)
+
+KwaaiNet implements the [ToIP/DIF Decentralized Trust Graph](https://trustoverip.org) framework — a four-layer model that gives every node a portable, verifiable reputation without any central authority.
+
+### Layer 1 — Identity (already live)
+
+Every node's libp2p `PeerId` (Ed25519 keypair) is a self-certifying identity anchor, functionally equivalent to a `did:key`. KwaaiNet exposes it as a `did:peer:` DID:
+
+```
+did:peer:QmYyQSo1c1Ym7orWxLYvCuxRjeczyuq4GNGbMaFfkMhp4
+```
+
+The keypair is persisted at `~/.kwaainet/identity.key` so the DID is stable across restarts.
+
+### Layer 2 — Verifiable Credentials
+
+Credentials are cryptographically signed W3C VCs, stored at `~/.kwaainet/credentials/` and included in DHT announcements.
+
+| Credential | Issuer | What it proves | Phase |
+|------------|--------|----------------|-------|
+| `SummitAttendeeVC` | Kwaai summit server | Attended a Kwaai Personal AI Summit | **1 — live** |
+| `FiduciaryPledgeVC` | GliaNet Foundation | Signed the GliaNet Fiduciary Pledge | 2 |
+| `VerifiedNodeVC` | Kwaai Foundation | Passed node onboarding checks | 2 |
+| `UptimeVC` | Bootstrap servers | Observed uptime ≥ threshold over N days | 3 |
+| `ThroughputVC` | Peer nodes | Peer-witnessed throughput within X% of announced | 3 |
+| `PeerEndorsementVC` | Any node | "I have transacted with this node reliably" | 4 |
+
+### Layer 3 — Trust Scoring
+
+```
+NodeTrustScore = Σ weight(VC_type) × 0.5^(age_days/365)
+```
+
+| Score | Tier | Typical credentials |
+|-------|------|---------------------|
+| ≥ 0.70 | **Trusted** | FiduciaryPledge + VerifiedNode + Uptime |
+| ≥ 0.40 | **Verified** | VerifiedNode present |
+| ≥ 0.10 | **Known** | SummitAttendee or similar |
+| < 0.10 | **Unknown** | No recognised credentials |
+
+Scores are **local to the querier** — your trust graph may differ from mine. A node's earned VCs travel with it if it changes infrastructure. Phase 4 adds full EigenTrust propagation (Sybil-resistant through endorsement-weight decay).
+
+### Layer 4 — Governance
+
+- **Trusted issuers**: GliaNet Foundation (FiduciaryPledge), Kwaai Foundation (VerifiedNode), bootstrap servers (Uptime/Throughput)
+- **Revocation**: `FiduciaryPledgeVC` can be revoked if the pledge is violated
+- **Enterprise routing**: minimum trust score thresholds for HIPAA/GDPR workloads (Phase 2)
+
+### `kwaainet identity` commands
 
 ```bash
 kwaainet start --daemon --shard
@@ -280,6 +468,7 @@ Learn more at [kwaai.ai](https://www.kwaai.ai) and the [Kwaai-AI-Lab GitHub orga
 | [docs/WHITEPAPER.md](docs/WHITEPAPER.md) | Layer 8: The Decentralized AI Trust Layer (whitepaper) |
 | [nix/README.md](nix/README.md) | Nix build, dev shell, and test infrastructure |
 | [docs/contributor-guide.md](docs/contributor-guide.md) | How to contribute — 1 hour / 1 day / 1 week paths |
+| [docs/NODE_UI_PLANNING.md](docs/NODE_UI_PLANNING.md) | Node dashboard UI plan — status, config, logs, identity |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Development workflow and code contribution guidelines |
 | [CONTRIBUTORS.md](CONTRIBUTORS.md) | Project contributors |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
