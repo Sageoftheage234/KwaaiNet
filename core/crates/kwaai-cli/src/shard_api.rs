@@ -718,6 +718,17 @@ fn detect_gguf_path(
 pub async fn run(args: ShardApiArgs) -> Result<()> {
     use kwaai_inference::tokenizer::Tokenizer as _;
 
+    // Guard before any expensive work (DHT discovery, tokenizer load)
+    if crate::daemon::port_in_use(args.port) {
+        print_warning(&format!(
+            "Port {} is already in use — shard API may already be running.",
+            args.port
+        ));
+        print_info("Stop it: Ctrl-C on the existing process");
+        print_separator();
+        return Ok(());
+    }
+
     let cfg = KwaaiNetConfig::load_or_create()?;
     let model_ref = args.model.as_deref().unwrap_or(&cfg.model).to_string();
     let dht_prefix = match &cfg.model_dht_prefix {

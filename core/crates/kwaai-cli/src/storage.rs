@@ -176,6 +176,19 @@ async fn serve() -> Result<()> {
     let data_dir = PathBuf::from(&storage.data_dir);
     let capacity_gb = storage.capacity_gb;
 
+    let mgr = crate::daemon::StorageApiManager::new();
+    if mgr.is_running() || crate::daemon::port_in_use(vpk_port) {
+        print_warning(&format!(
+            "Storage API is already running on port {}.",
+            vpk_port
+        ));
+        print_info("Check status: kwaainet storage status");
+        print_info("Stop it:      kwaainet storage stop");
+        print_separator();
+        return Ok(());
+    }
+    mgr.write_pid(std::process::id());
+
     print_box_header("Storage Fabric — API Server");
     println!("  Store:    {}", data_dir.display());
     println!("  Bind:     {}", bind_addr);

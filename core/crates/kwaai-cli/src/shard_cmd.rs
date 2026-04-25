@@ -223,6 +223,11 @@ async fn cmd_shard_gap() -> Result<()> {
 async fn cmd_shard_serve(args: ShardServeArgs) -> Result<ShardServeExit> {
     let cfg = KwaaiNetConfig::load_or_create()?;
 
+    if crate::daemon::ShardManager::new().is_running() {
+        print_warning("A shard server is already running (started via `kwaainet start --shard`).");
+        print_info("If intentional, proceed — DHT announcements will overlap.");
+    }
+
     let target_blocks = snap_to_valid_blocks(args.blocks.unwrap_or(cfg.blocks) as usize);
 
     // ── Gap detection — also yields a P2PClient we reuse for handler registration

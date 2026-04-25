@@ -1530,6 +1530,19 @@ async fn serve_command(args: ServeArgs) -> Result<()> {
     println!("  Port:   {}", args.port);
     println!();
 
+    if crate::daemon::port_in_use(args.port) {
+        print_warning(&format!(
+            "Port {} is already in use — API server may already be running.",
+            args.port
+        ));
+        print_info(&format!(
+            "Check with: curl http://localhost:{}/v1/models",
+            args.port
+        ));
+        print_separator();
+        return Ok(());
+    }
+
     let system_ram = {
         use sysinfo::System;
         let mut sys = System::new();

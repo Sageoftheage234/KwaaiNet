@@ -113,6 +113,30 @@ pub enum KwaaiError {
 }
 ```
 
+### CLI Command Idempotency
+
+All commands that start or bind a long-running process **must detect an already-running instance before doing any expensive work** (model loading, DB open, banner printing):
+
+1. **Check first, act second** — probe the port or PID file before the startup banner. The user should never see a crash after a successful-looking startup sequence.
+2. **Port probe** — call `crate::daemon::port_in_use(port)` before `TcpListener::bind()`.
+3. **PID file** — use the relevant `*Manager::is_running()` from `daemon.rs` when a manager exists (`StorageApiManager`, `ShardManager`, `DaemonManager`).
+4. **Exit cleanly** — on detection, call `print_warning(...)` + `print_info(...)` + `return Ok(())`. Do **not** `bail!()` with an error — exit code 0 is correct when the desired state already exists.
+5. **Write the PID** — if the command runs in the foreground without going through a manager's `spawn_*_child()`, call `manager.write_pid(std::process::id())` at startup so `stop`/`status` can track it.
+
+```rust
+// ❌ Never let an OS error propagate as a crash
+let listener = TcpListener::bind(&addr).await?;
+
+// ✅ Friendly detection before bind
+if crate::daemon::port_in_use(port) {
+    print_warning(&format!("Port {} is already in use.", port));
+    print_info("Stop with: kwaainet storage stop");
+    print_separator();
+    return Ok(());
+}
+let listener = TcpListener::bind(&addr).await?;
+```
+
 ### JavaScript/TypeScript Guidelines
 ```javascript
 // Use TypeScript for type safety

@@ -130,6 +130,21 @@ The following areas need contributors. Pick what interests you and open a PR or 
 - [ ] Smoke-test `kwaainet start`, `status`, `stop`, `serve` end-to-end on Windows 10/11
 - [ ] Add Windows to the CI platform matrix (see Testing section below)
 
+### CLI Idempotency — **good first issue**
+
+> **Context**: Several `kwaainet` commands that start long-running servers fail with a raw OS
+> error (`Address already in use (os error 48)`) when already running, instead of detecting the
+> situation and printing a helpful message. A shared `port_in_use()` helper in `daemon.rs` and
+> consistent guard blocks in each command are all that's needed.
+
+- [ ] **Shared helper** — add `pub fn port_in_use(port: u16) -> bool` to `daemon.rs` and reuse across all fixes
+- [ ] **`kwaainet storage serve`** (`storage.rs:167`) — check `StorageApiManager::is_running()` + port probe before the startup banner; write PID at startup so `status`/`stop` can track direct invocations
+- [ ] **`kwaainet serve`** (`main.rs:1524`) — port probe **before model loading** (model load can take minutes; the check must gate it)
+- [ ] **`kwaainet shard api`** (`shard_api.rs:864`) — port probe just before `TcpListener::bind()`
+- [ ] **`kwaainet shard serve`** (`shard_cmd.rs:223`) — soft warning via `ShardManager::is_running()` (no crash, but duplicate instances produce conflicting DHT announcements)
+
+See `CONTRIBUTING.md` → "CLI Command Idempotency" for the required pattern.
+
 ### Trust Graph (kwaai-trust) — **Phase 2 next up**
 
 > **Context**: The `kwaai-trust` crate ships Phase 1 (VC data model, `did:peer:`
