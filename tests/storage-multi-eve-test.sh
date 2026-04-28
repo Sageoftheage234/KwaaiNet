@@ -15,11 +15,14 @@
 #   # On each Eve machine (run in separate terminals / machines):
 #   bash tests/storage-multi-eve-test.sh eve [<bind-ip>]
 #
-#   # On Bob's machine (comma-separated Eve IPs, no spaces):
-#   bash tests/storage-multi-eve-test.sh bob <eve1-ip>,<eve2-ip>[,<eve3-ip>...]
+#   # On Bob's machine (comma-separated <ip:port> pairs, no spaces):
+#   bash tests/storage-multi-eve-test.sh bob <ip1:port1>,<ip2:port2>[,<ip3:port3>...]
 #
-# EXAMPLE (three Eves on LAN)
-#   bash tests/storage-multi-eve-test.sh bob 192.168.1.10,192.168.1.11,192.168.1.12
+#   Port can be omitted to use the EVE_PORT default (7432):
+#   bash tests/storage-multi-eve-test.sh bob <ip1>,<ip2>
+#
+# EXAMPLE (three Eves — two on the same host, different ports)
+#   bash tests/storage-multi-eve-test.sh bob 192.168.1.10:7432,192.168.1.10:7433,192.168.1.11:7432
 #
 # PREREQUISITES
 #   Bob's machine:
@@ -115,8 +118,8 @@ run_eve() {
     echo -e "  Bind IP:   ${CYAN}${ip}${RESET}"
     echo -e "  Endpoint:  ${CYAN}http://${ip}:${EVE_PORT}${RESET}"
     echo
-    echo -e "  Add ${YELLOW}${ip}${RESET} to Bob's Eve list, then run:"
-    echo -e "    ${YELLOW}bash tests/storage-multi-eve-test.sh bob <ip1>,<ip2>,...${RESET}"
+    echo -e "  Add ${YELLOW}${ip}:${EVE_PORT}${RESET} to Bob's Eve list, then run:"
+    echo -e "    ${YELLOW}bash tests/storage-multi-eve-test.sh bob <ip1:port1>,<ip2:port2>,...${RESET}"
     echo
     echo -e "  ${DIM}Press Ctrl+C to stop.${RESET}"
     echo
@@ -129,13 +132,23 @@ run_eve() {
 # ---------------------------------------------------------------------------
 run_bob() {
     if [[ -z "$ARG2" ]]; then
-        echo "Usage: $0 bob <eve1-ip>,<eve2-ip>[,<eve3-ip>...]"
+        echo "Usage: $0 bob <eve1-ip:port>,<eve2-ip:port>[,...]"
+        echo "  Port is optional; omit to use EVE_PORT (default: ${EVE_PORT})"
         exit 1
     fi
 
-    # Parse Eve IPs into an array
-    IFS=',' read -ra EVE_IPS <<< "$ARG2"
-    local N_EVES=${#EVE_IPS[@]}
+    # Parse <ip:port> entries — port falls back to EVE_PORT when omitted
+    declare -a EVE_APIS
+    IFS=',' read -ra EVE_ENTRIES <<< "$ARG2"
+    local N_EVES=${#EVE_ENTRIES[@]}
+    for i in "${!EVE_ENTRIES[@]}"; do
+        local entry="${EVE_ENTRIES[$i]}"
+        if [[ "$entry" == *:* ]]; then
+            EVE_APIS[$i]="http://${entry}"
+        else
+            EVE_APIS[$i]="http://${entry}:${EVE_PORT}"
+        fi
+    done
 
     echo
     echo -e "${BOLD}╔══════════════════════════════════════════════╗"
@@ -143,8 +156,8 @@ run_bob() {
     echo -e "╚══════════════════════════════════════════════╝${RESET}"
     echo
     label "Eves (${N_EVES}):"
-    for i in "${!EVE_IPS[@]}"; do
-        label "  Eve $((i+1)): http://${EVE_IPS[$i]}:${EVE_PORT}"
+    for i in "${!EVE_APIS[@]}"; do
+        label "  Eve $((i+1)): ${EVE_APIS[$i]}"
     done
     echo
 
@@ -153,10 +166,8 @@ run_bob() {
 
     # ── Step 1: Reachability check for all Eves ───────────────────────────
     step "Step 1 — Check all Eves are reachable"
-    declare -a EVE_APIS
-    for i in "${!EVE_IPS[@]}"; do
-        local api="http://${EVE_IPS[$i]}:${EVE_PORT}"
-        EVE_APIS[$i]="$api"
+    for i in "${!EVE_APIS[@]}"; do
+        local api="${EVE_APIS[$i]}"
         HEALTH=$(curl -sf "${api}/api/health" 2>/dev/null || true)
         if [[ -z "$HEALTH" ]]; then
             fail "Cannot reach Eve $((i+1)) at ${api}. Is storage serve running?"
@@ -336,7 +347,7 @@ model = SentenceTransformer('all-MiniLM-L6-v2')
 emb = model.encode('test isolation').tolist()
 body = json.dumps({'query': emb, 'top_k': 1}).encode()
 req = urllib.request.Request(
-    'http://${EVE_IPS[0]}:${EVE_PORT}/api/tenants/${TENANT_IDS[1]}/search',
+    '${EVE_APIS[0]}/api/tenants/${TENANT_IDS[1]}/search',
     data=body, headers={'Content-Type': 'application/json'}, method='POST')
 try:
     urllib.request.urlopen(req)
