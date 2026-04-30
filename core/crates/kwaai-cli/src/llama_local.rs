@@ -66,7 +66,9 @@ fn sample_next_token(
     // Sort indices by descending logit for top-k / top-p filtering
     let mut indices: Vec<usize> = (0..scaled.len()).collect();
     indices.sort_unstable_by(|&a, &b| {
-        scaled[b].partial_cmp(&scaled[a]).unwrap_or(std::cmp::Ordering::Equal)
+        scaled[b]
+            .partial_cmp(&scaled[a])
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
 
     // Top-k: keep only the top k candidates
@@ -140,11 +142,20 @@ pub fn run_inference(
     print_info("Loading GGUF model via llama.cpp...");
     let (backend, model) = load_model(model_path)?;
 
-    run_inference_with_model(&backend, &model, prompt, max_tokens, temperature, 0, 1.0, |piece| {
-        print!("{piece}");
-        std::io::stdout().flush().ok();
-        true
-    })
+    run_inference_with_model(
+        &backend,
+        &model,
+        prompt,
+        max_tokens,
+        temperature,
+        0,
+        1.0,
+        |piece| {
+            print!("{piece}");
+            std::io::stdout().flush().ok();
+            true
+        },
+    )
 }
 
 /// Run streaming inference using a pre-loaded model.
@@ -162,7 +173,16 @@ pub fn run_inference_streaming(
     top_p: f32,
     on_token: impl Fn(String) -> bool,
 ) -> Result<GenerationResult> {
-    run_inference_with_model(backend, model, prompt, max_tokens, temperature, top_k, top_p, on_token)
+    run_inference_with_model(
+        backend,
+        model,
+        prompt,
+        max_tokens,
+        temperature,
+        top_k,
+        top_p,
+        on_token,
+    )
 }
 
 /// Core inference loop shared by `run_inference` and `run_inference_streaming`.

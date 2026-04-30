@@ -672,14 +672,11 @@ fn detect_gguf_path(
     }
 
     // For auto-detection, require all blocks to be hosted by our peer
-    let covers_all = crate::shard_cmd::build_pinned_path(
-        chain,
-        total_blocks,
-        &std::collections::HashSet::new(),
-    )
-    .ok()
-    .map(|path| path.iter().all(|e| e.peer_id == *our_peer_id))
-    .unwrap_or(false);
+    let covers_all =
+        crate::shard_cmd::build_pinned_path(chain, total_blocks, &std::collections::HashSet::new())
+            .ok()
+            .map(|path| path.iter().all(|e| e.peer_id == *our_peer_id))
+            .unwrap_or(false);
 
     if !covers_all {
         return None;
@@ -828,19 +825,16 @@ pub async fn run(args: ShardApiArgs) -> Result<()> {
     let llama_model: Option<Arc<LlamaModelHolder>> = {
         match detect_gguf_path(&chain, total_blocks, &our_peer_id, &args, &model_ref) {
             Some(gguf_path) => {
-                print_info(&format!(
-                    "Loading llama.cpp model: {}",
-                    gguf_path.display()
-                ));
+                print_info(&format!("Loading llama.cpp model: {}", gguf_path.display()));
                 match crate::llama_local::load_model(&gguf_path) {
                     Ok((backend, model)) => {
-                        print_success("llama.cpp fast path ACTIVE — GPU-accelerated local inference");
+                        print_success(
+                            "llama.cpp fast path ACTIVE — GPU-accelerated local inference",
+                        );
                         Some(Arc::new(LlamaModelHolder { backend, model }))
                     }
                     Err(e) => {
-                        print_warning(&format!(
-                            "llama.cpp load failed, falling back to P2P: {e}"
-                        ));
+                        print_warning(&format!("llama.cpp load failed, falling back to P2P: {e}"));
                         None
                     }
                 }

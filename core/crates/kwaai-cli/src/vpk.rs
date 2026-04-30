@@ -305,7 +305,10 @@ async fn discover(json_output: bool) -> Result<()> {
     }
 
     println!();
-    println!("  Found {} VPK-capable node(s) — verifying reachability…\n", found.len());
+    println!(
+        "  Found {} VPK-capable node(s) — verifying reachability…\n",
+        found.len()
+    );
 
     for (i, entry) in found.iter().enumerate() {
         let short_id = if entry.peer_id.len() > 20 {
@@ -350,7 +353,10 @@ async fn discover(json_output: bool) -> Result<()> {
         if !entry.endpoint.is_empty() && entry.endpoint != "unknown" {
             println!("       Endpoint: {}", entry.endpoint);
         }
-        println!("       Capacity: {:.1} GB  |  Tenants: {}", entry.capacity_gb, entry.tenant_count);
+        println!(
+            "       Capacity: {:.1} GB  |  Tenants: {}",
+            entry.capacity_gb, entry.tenant_count
+        );
         println!();
     }
 

@@ -173,12 +173,15 @@ impl CalibrationEngine {
 
         // Max blocks: based on total hardware capacity (what the machine can do).
         // Available now: based on what is currently free.
-        let (total_capacity, free_capacity, gpu_based) =
-            if let Some(ref gpu) = self.hardware.gpu {
-                (gpu.total_vram, gpu.free_vram, true)
-            } else {
-                (self.hardware.total_memory, self.hardware.available_memory, false)
-            };
+        let (total_capacity, free_capacity, gpu_based) = if let Some(ref gpu) = self.hardware.gpu {
+            (gpu.total_vram, gpu.free_vram, true)
+        } else {
+            (
+                self.hardware.total_memory,
+                self.hardware.available_memory,
+                false,
+            )
+        };
 
         let reserve = if gpu_based { gpu_reserve } else { cpu_reserve };
         let max_usable = total_capacity.saturating_sub(reserve);

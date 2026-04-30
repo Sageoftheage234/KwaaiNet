@@ -61,10 +61,18 @@ pub struct StorageResponse {
 
 impl StorageResponse {
     fn ok(payload: Vec<u8>) -> Self {
-        Self { ok: true, payload, error: None }
+        Self {
+            ok: true,
+            payload,
+            error: None,
+        }
     }
     fn err(msg: impl std::fmt::Display) -> Self {
-        Self { ok: false, payload: vec![], error: Some(msg.to_string()) }
+        Self {
+            ok: false,
+            payload: vec![],
+            error: Some(msg.to_string()),
+        }
     }
 }
 
@@ -90,8 +98,12 @@ pub struct CreateTenantPayload {
     #[serde(default = "default_dimension")]
     pub vector_dimension: usize,
 }
-fn default_capacity() -> i64 { 1024 }
-fn default_dimension() -> usize { 384 }
+fn default_capacity() -> i64 {
+    1024
+}
+fn default_dimension() -> usize {
+    384
+}
 
 #[derive(Serialize, Deserialize)]
 pub struct VectorEntry {
@@ -110,7 +122,9 @@ pub struct SearchPayload {
     #[serde(default = "default_top_k")]
     pub top_k: usize,
 }
-fn default_top_k() -> usize { 5 }
+fn default_top_k() -> usize {
+    5
+}
 
 #[derive(Serialize, Deserialize)]
 pub struct DeleteVectorsPayload {
@@ -125,10 +139,11 @@ pub fn make_storage_rpc_handler(
     db: StorageDb,
     capacity_gb: f64,
     peer_id: String,
-) -> impl Fn(Vec<u8>) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = kwaai_p2p_daemon::Result<Vec<u8>>> + Send>,
-    >
-       + Send
+) -> impl Fn(
+    Vec<u8>,
+) -> std::pin::Pin<
+    Box<dyn std::future::Future<Output = kwaai_p2p_daemon::Result<Vec<u8>>> + Send>,
+> + Send
        + Sync
        + 'static {
     move |req_bytes: Vec<u8>| {
@@ -235,8 +250,11 @@ async fn dispatch(
                 Ok(v) => v,
                 Err(e) => return StorageResponse::err(format!("payload: {e}")),
             };
-            let vectors: Vec<(i64, Vec<f32>)> =
-                input.vectors.into_iter().map(|v| (v.id, v.embedding)).collect();
+            let vectors: Vec<(i64, Vec<f32>)> = input
+                .vectors
+                .into_iter()
+                .map(|v| (v.id, v.embedding))
+                .collect();
             let vs = VectorStore::new(db);
             match vs.upload(tid, &vectors).await {
                 Ok(n) => encode_ok(&n),
@@ -308,7 +326,11 @@ pub async fn rpc_health(client: &P2PClient, peer_id: &PeerId) -> Result<HealthPa
     let resp = call_storage(
         client,
         peer_id,
-        StorageRequest { op: StorageOp::Health, tenant_id: None, payload: vec![] },
+        StorageRequest {
+            op: StorageOp::Health,
+            tenant_id: None,
+            payload: vec![],
+        },
     )
     .await?;
     rmp_serde::from_slice(&resp.payload).context("decode HealthPayload")
@@ -323,7 +345,11 @@ pub async fn rpc_create_tenant(
     let resp = call_storage(
         client,
         peer_id,
-        StorageRequest { op: StorageOp::CreateTenant, tenant_id: None, payload },
+        StorageRequest {
+            op: StorageOp::CreateTenant,
+            tenant_id: None,
+            payload,
+        },
     )
     .await?;
     rmp_serde::from_slice(&resp.payload).context("decode TenantInfo")
@@ -335,8 +361,10 @@ pub async fn rpc_upload_vectors(
     tenant_id: Uuid,
     vectors: Vec<(i64, Vec<f32>)>,
 ) -> Result<usize> {
-    let entries: Vec<VectorEntry> =
-        vectors.into_iter().map(|(id, embedding)| VectorEntry { id, embedding }).collect();
+    let entries: Vec<VectorEntry> = vectors
+        .into_iter()
+        .map(|(id, embedding)| VectorEntry { id, embedding })
+        .collect();
     let payload = rmp_serde::to_vec_named(&UploadPayload { vectors: entries })?;
     let resp = call_storage(
         client,
@@ -410,14 +438,15 @@ pub async fn rpc_delete_tenant(
     .map(|_| ())
 }
 
-pub async fn rpc_list_tenants(
-    client: &P2PClient,
-    peer_id: &PeerId,
-) -> Result<Vec<TenantInfo>> {
+pub async fn rpc_list_tenants(client: &P2PClient, peer_id: &PeerId) -> Result<Vec<TenantInfo>> {
     let resp = call_storage(
         client,
         peer_id,
-        StorageRequest { op: StorageOp::ListTenants, tenant_id: None, payload: vec![] },
+        StorageRequest {
+            op: StorageOp::ListTenants,
+            tenant_id: None,
+            payload: vec![],
+        },
     )
     .await?;
     rmp_serde::from_slice(&resp.payload).context("decode TenantInfo list")

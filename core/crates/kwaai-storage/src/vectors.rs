@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::db::{DbInner, StorageDb, VECTORS_TABLE, f32s_to_bytes, vector_key};
+use crate::db::{f32s_to_bytes, vector_key, DbInner, StorageDb, VECTORS_TABLE};
 
 /// A single search result: opaque doc ID + cosine similarity score.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,11 +37,7 @@ impl VectorStore {
     ///
     /// Each entry is `(doc_id, embedding)`. Doc IDs are opaque to Eve — they
     /// are the scrambled/plain document IDs from Bob's pipeline.
-    pub async fn upload(
-        &self,
-        tenant_id: Uuid,
-        vectors: &[(i64, Vec<f32>)],
-    ) -> Result<usize> {
+    pub async fn upload(&self, tenant_id: Uuid, vectors: &[(i64, Vec<f32>)]) -> Result<usize> {
         if vectors.is_empty() {
             return Ok(0);
         }
@@ -103,11 +99,7 @@ impl VectorStore {
     }
 
     /// Delete vectors by doc ID.
-    pub async fn delete(
-        &self,
-        tenant_id: Uuid,
-        ids: &[i64],
-    ) -> Result<usize> {
+    pub async fn delete(&self, tenant_id: Uuid, ids: &[i64]) -> Result<usize> {
         if ids.is_empty() {
             return Ok(0);
         }

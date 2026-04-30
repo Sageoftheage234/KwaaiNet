@@ -20,14 +20,12 @@ use uuid::Uuid;
 // ---------------------------------------------------------------------------
 
 /// Tenant metadata.  key = UUID bytes (16), value = JSON TenantRecord.
-pub(crate) const TENANTS_TABLE: TableDefinition<&[u8], &[u8]> =
-    TableDefinition::new("tenants");
+pub(crate) const TENANTS_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("tenants");
 
 /// Vector data for all tenants.
 /// key = tenant_id(16 bytes) ++ doc_id(8 bytes big-endian) = 24 bytes.
 /// value = f32 embedding as little-endian bytes.
-pub(crate) const VECTORS_TABLE: TableDefinition<&[u8], &[u8]> =
-    TableDefinition::new("vectors");
+pub(crate) const VECTORS_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("vectors");
 
 // ---------------------------------------------------------------------------
 // TenantRecord — persisted in redb
@@ -212,10 +210,7 @@ impl StorageDb {
             }
         }
 
-        tracing::info!(
-            "storage: loaded {} active tenant(s)",
-            indices.len()
-        );
+        tracing::info!("storage: loaded {} active tenant(s)", indices.len());
         Ok(indices)
     }
 }

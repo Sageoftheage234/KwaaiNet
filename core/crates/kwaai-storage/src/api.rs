@@ -109,8 +109,12 @@ struct CreateTenantRequest {
     vector_dimension: usize,
 }
 
-fn default_capacity() -> i64 { 1024 }
-fn default_dimension() -> usize { 384 }
+fn default_capacity() -> i64 {
+    1024
+}
+fn default_dimension() -> usize {
+    384
+}
 
 async fn create_tenant(
     State(state): State<Arc<AppState>>,
@@ -235,7 +239,9 @@ struct SearchRequest {
     top_k: usize,
 }
 
-fn default_top_k() -> usize { 5 }
+fn default_top_k() -> usize {
+    5
+}
 
 #[derive(Serialize)]
 struct SearchResponse {

@@ -233,7 +233,10 @@ pub struct StorageConfig {
 }
 
 fn default_storage_dir() -> String {
-    kwaainet_dir().join("storage").to_string_lossy().into_owned()
+    kwaainet_dir()
+        .join("storage")
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn default_capacity_gb() -> f64 {

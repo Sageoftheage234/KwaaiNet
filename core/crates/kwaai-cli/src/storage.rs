@@ -71,7 +71,10 @@ async fn init(
         "  │  Store:      {}│",
         truncate_path(&data_dir.to_string_lossy(), 27)
     );
-    println!("  │  Capacity:   {:.1} GB                    │", capacity_gb);
+    println!(
+        "  │  Capacity:   {:.1} GB                    │",
+        capacity_gb
+    );
     println!("  │  VPK port:   {}                      │", vpk_port);
     println!("  │  Mode:       Eve (storage provider)     │");
     if let Some(ref ep) = endpoint {
@@ -118,8 +121,7 @@ async fn status() -> Result<()> {
             println!("  Vectors:     {}", total_vectors);
 
             // Disk usage
-            if let Ok(db_size) = std::fs::metadata(data_dir.join("metadata.redb"))
-                .map(|m| m.len())
+            if let Ok(db_size) = std::fs::metadata(data_dir.join("metadata.redb")).map(|m| m.len())
             {
                 println!("  DB size:     {:.1} KB", db_size as f64 / 1024.0);
             }
@@ -203,11 +205,8 @@ async fn serve() -> Result<()> {
         .unwrap_or_else(|_| "unknown".to_string());
 
     // Register the p2p relay handler so Eve can be reached without port forwarding.
-    let handler = crate::storage_rpc::make_storage_rpc_handler(
-        db.clone(),
-        capacity_gb,
-        peer_id.clone(),
-    );
+    let handler =
+        crate::storage_rpc::make_storage_rpc_handler(db.clone(), capacity_gb, peer_id.clone());
     let daemon_addr = crate::shard_cmd::daemon_socket();
     match kwaai_p2p_daemon::P2PClient::connect(&daemon_addr).await {
         Ok(p2p_client) => {

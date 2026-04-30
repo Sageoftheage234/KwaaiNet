@@ -1167,7 +1167,9 @@ pub async fn cmd_shard_run(args: ShardRunArgs) -> Result<()> {
                         .iter()
                         .filter_map(|tok| tok.get(slot).map(|h| h.3))
                         .collect();
-                    if times.is_empty() { continue; }
+                    if times.is_empty() {
+                        continue;
+                    }
                     let avg = times.iter().sum::<f64>() / times.len() as f64;
                     let min = times.iter().copied().fold(f64::INFINITY, f64::min);
                     let max = times.iter().copied().fold(f64::NEG_INFINITY, f64::max);

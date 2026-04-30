@@ -276,8 +276,7 @@ impl DaemonBuilder {
 
         // Trusted relay peers for AutoRelay
         if !self.trusted_relays.is_empty() {
-            cmd.arg("-trustedRelays")
-                .arg(self.trusted_relays.join(","));
+            cmd.arg("-trustedRelays").arg(self.trusted_relays.join(","));
         }
 
         // Metrics

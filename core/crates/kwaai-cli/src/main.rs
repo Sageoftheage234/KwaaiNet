@@ -19,11 +19,11 @@ mod rebalancer;
 mod service;
 mod setup;
 mod shard_api;
+mod shard_cmd;
 #[cfg(feature = "storage")]
 mod storage;
 #[cfg(feature = "storage")]
 mod storage_rpc;
-mod shard_cmd;
 mod throughput;
 mod uninstall;
 mod updater;
@@ -794,10 +794,16 @@ async fn main() -> Result<()> {
             println!();
             println!("  Recommendations:");
             println!("    🔹 Minimum:       {} blocks", profile.min_blocks);
-            println!("    ⭐ Recommended:   {} blocks", profile.recommended_blocks);
+            println!(
+                "    ⭐ Recommended:   {} blocks",
+                profile.recommended_blocks
+            );
             println!("    🔸 Maximum:       {} blocks", profile.max_blocks);
             println!();
-            println!("    📊 Available now: {} blocks", profile.available_now_blocks);
+            println!(
+                "    📊 Available now: {} blocks",
+                profile.available_now_blocks
+            );
             print_separator();
 
             if let Some(ref apply) = args.apply {
@@ -1074,14 +1080,17 @@ async fn main() -> Result<()> {
                     // Scan ~/.kwaainet/models/
                     let models_dir = dirs::home_dir()?.join(".kwaainet/models");
                     let base = model.split('/').last().unwrap_or(&model).to_lowercase();
-                    std::fs::read_dir(&models_dir).ok()?.flatten().find_map(|e| {
-                        let name = e.file_name().to_string_lossy().to_lowercase();
-                        if name.ends_with(".gguf") && name.contains(&base) {
-                            Some(e.path())
-                        } else {
-                            None
-                        }
-                    })
+                    std::fs::read_dir(&models_dir)
+                        .ok()?
+                        .flatten()
+                        .find_map(|e| {
+                            let name = e.file_name().to_string_lossy().to_lowercase();
+                            if name.ends_with(".gguf") && name.contains(&base) {
+                                Some(e.path())
+                            } else {
+                                None
+                            }
+                        })
                 });
 
                 if let Some(gguf_path) = gguf_path {
@@ -1096,8 +1105,8 @@ async fn main() -> Result<()> {
 
                     println!("  Loading model…");
                     let load_start = std::time::Instant::now();
-                    let (backend, llama_model) = llama_local::load_model(&gguf_path)
-                        .context("Failed to load GGUF model")?;
+                    let (backend, llama_model) =
+                        llama_local::load_model(&gguf_path).context("Failed to load GGUF model")?;
                     let load_secs = load_start.elapsed().as_secs_f64();
                     print_success(&format!("Model loaded ({:.1}s)", load_secs));
                     println!();
@@ -1112,7 +1121,14 @@ async fn main() -> Result<()> {
                     let result = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
                         // Warm-up (untimed, separate context)
                         let _ = llama_local::run_inference_streaming(
-                            &backend, &llama_model, prompt, 5, 1.0, 0, 1.0, |_| true,
+                            &backend,
+                            &llama_model,
+                            prompt,
+                            5,
+                            1.0,
+                            0,
+                            1.0,
+                            |_| true,
                         );
                         // Measured run
                         llama_local::run_inference_streaming(
@@ -1129,8 +1145,7 @@ async fn main() -> Result<()> {
                     .await
                     .map_err(|e| anyhow::anyhow!("benchmark join: {e}"))??;
 
-                    let decode_tps = result.tokens_generated as f64
-                        / (result.decode_ms / 1000.0);
+                    let decode_tps = result.tokens_generated as f64 / (result.decode_ms / 1000.0);
                     let prefill_tps = 1.0 / (result.prefill_ms / 1000.0); // prompt is ~1 logical unit
 
                     // Use standard hidden_size for the model
@@ -1141,13 +1156,8 @@ async fn main() -> Result<()> {
                     };
 
                     println!();
-                    println!(
-                        "  ── Results ───────────────────────────────────────────────"
-                    );
-                    println!(
-                        "  Prefill:     {:>7.1}ms",
-                        result.prefill_ms
-                    );
+                    println!("  ── Results ───────────────────────────────────────────────");
+                    println!("  Prefill:     {:>7.1}ms", result.prefill_ms);
                     println!(
                         "  Decode:      {:>7.1} tok/s  ({} tokens in {:.0}ms)",
                         decode_tps, result.tokens_generated, result.decode_ms
@@ -1202,9 +1212,7 @@ async fn main() -> Result<()> {
                     .context("read model dir")?
                     .filter_map(|e| e.ok())
                     .map(|e| e.path())
-                    .filter(|p| {
-                        p.extension().and_then(|e| e.to_str()) == Some("safetensors")
-                    })
+                    .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("safetensors"))
                     .collect();
                 paths.sort();
                 if paths.is_empty() {
@@ -1222,17 +1230,10 @@ async fn main() -> Result<()> {
                 // Load TransformerShard (same path as shard run --local)
                 println!("  Loading TransformerShard ({} blocks)…", total_blocks);
                 let load_start = std::time::Instant::now();
-                let path_refs: Vec<&std::path::Path> =
-                    paths.iter().map(|p| p.as_path()).collect();
+                let path_refs: Vec<&std::path::Path> = paths.iter().map(|p| p.as_path()).collect();
                 let shard = std::sync::Arc::new(
-                    TransformerShard::load(
-                        &path_refs,
-                        &config_path,
-                        &device,
-                        0,
-                        total_blocks,
-                    )
-                    .context("Failed to load model")?,
+                    TransformerShard::load(&path_refs, &config_path, &device, 0, total_blocks)
+                        .context("Failed to load model")?,
                 );
                 let load_secs = load_start.elapsed().as_secs_f64();
                 print_success(&format!(
@@ -1274,11 +1275,9 @@ async fn main() -> Result<()> {
                                 let logits = bench_shard
                                     .forward_full(session, &ids, sp)
                                     .map_err(|e| anyhow::anyhow!("{e}"))?;
-                                let logits_cpu =
-                                    logits.to_device(&candle_core::Device::Cpu)?;
+                                let logits_cpu = logits.to_device(&candle_core::Device::Cpu)?;
                                 let flat = logits_cpu.flatten_all()?;
-                                let next =
-                                    shard_cmd::sample_token(&flat, 1.0, 0, 1.0)? as u32;
+                                let next = shard_cmd::sample_token(&flat, 1.0, 0, 1.0)? as u32;
                                 sp += ids.len();
                                 ids = vec![next];
                             }
@@ -1290,14 +1289,11 @@ async fn main() -> Result<()> {
                         let logits = bench_shard
                             .forward_full(session, &bench_ids, 0)
                             .map_err(|e| anyhow::anyhow!("{e}"))?;
-                        let prefill_ms =
-                            prefill_start.elapsed().as_secs_f64() * 1000.0;
+                        let prefill_ms = prefill_start.elapsed().as_secs_f64() * 1000.0;
 
-                        let logits_cpu =
-                            logits.to_device(&candle_core::Device::Cpu)?;
+                        let logits_cpu = logits.to_device(&candle_core::Device::Cpu)?;
                         let flat = logits_cpu.flatten_all()?;
-                        let mut id =
-                            shard_cmd::sample_token(&flat, 1.0, 0, 1.0)? as u32;
+                        let mut id = shard_cmd::sample_token(&flat, 1.0, 0, 1.0)? as u32;
 
                         // ── Decode (timed) ───────────────────────────────────
                         let mut sp = n_prompt;
@@ -1306,15 +1302,12 @@ async fn main() -> Result<()> {
                             let logits = bench_shard
                                 .forward_full(session, &[id], sp)
                                 .map_err(|e| anyhow::anyhow!("{e}"))?;
-                            let logits_cpu =
-                                logits.to_device(&candle_core::Device::Cpu)?;
+                            let logits_cpu = logits.to_device(&candle_core::Device::Cpu)?;
                             let flat = logits_cpu.flatten_all()?;
-                            id = shard_cmd::sample_token(&flat, 1.0, 0, 1.0)?
-                                as u32;
+                            id = shard_cmd::sample_token(&flat, 1.0, 0, 1.0)? as u32;
                             sp += 1;
                         }
-                        let decode_ms =
-                            decode_start.elapsed().as_secs_f64() * 1000.0;
+                        let decode_ms = decode_start.elapsed().as_secs_f64() * 1000.0;
 
                         Ok((prefill_ms, decode_ms))
                     })
@@ -1325,9 +1318,7 @@ async fn main() -> Result<()> {
                 let decode_tps = n_steps as f64 / (decode_ms / 1000.0);
 
                 println!();
-                println!(
-                    "  ── Results ───────────────────────────────────────────────"
-                );
+                println!("  ── Results ───────────────────────────────────────────────");
                 println!(
                     "  Prefill:     {:>7.1} tok/s  ({} tokens in {:.0}ms)",
                     prefill_tps, n_prompt, prefill_ms
@@ -1379,7 +1370,9 @@ async fn main() -> Result<()> {
         }
         #[cfg(not(feature = "storage"))]
         Command::Storage(_) => {
-            print_error("Storage support not compiled. Rebuild with: cargo build --features storage");
+            print_error(
+                "Storage support not compiled. Rebuild with: cargo build --features storage",
+            );
         }
 
         // -------------------------------------------------------------------
@@ -1428,7 +1421,9 @@ async fn main() -> Result<()> {
 
             // Check for Node.js
             if Command::new("node").arg("--version").output().is_err() {
-                print_error("Node.js not found. Install Node.js 18+ and ensure it is on your PATH.");
+                print_error(
+                    "Node.js not found. Install Node.js 18+ and ensure it is on your PATH.",
+                );
                 print_separator();
                 return Ok(());
             }
@@ -1449,7 +1444,9 @@ async fn main() -> Result<()> {
                     let _ = Command::new("cmd").args(["/C", "start", url]).spawn();
                     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
                     let _ = Command::new("xdg-open").arg(url).spawn();
-                    print_success("Dashboard started. Open in browser if it did not open automatically.");
+                    print_success(
+                        "Dashboard started. Open in browser if it did not open automatically.",
+                    );
                     println!("  {}", url);
                 }
                 Err(e) => {

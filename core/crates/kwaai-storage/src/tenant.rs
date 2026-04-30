@@ -75,11 +75,10 @@ impl TenantManager {
         wtxn.commit()?;
 
         // Create in-memory index.
-        self.inner()
-            .indices
-            .write()
-            .unwrap()
-            .insert(tenant_id, Arc::new(Mutex::new(TenantIndex::new(vector_dimension))));
+        self.inner().indices.write().unwrap().insert(
+            tenant_id,
+            Arc::new(Mutex::new(TenantIndex::new(vector_dimension))),
+        );
 
         Ok(TenantInfo {
             tenant_id,
