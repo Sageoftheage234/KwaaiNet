@@ -136,6 +136,24 @@ impl UpdateChecker {
             if !status.success() {
                 anyhow::bail!("Installer exited with {}", status);
             }
+
+            // macOS Gatekeeper quarantines binaries downloaded from the internet.
+            // Strip the quarantine xattr so the new binary isn't SIGKILL'd on first run.
+            #[cfg(target_os = "macos")]
+            {
+                let install_dir = dirs::home_dir()
+                    .map(|h| h.join(".cargo/bin"))
+                    .unwrap_or_default();
+                for bin in &["kwaainet", "p2pd"] {
+                    let path = install_dir.join(bin);
+                    if path.exists() {
+                        let _ = std::process::Command::new("xattr")
+                            .args(["-d", "com.apple.quarantine"])
+                            .arg(&path)
+                            .output();
+                    }
+                }
+            }
         }
 
         #[cfg(windows)]
@@ -152,11 +170,13 @@ impl UpdateChecker {
             // while this process is alive.  Write a batch script that sleeps until
             // we exit, then runs the PowerShell installer, then deletes itself.
             let bat = std::env::temp_dir().join("kwaainet-update.bat");
+            let log = std::env::temp_dir().join("kwaainet-update.log");
             let ps_path = tmp.to_string_lossy().replace('\'', "''");
+            let log_path = log.to_string_lossy().into_owned();
             let bat_content = format!(
                 "@echo off\r\n\
-                 ping -n 3 127.0.0.1 > nul\r\n\
-                 powershell -ExecutionPolicy Bypass -File \"{ps_path}\"\r\n\
+                 ping -n 4 127.0.0.1 > nul\r\n\
+                 powershell -ExecutionPolicy Bypass -File \"{ps_path}\" > \"{log_path}\" 2>&1\r\n\
                  del /f \"{ps_path}\"\r\n\
                  del /f \"%~f0\"\r\n"
             );
@@ -171,7 +191,8 @@ impl UpdateChecker {
                 .context("Failed to spawn updater batch")?;
 
             // Print notice — the actual install happens a few seconds after we exit.
-            println!("  Update will complete in a moment (installer running in background).");
+            println!("  Update running in background (installer launched).");
+            println!("  Log: {}", log_path);
             println!("  Run  kwaainet start --daemon  once it finishes.");
         }
 

@@ -747,8 +747,9 @@ async fn main() -> Result<()> {
                     if args.check {
                         print_info("Run 'kwaainet update' (without --check) to install");
                     } else {
-                        // On Windows, kwaainet.exe is locked while running — stop the
-                        // daemon and shard server first so they release the file handle.
+                        // On Windows, kwaainet.exe is locked by every running kwaainet
+                        // process — stop shard, storage API, and daemon so they all
+                        // release the file handle before the installer overwrites the exe.
                         #[cfg(windows)]
                         {
                             let shard_mgr = ShardManager::new();
@@ -756,11 +757,18 @@ async fn main() -> Result<()> {
                                 shard_mgr.stop_process();
                                 print_info("Shard server stopped for update.");
                             }
+                            let storage_mgr = StorageApiManager::new();
+                            if storage_mgr.is_running() {
+                                storage_mgr.stop_process();
+                                print_info("Storage API stopped for update.");
+                            }
                             let node_mgr = DaemonManager::new();
                             if node_mgr.is_running() {
                                 let _ = node_mgr.stop_process();
                                 print_info("Daemon stopped for update.");
                             }
+                            // Give processes a moment to fully release their file handles.
+                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                         }
                         println!("  Installing v{}…", info.version);
                         println!();
