@@ -43,12 +43,25 @@ function Invoke-CudaUpgrade($download_url, [ref]$artifact_name_ref) {
 }
 CUDA_PATCH
 
-# Insert the function at the top of the file.
-{
-    head -1 "$INSTALLER"
-    cat "$CUDA_FUNC"
-    tail -n +2 "$INSTALLER"
-} > "${INSTALLER}.tmp"
+# Insert the function after the param() block.
+# PowerShell requires param() to be the first non-comment statement, so we
+# must inject after its closing ')' rather than at the top of the file.
+PARAM_END=$(awk '/^param/{found=1} found && /^\)/{print NR; exit}' "$INSTALLER")
+if [ -n "$PARAM_END" ]; then
+    {
+        head -n "$PARAM_END" "$INSTALLER"
+        cat "$CUDA_FUNC"
+        tail -n +"$((PARAM_END + 1))" "$INSTALLER"
+    } > "${INSTALLER}.tmp"
+else
+    # Fallback: no param() block found, insert after line 1
+    echo "WARNING: param() block not found — inserting after line 1 (fallback)"
+    {
+        head -1 "$INSTALLER"
+        cat "$CUDA_FUNC"
+        tail -n +2 "$INSTALLER"
+    } > "${INSTALLER}.tmp"
+fi
 mv "${INSTALLER}.tmp" "$INSTALLER"
 rm -f "$CUDA_FUNC"
 
