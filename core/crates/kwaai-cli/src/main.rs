@@ -354,6 +354,11 @@ async fn main() -> Result<()> {
                 mgr.stop_process()?;
             }
 
+            // Kill any orphaned p2pd processes unconditionally — even if the
+            // kwaainet daemon was already dead, p2pd may still be running and
+            // would prevent the new daemon from binding the socket.
+            daemon::kill_orphaned_p2pd();
+
             let child_pid = DaemonManager::spawn_daemon_child(&[])?;
             print_success(&format!("KwaaiNet daemon restarted (PID {})", child_pid));
 

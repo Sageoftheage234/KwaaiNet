@@ -442,12 +442,23 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
     info!("[4/5] Bootstrapping...");
     dial_and_wait_for_bootstrap(&mut client, &bootstrap_peers).await?;
 
-    // After bootstrap p2pd's Kademlia DHT walk goroutines are still running
-    // their initial burst. Waiting here lets them finish before announce()
-    // opens competing streams — concurrent NewStream() calls can trigger an
-    // unrecovered goroutine panic in go-libp2p-kad-dht within ~1 s of first
-    // connectivity, which kills the socket before any STORE reaches a peer.
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    // If p2pd crashed during bootstrap (Kademlia walk goroutine panic in
+    // go-libp2p-kad-dht), restart it now before proceeding to announce.
+    // This avoids a wasted announce attempt and surfaces the crash output.
+    if !daemon.is_running() {
+        let stderr = daemon.captured_stderr().await;
+        if !stderr.is_empty() {
+            warn!("p2pd crash output:\n{}", stderr.trim());
+        }
+        warn!("⚠️  p2pd crashed during bootstrap — restarting immediately…");
+        restart_p2pd(
+            &mut daemon, &mut client, &p2pd_path, &config,
+            &bootstrap_peers, &announce_addr, handler_addr,
+        )
+        .await
+        .context("p2pd restart after bootstrap crash")?;
+        info!("✅ p2pd restarted after bootstrap crash — continuing to announce");
+    }
 
     // -----------------------------------------------------------------------
     // Step 5: Initial DHT announcement
@@ -613,6 +624,10 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
     // If p2pd crashed during announce (Kademlia race despite the sleep above),
     // restart it immediately rather than waiting 120 s for the watchdog tick.
     if !daemon.is_running() {
+        let stderr = daemon.captured_stderr().await;
+        if !stderr.is_empty() {
+            warn!("p2pd crash output:\n{}", stderr.trim());
+        }
         warn!("⚠️  p2pd crashed during initial announce — restarting immediately…");
         match restart_p2pd(
             &mut daemon, &mut client, &p2pd_path, &config,
@@ -709,6 +724,10 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
             _ = reannounce.tick() => {
                 // p2pd watchdog: restart if the child process died unexpectedly.
                 if !daemon.is_running() {
+                    let stderr = daemon.captured_stderr().await;
+                    if !stderr.is_empty() {
+                        warn!("p2pd crash output:\n{}", stderr.trim());
+                    }
                     warn!("⚠️  p2pd process died — attempting restart…");
                     match restart_p2pd(
                         &mut daemon, &mut client, &p2pd_path, &config,
@@ -1142,6 +1161,9 @@ async fn dial_and_wait_for_bootstrap(
 ) -> Result<()> {
     const MAX_WAIT_SECS: u64 = 30;
     const POLL_INTERVAL_MS: u64 = 500;
+    // How many consecutive IO errors before we assume p2pd has crashed and
+    // bail early (avoids waiting the full 30 s when the socket is gone).
+    const IO_ERROR_CRASH_THRESHOLD: usize = 5;
 
     let start = tokio::time::Instant::now();
     let max_wait = Duration::from_secs(MAX_WAIT_SECS);
@@ -1155,10 +1177,14 @@ async fn dial_and_wait_for_bootstrap(
         .map(|s| s.to_string())
         .collect();
 
+    let mut consecutive_io_errors: usize = 0;
+
     loop {
         // Query connected peers from p2pd
         match client.list_peers().await {
             Ok(peers) => {
+                consecutive_io_errors = 0;
+
                 // Check if any connected peer matches bootstrap peers.
                 // Decode raw bytes → PeerId → base58 for proper comparison.
                 let connected_bootstrap_count = peers
@@ -1187,6 +1213,26 @@ async fn dial_and_wait_for_bootstrap(
                 }
             }
             Err(e) => {
+                let err_str = format!("{}", e);
+                // IO errors (EPIPE, ENOENT) mean p2pd has crashed or its
+                // socket is gone — bail early instead of waiting the full 30 s.
+                if err_str.contains("Broken pipe")
+                    || err_str.contains("No such file")
+                    || err_str.contains("Connection refused")
+                    || err_str.contains("early eof")
+                {
+                    consecutive_io_errors += 1;
+                    if consecutive_io_errors >= IO_ERROR_CRASH_THRESHOLD {
+                        warn!(
+                            "p2pd appears crashed ({} consecutive IO errors) — \
+                             aborting bootstrap wait early",
+                            consecutive_io_errors
+                        );
+                        return Ok(());
+                    }
+                } else {
+                    consecutive_io_errors = 0;
+                }
                 warn!("Peer list query failed: {} — continuing to wait", e);
             }
         }

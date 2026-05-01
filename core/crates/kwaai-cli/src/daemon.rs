@@ -307,7 +307,7 @@ impl DaemonManager {
 /// process was terminated by SIGTERM (which bypasses Rust destructors, so
 /// the kwaai-p2p-daemon Drop impl never fires to clean them up).
 /// Without this, a new daemon start fails because p2pd can't bind the port.
-fn kill_orphaned_p2pd() {
+pub fn kill_orphaned_p2pd() {
     use sysinfo::ProcessRefreshKind;
 
     let mut sys = System::new();

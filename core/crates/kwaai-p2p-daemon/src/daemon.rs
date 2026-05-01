@@ -442,6 +442,12 @@ impl P2PDaemon {
         }
     }
 
+    /// Return whatever stderr the daemon has written so far (non-destructive).
+    /// Useful for surfacing Go panic stack traces when the daemon crashes.
+    pub async fn captured_stderr(&self) -> String {
+        self.stderr_buf.lock().await.clone()
+    }
+
     /// Wait for the daemon to exit
     pub async fn wait(&mut self) -> Result<()> {
         if let Some(mut child) = self.process.take() {
