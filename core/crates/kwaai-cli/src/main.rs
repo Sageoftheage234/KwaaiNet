@@ -340,13 +340,38 @@ async fn main() -> Result<()> {
             let mgr = DaemonManager::new();
             print_box_header("🔄 Restarting KwaaiNet Node");
 
+            // Stop dependents first (same order as Stop) so the new daemon
+            // can spawn fresh children without hitting port-in-use guards.
+            let shard_mgr = ShardManager::new();
+            if shard_mgr.is_running() {
+                shard_mgr.stop_process();
+            }
+            let storage_mgr = StorageApiManager::new();
+            if storage_mgr.is_running() {
+                storage_mgr.stop_process();
+            }
             if mgr.is_running() {
-                info!("Stopping existing process…");
                 mgr.stop_process()?;
             }
 
             let child_pid = DaemonManager::spawn_daemon_child(&[])?;
             print_success(&format!("KwaaiNet daemon restarted (PID {})", child_pid));
+
+            // Re-spawn storage API if configured (same as start --daemon)
+            #[cfg(feature = "storage")]
+            {
+                let cfg = KwaaiNetConfig::load_or_create().unwrap_or_default();
+                if cfg.storage.is_some() {
+                    match StorageApiManager::spawn_storage_child() {
+                        Ok(storage_pid) => {
+                            print_success(&format!("Storage API restarted  (PID {})", storage_pid));
+                        }
+                        Err(e) => {
+                            print_warning(&format!("Could not restart storage API: {e}"));
+                        }
+                    }
+                }
+            }
             print_separator();
         }
 
