@@ -115,9 +115,10 @@ impl UpdateChecker {
         Ok(())
     }
 
-    /// Download and run the cargo-dist installer for this platform.
-    /// On Unix runs the shell installer via `sh`; on Windows runs the PowerShell installer.
-    pub async fn install_update(&self) -> Result<()> {
+    /// Download and install the update for this platform.
+    /// `version` is the target version string (e.g. "0.4.13"), used to build
+    /// version-specific archive URLs so we don't have to re-resolve "latest".
+    pub async fn install_update(&self, version: &str) -> Result<()> {
         #[cfg(unix)]
         {
             let url = "https://github.com/Kwaai-AI-Lab/KwaaiNet/releases/latest/download/kwaainet-installer.sh";
@@ -154,6 +155,8 @@ impl UpdateChecker {
                     }
                 }
             }
+
+            let _ = version; // used on Windows only
         }
 
         #[cfg(windows)]
@@ -162,35 +165,110 @@ impl UpdateChecker {
             const DETACHED_PROCESS: u32 = 0x00000008;
             const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-            let url = "https://github.com/Kwaai-AI-Lab/KwaaiNet/releases/latest/download/kwaainet-installer.ps1";
-            let tmp = std::env::temp_dir().join("kwaainet-installer.ps1");
-            self.download_to(url, &tmp).await?;
-
-            // Windows locks running executables, so we can't overwrite kwaainet.exe
-            // while this process is alive.  Write a batch script that sleeps until
-            // we exit, then runs the PowerShell installer, then deletes itself.
-            let bat = std::env::temp_dir().join("kwaainet-update.bat");
             let log = std::env::temp_dir().join("kwaainet-update.log");
-            let ps_path = tmp.to_string_lossy().replace('\'', "''");
             let log_path = log.to_string_lossy().into_owned();
-            let bat_content = format!(
-                "@echo off\r\n\
-                 ping -n 4 127.0.0.1 > nul\r\n\
-                 powershell -ExecutionPolicy Bypass -File \"{ps_path}\" > \"{log_path}\" 2>&1\r\n\
-                 del /f \"{ps_path}\"\r\n\
-                 del /f \"%~f0\"\r\n"
-            );
+            let bat = std::env::temp_dir().join("kwaainet-update.bat");
+
+            // Determine the install directory (same dir as the running kwaainet.exe)
+            let install_dir = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                .unwrap_or_else(|| {
+                    dirs::home_dir()
+                        .map(|h| h.join(".cargo").join("bin"))
+                        .unwrap_or_default()
+                });
+
+            // Check if CUDA DLLs are already present — if so we only need the small
+            // CPU archive (binaries only) instead of the large CUDA bundle.
+            let cuda_installed = std::fs::read_dir(&install_dir)
+                .ok()
+                .map(|dir| {
+                    dir.filter_map(|e| e.ok()).any(|e| {
+                        let name = e.file_name().to_string_lossy().to_lowercase();
+                        name.starts_with("cublas") && name.ends_with(".dll")
+                    })
+                })
+                .unwrap_or(false);
+
+            // For the full (non-CUDA) path we need the PS1 installer on disk before
+            // writing the batch file; download it now while we're still async.
+            let ps1_tmp: Option<PathBuf> = if !cuda_installed {
+                let url = "https://github.com/Kwaai-AI-Lab/KwaaiNet/releases/latest/download/kwaainet-installer.ps1";
+                let tmp = std::env::temp_dir().join("kwaainet-installer.ps1");
+                self.download_to(url, &tmp).await?;
+                Some(tmp)
+            } else {
+                None
+            };
+
+            // The kill-and-install header is the same regardless of CUDA vs CPU path:
+            // wait for THIS process to exit, then force-kill every remaining
+            // kwaainet.exe (daemon, storage serve, orphaned instances) so the
+            // installer can overwrite the binary without a sharing violation.
+            let kill_header = "\
+                @echo off\r\n\
+                ping -n 3 127.0.0.1 > nul\r\n\
+                taskkill /IM kwaainet.exe /F /T > nul 2>&1\r\n\
+                ping -n 2 127.0.0.1 > nul\r\n";
+
+            let bat_content = if cuda_installed {
+                // Fast path: download the CPU-only archive (much smaller), extract
+                // just the .exe files, and leave the existing CUDA DLLs in place.
+                let archive_url = format!(
+                    "https://github.com/Kwaai-AI-Lab/KwaaiNet/releases/download/v{version}/kwaainet-x86_64-pc-windows-msvc.zip"
+                );
+                let dir = install_dir.to_string_lossy().into_owned();
+                format!(
+                    "{kill_header}\
+                     powershell -ExecutionPolicy Bypass -Command \"\
+                       $zip = [System.IO.Path]::GetTempPath() + 'kwaainet-cpu-update.zip'; \
+                       $tmp = [System.IO.Path]::GetTempPath() + 'kwaainet-cpu-extract'; \
+                       Write-Host 'Downloading CPU archive...'; \
+                       Invoke-WebRequest -Uri '{archive_url}' -OutFile $zip -UseBasicParsing; \
+                       Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue; \
+                       Expand-Archive -Path $zip -DestinationPath $tmp -Force; \
+                       Get-ChildItem $tmp -Recurse -Filter '*.exe' | ForEach-Object {{ \
+                         $dest = '{dir}\\' + $_.Name; \
+                         Write-Host ('Installing ' + $_.Name); \
+                         Move-Item $_.FullName $dest -Force \
+                       }}; \
+                       Remove-Item $zip -Force -ErrorAction SilentlyContinue; \
+                       Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue; \
+                       Write-Host 'Update complete. CUDA DLLs preserved.' \
+                     \" >> \"{log_path}\" 2>&1\r\n\
+                     del /f \"%~f0\"\r\n"
+                )
+            } else {
+                // Full path: use the cargo-dist PS1 installer (handles first-time
+                // CUDA detection and DLL installation).
+                let ps_path = ps1_tmp
+                    .as_ref()
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\'', "''");
+                format!(
+                    "{kill_header}\
+                     powershell -ExecutionPolicy Bypass -File \"{ps_path}\" >> \"{log_path}\" 2>&1\r\n\
+                     del /f \"{ps_path}\"\r\n\
+                     del /f \"%~f0\"\r\n"
+                )
+            };
+
+            if cuda_installed {
+                println!("  CUDA DLLs detected — downloading CPU archive only (fast update).");
+            }
+
             std::fs::write(&bat, &bat_content).context("Failed to write updater batch script")?;
 
-            // Launch the batch detached (no window) and return immediately.
-            // kwaainet.exe will exit after this function returns, freeing the lock.
+            // Launch the batch detached. kwaainet.exe exits after this fn returns,
+            // releasing its file lock so the batch can overwrite the binary.
             std::process::Command::new("cmd")
                 .args(["/c", bat.to_str().unwrap_or("kwaainet-update.bat")])
                 .creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
                 .spawn()
                 .context("Failed to spawn updater batch")?;
 
-            // Print notice — the actual install happens a few seconds after we exit.
             println!("  Update running in background (installer launched).");
             println!("  Log: {}", log_path);
             println!("  Run  kwaainet start --daemon  once it finishes.");

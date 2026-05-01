@@ -108,32 +108,11 @@ async fn status() -> Result<()> {
     println!("  Capacity:    {:.1} GB", storage.capacity_gb);
     println!();
 
-    // Embedded store check ---------------------------------------------------
-    match kwaai_storage::StorageDb::open(&data_dir) {
-        Ok(db) => {
-            use kwaai_storage::TenantManager;
-            print_success("Embedded store: reachable");
-
-            let tm = TenantManager::new(db);
-            let tenant_count = tm.count().await.unwrap_or(0);
-            let total_vectors = tm.total_vectors().await.unwrap_or(0);
-            println!("  Tenants:     {} (vector tables)", tenant_count);
-            println!("  Vectors:     {}", total_vectors);
-
-            // Disk usage
-            if let Ok(db_size) = std::fs::metadata(data_dir.join("metadata.redb")).map(|m| m.len())
-            {
-                println!("  DB size:     {:.1} KB", db_size as f64 / 1024.0);
-            }
-        }
-        Err(e) => {
-            print_warning(&format!("Embedded store: not reachable — {}", e));
-        }
-    }
-
-    // VPK health (if port configured)
-    if let Some(vpk_port) = cfg.vpk_local_port {
-        println!();
+    // Check VPK health first — when storage serve is running it holds an
+    // exclusive lock on the redb file, so we get stats from the HTTP endpoint
+    // instead of trying to open the db directly (which would fail with a lock
+    // error and produce a confusing "not reachable" warning).
+    let vpk_reachable = if let Some(vpk_port) = cfg.vpk_local_port {
         let url = format!("http://localhost:{}/api/health", vpk_port);
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(3))
@@ -141,19 +120,51 @@ async fn status() -> Result<()> {
         match client.get(&url).send().await {
             Ok(resp) if resp.status().is_success() => {
                 if let Ok(json) = resp.json::<serde_json::Value>().await {
-                    let status = json["status"].as_str().unwrap_or("ok");
+                    let api_status = json["status"].as_str().unwrap_or("ok");
                     let tenants = json["tenant_count"].as_u64().unwrap_or(0);
                     let vectors = json["total_vectors"].as_u64().unwrap_or(0);
                     let cap = json["capacity_gb_available"].as_f64().unwrap_or(0.0);
-                    println!("  VPK status:  {} (port {})", status, vpk_port);
+                    print_success(&format!("Storage API: {} (port {})", api_status, vpk_port));
                     println!("  Tenants:     {}", tenants);
                     println!("  Vectors:     {}", vectors);
                     println!("  Available:   {:.1} GB", cap);
+                    // Disk usage (read-only metadata, no db lock needed)
+                    if let Ok(db_size) =
+                        std::fs::metadata(data_dir.join("metadata.redb")).map(|m| m.len())
+                    {
+                        println!("  DB size:     {:.1} KB", db_size as f64 / 1024.0);
+                    }
+                }
+                true
+            }
+            _ => false,
+        }
+    } else {
+        false
+    };
+
+    // Only try to open the db directly when the API is not running — the db
+    // file is exclusively locked when the serve is active.
+    if !vpk_reachable {
+        match kwaai_storage::StorageDb::open(&data_dir) {
+            Ok(db) => {
+                use kwaai_storage::TenantManager;
+                print_success("Embedded store: reachable (API not running)");
+
+                let tm = TenantManager::new(db);
+                let tenant_count = tm.count().await.unwrap_or(0);
+                let total_vectors = tm.total_vectors().await.unwrap_or(0);
+                println!("  Tenants:     {} (vector tables)", tenant_count);
+                println!("  Vectors:     {}", total_vectors);
+                if let Ok(db_size) =
+                    std::fs::metadata(data_dir.join("metadata.redb")).map(|m| m.len())
+                {
+                    println!("  DB size:     {:.1} KB", db_size as f64 / 1024.0);
                 }
             }
-            _ => {
-                println!("  VPK:         not reachable (port {})", vpk_port);
-                print_info("VPK starts automatically with: kwaainet start --daemon");
+            Err(_) => {
+                print_warning("Storage API not running.");
+                print_info("Start it with: kwaainet start --daemon");
             }
         }
     }

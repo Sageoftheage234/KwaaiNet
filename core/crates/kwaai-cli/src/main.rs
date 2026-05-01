@@ -747,35 +747,38 @@ async fn main() -> Result<()> {
                     if args.check {
                         print_info("Run 'kwaainet update' (without --check) to install");
                     } else {
-                        // On Windows, kwaainet.exe is locked by every running kwaainet
-                        // process — stop shard, storage API, and daemon so they all
-                        // release the file handle before the installer overwrites the exe.
+                        // Gracefully stop tracked services so the daemon can
+                        // unannounce from DHT before the hard kill in the batch.
                         #[cfg(windows)]
                         {
                             let shard_mgr = ShardManager::new();
                             if shard_mgr.is_running() {
                                 shard_mgr.stop_process();
-                                print_info("Shard server stopped for update.");
+                                print_info("Shard server stopping…");
                             }
                             let storage_mgr = StorageApiManager::new();
                             if storage_mgr.is_running() {
                                 storage_mgr.stop_process();
-                                print_info("Storage API stopped for update.");
+                                print_info("Storage API stopping…");
                             }
                             let node_mgr = DaemonManager::new();
                             if node_mgr.is_running() {
                                 let _ = node_mgr.stop_process();
-                                print_info("Daemon stopped for update.");
+                                print_info("Daemon stopping…");
                             }
-                            // Give processes a moment to fully release their file handles.
                             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                         }
                         println!("  Installing v{}…", info.version);
                         println!();
-                        checker.install_update().await?;
+                        checker.install_update(&info.version).await?;
                         println!();
+                        #[cfg(windows)]
                         print_success(&format!(
-                            "Updated to v{}! Restart any running daemon with `kwaainet restart`.",
+                            "Installer launched in background — all services will be stopped automatically.\n  Run 'kwaainet start --daemon' once done."
+                        ));
+                        #[cfg(not(windows))]
+                        print_success(&format!(
+                            "Updated to v{}! Restart: kwaainet start --daemon",
                             info.version
                         ));
                     }
