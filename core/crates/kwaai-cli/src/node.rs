@@ -442,6 +442,13 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
     info!("[4/5] Bootstrapping...");
     dial_and_wait_for_bootstrap(&mut client, &bootstrap_peers).await?;
 
+    // After bootstrap p2pd's Kademlia DHT walk goroutines are still running
+    // their initial burst. Waiting here lets them finish before announce()
+    // opens competing streams — concurrent NewStream() calls can trigger an
+    // unrecovered goroutine panic in go-libp2p-kad-dht within ~1 s of first
+    // connectivity, which kills the socket before any STORE reaches a peer.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
     // -----------------------------------------------------------------------
     // Step 5: Initial DHT announcement
     // -----------------------------------------------------------------------
@@ -602,6 +609,28 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
     )
     .await
     .context("initial DHT announcement")?;
+
+    // If p2pd crashed during announce (Kademlia race despite the sleep above),
+    // restart it immediately rather than waiting 120 s for the watchdog tick.
+    if !daemon.is_running() {
+        warn!("⚠️  p2pd crashed during initial announce — restarting immediately…");
+        match restart_p2pd(
+            &mut daemon, &mut client, &p2pd_path, &config,
+            &bootstrap_peers, &announce_addr, handler_addr,
+        ).await {
+            Ok(()) => {
+                info!("✅ p2pd restarted — retrying initial announce…");
+                if let Err(e) = announce(
+                    &mut client, peer_id, &storage, &bootstrap_peers,
+                    &prefix, &repository, config.model_total_blocks(),
+                    announce_start, announce_end, &server_info,
+                ).await {
+                    warn!("Initial announce retry failed: {} — will retry at 120s tick", e);
+                }
+            }
+            Err(e) => warn!("p2pd restart failed: {} — will retry at 120s tick", e),
+        }
+    }
 
     info!("✅ KwaaiNet node running");
     info!("   Peer ID : {}", peer_id.to_base58());
