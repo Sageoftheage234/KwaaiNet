@@ -211,10 +211,12 @@ async fn serve() -> Result<()> {
         .unwrap_or_else(|_| "unknown".to_string());
 
     // Register the p2p relay handler so Eve can be reached without port forwarding.
+    // The P2PClient MUST stay alive for the lifetime of this process — p2pd removes
+    // the handler registration when the persistent connection closes.
     let handler =
         crate::storage_rpc::make_storage_rpc_handler(db.clone(), capacity_gb, peer_id.clone());
     let daemon_addr = crate::shard_cmd::daemon_socket();
-    match kwaai_p2p_daemon::P2PClient::connect(&daemon_addr).await {
+    let _p2p_client = match kwaai_p2p_daemon::P2PClient::connect(&daemon_addr).await {
         Ok(p2p_client) => {
             match p2p_client
                 .add_unary_handler(crate::storage_rpc::STORAGE_PROTO, handler, false)
@@ -226,12 +228,14 @@ async fn serve() -> Result<()> {
                 )),
                 Err(e) => print_warning(&format!("P2P handler registration failed: {e}")),
             }
+            Some(p2p_client)
         }
         Err(_) => {
             print_info("KwaaiNet node not running — P2P relay unavailable (HTTP-only mode)");
             print_info("Start the node first for relay access: kwaainet start --daemon");
+            None
         }
-    }
+    };
 
     print_success(&format!("Starting local health API on {} (operator use only)", bind_addr));
     print_separator();

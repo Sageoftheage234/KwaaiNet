@@ -504,6 +504,68 @@ pub enum VpkAction {
         #[arg(long, value_name = "NAME")]
         kb_id: String,
     },
+
+    /// Manage storage tenants on Eve nodes via /kwaai/storage/1.0.0
+    Tenant(TenantArgs),
+}
+
+#[derive(Args)]
+pub struct TenantArgs {
+    #[command(subcommand)]
+    pub action: TenantAction,
+}
+
+#[derive(Subcommand)]
+pub enum TenantAction {
+    /// Create a new tenant on a remote Eve node
+    Create {
+        /// Target Eve node's PeerId (base58)
+        #[arg(long, value_name = "PEER_ID")]
+        eve_peer_id: String,
+
+        /// Maximum storage capacity for this tenant, in MB
+        #[arg(long, value_name = "MB", default_value = "1024")]
+        capacity_mb: i64,
+
+        /// Human-readable label for this tenant
+        #[arg(long, value_name = "NAME")]
+        name: Option<String>,
+
+        /// Vector dimension — must match your embedding model (default: 384)
+        #[arg(long, value_name = "DIM", default_value = "384")]
+        dimension: usize,
+    },
+
+    /// List tenants stored on a remote Eve node
+    List {
+        /// Target Eve node's PeerId (base58)
+        #[arg(long, value_name = "PEER_ID")]
+        eve_peer_id: String,
+    },
+
+    /// Show metadata for a specific tenant
+    Info {
+        /// Tenant UUID
+        tenant_id: String,
+
+        /// Target Eve node's PeerId (base58)
+        #[arg(long, value_name = "PEER_ID")]
+        eve_peer_id: String,
+    },
+
+    /// Delete a tenant and all its stored vectors
+    Delete {
+        /// Tenant UUID
+        tenant_id: String,
+
+        /// Target Eve node's PeerId (base58)
+        #[arg(long, value_name = "PEER_ID")]
+        eve_peer_id: String,
+
+        /// Skip the confirmation prompt
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 // ---------------------------------------------------------------------------

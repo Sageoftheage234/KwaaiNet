@@ -17,7 +17,7 @@ use libp2p::PeerId;
 use prost::Message as _;
 use sha1::{Digest, Sha1};
 
-use crate::cli::{VpkAction, VpkArgs};
+use crate::cli::{TenantAction, VpkAction, VpkArgs};
 use crate::config::KwaaiNetConfig;
 use crate::display::*;
 
@@ -29,6 +29,7 @@ pub async fn run(args: VpkArgs) -> Result<()> {
         VpkAction::Discover { json } => discover(json).await,
         VpkAction::Shard { kb_id, eve_count } => shard(kb_id, eve_count).await,
         VpkAction::Resolve { kb_id } => resolve(kb_id).await,
+        VpkAction::Tenant(args) => tenant(args.action).await,
     }
 }
 
@@ -365,6 +366,183 @@ async fn resolve(kb_id: String) -> Result<()> {
     println!();
     print_warning("Phase 3: DHT FIND on _kwaai.vpk.kb.{kb_id} is not yet implemented.");
     print_info("Shard topology will be recoverable from DHT in Phase 3.");
+    print_separator();
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// tenant  (Phase 2 — manage tenants on remote Eve nodes via P2P)
+// ---------------------------------------------------------------------------
+
+async fn tenant(action: TenantAction) -> Result<()> {
+    match action {
+        TenantAction::Create {
+            eve_peer_id,
+            capacity_mb,
+            name,
+            dimension,
+        } => tenant_create(eve_peer_id, capacity_mb, name, dimension).await,
+
+        TenantAction::List { eve_peer_id } => tenant_list(eve_peer_id).await,
+
+        TenantAction::Info {
+            tenant_id,
+            eve_peer_id,
+        } => tenant_info(tenant_id, eve_peer_id).await,
+
+        TenantAction::Delete {
+            tenant_id,
+            eve_peer_id,
+            yes,
+        } => tenant_delete(tenant_id, eve_peer_id, yes).await,
+    }
+}
+
+async fn p2p_connect() -> Result<(P2PClient, PeerId)> {
+    let daemon_addr = crate::shard_cmd::daemon_socket();
+    let client = P2PClient::connect(&daemon_addr)
+        .await
+        .context("connect to p2pd — is 'kwaainet start --daemon' running?")?;
+    let identity = crate::identity::NodeIdentity::load_or_create()
+        .context("load local identity")?;
+    Ok((client, identity.peer_id))
+}
+
+fn parse_peer_id(s: &str) -> Result<PeerId> {
+    s.parse::<PeerId>()
+        .with_context(|| format!("invalid PeerId: {s}"))
+}
+
+async fn tenant_create(
+    eve_peer_id: String,
+    capacity_mb: i64,
+    name: Option<String>,
+    dimension: usize,
+) -> Result<()> {
+    let eve = parse_peer_id(&eve_peer_id)?;
+    let (client, my_peer_id) = p2p_connect().await?;
+
+    print_box_header("VPK Tenant — Create");
+    println!("  Eve:      {}", eve_peer_id);
+    println!("  Capacity: {} MB", capacity_mb);
+    if let Some(ref n) = name {
+        println!("  Name:     {}", n);
+    }
+    println!("  Dim:      {}", dimension);
+    println!();
+
+    let info = crate::storage_rpc::rpc_create_tenant(
+        &client,
+        &eve,
+        crate::storage_rpc::CreateTenantPayload {
+            peer_id: my_peer_id.to_base58(),
+            capacity_limit_mb: capacity_mb,
+            display_name: name,
+            vector_dimension: dimension,
+        },
+    )
+    .await
+    .context("create tenant on Eve node")?;
+
+    print_success("Tenant created");
+    println!();
+    println!("  Tenant ID: {}", info.tenant_id);
+    println!("  Status:    {}", info.status);
+    println!("  Capacity:  {} MB", info.capacity_limit_mb);
+    println!("  Created:   {}", info.created_at);
+    println!();
+    print_info("Save the Tenant ID — you'll need it to upload vectors and query.");
+    println!(
+        "  kwaainet vpk tenant list --eve-peer-id {}",
+        eve_peer_id
+    );
+    print_separator();
+    Ok(())
+}
+
+async fn tenant_list(eve_peer_id: String) -> Result<()> {
+    let eve = parse_peer_id(&eve_peer_id)?;
+    let (client, _) = p2p_connect().await?;
+
+    let tenants = crate::storage_rpc::rpc_list_tenants(&client, &eve)
+        .await
+        .context("list tenants on Eve node")?;
+
+    print_box_header("VPK Tenants");
+    println!("  Eve: {}", eve_peer_id);
+    println!();
+
+    if tenants.is_empty() {
+        println!("  No tenants found.");
+    } else {
+        println!("  {:<36}  {:<20}  {:>8}  {}", "Tenant ID", "Name", "Cap MB", "Status");
+        println!("  {}  {}  {}  {}", "─".repeat(36), "─".repeat(20), "─".repeat(8), "─".repeat(8));
+        for t in &tenants {
+            println!(
+                "  {}  {:<20}  {:>8}  {}",
+                t.tenant_id,
+                t.display_name.as_deref().unwrap_or("—"),
+                t.capacity_limit_mb,
+                t.status,
+            );
+        }
+    }
+    print_separator();
+    Ok(())
+}
+
+async fn tenant_info(tenant_id: String, eve_peer_id: String) -> Result<()> {
+    let eve = parse_peer_id(&eve_peer_id)?;
+    let tid: uuid::Uuid = tenant_id
+        .parse()
+        .with_context(|| format!("invalid tenant UUID: {tenant_id}"))?;
+    let (client, _) = p2p_connect().await?;
+
+    // Get the tenant from the list (no dedicated GetTenant P2P call needed;
+    // we already have rpc_list_tenants which is cheap at O(tenants) scale).
+    let tenants = crate::storage_rpc::rpc_list_tenants(&client, &eve)
+        .await
+        .context("query Eve node")?;
+
+    let t = tenants
+        .into_iter()
+        .find(|t| t.tenant_id == tid)
+        .with_context(|| format!("tenant {tenant_id} not found on Eve {eve_peer_id}"))?;
+
+    print_box_header("VPK Tenant Info");
+    println!("  Tenant ID: {}", t.tenant_id);
+    println!("  Bob:       {}", t.peer_id);
+    println!("  Name:      {}", t.display_name.as_deref().unwrap_or("—"));
+    println!("  Capacity:  {} MB", t.capacity_limit_mb);
+    println!("  Status:    {}", t.status);
+    println!("  Created:   {}", t.created_at);
+    println!("  Eve:       {}", eve_peer_id);
+    print_separator();
+    Ok(())
+}
+
+async fn tenant_delete(tenant_id: String, eve_peer_id: String, yes: bool) -> Result<()> {
+    let eve = parse_peer_id(&eve_peer_id)?;
+    let tid: uuid::Uuid = tenant_id
+        .parse()
+        .with_context(|| format!("invalid tenant UUID: {tenant_id}"))?;
+
+    if !yes {
+        print_warning(&format!(
+            "This will permanently delete tenant {} and all its vectors on {}.",
+            tenant_id, eve_peer_id
+        ));
+        print_info("Re-run with --yes to confirm.");
+        return Ok(());
+    }
+
+    let (client, _) = p2p_connect().await?;
+
+    crate::storage_rpc::rpc_delete_tenant(&client, &eve, tid)
+        .await
+        .context("delete tenant on Eve node")?;
+
+    print_success(&format!("Tenant {} deleted", tenant_id));
     print_separator();
     Ok(())
 }

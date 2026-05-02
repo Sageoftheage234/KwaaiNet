@@ -337,7 +337,6 @@ pub async fn rpc_health(client: &P2PClient, peer_id: &PeerId) -> Result<HealthPa
     rmp_serde::from_slice(&resp.payload).context("decode HealthPayload")
 }
 
-#[allow(dead_code)]
 pub async fn rpc_create_tenant(
     client: &P2PClient,
     peer_id: &PeerId,
@@ -425,7 +424,6 @@ pub async fn rpc_delete_vectors(
     rmp_serde::from_slice::<usize>(&resp.payload).context("decode delete count")
 }
 
-#[allow(dead_code)]
 pub async fn rpc_delete_tenant(
     client: &P2PClient,
     peer_id: &PeerId,
@@ -444,7 +442,6 @@ pub async fn rpc_delete_tenant(
     .map(|_| ())
 }
 
-#[allow(dead_code)]
 pub async fn rpc_list_tenants(client: &P2PClient, peer_id: &PeerId) -> Result<Vec<TenantInfo>> {
     let resp = call_storage(
         client,
