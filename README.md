@@ -50,6 +50,9 @@ Today, a KwaaiNet node can:
 - **llama.cpp fast path**: when a Mac node hosts the full model and a GGUF file is available, the OpenAI API and benchmark automatically bypass the distributed shard engine and use llama.cpp with Metal — delivering 36+ tok/s instead of ~5 tok/s on CPU. Auto-detected from Ollama, `--ollama-model`, `--gguf-path`, or `~/.kwaainet/models/`.
 - Pre-form **inference circuits** (`kwaainet shard circuit create`) for stable, reusable peer paths across multiple chat completions.
 - Auto-detect local models and network state to smart-select what to serve, and appear on the public map when properly configured at [map.kwaai.ai](https://map.kwaai.ai).
+- **Run as a VPK Eve storage node** — initialize an encrypted vector database (`kwaainet storage init --capacity-gb N`), enable VPK mode (`kwaainet vpk enable --mode eve`), and serve vector search to remote Bob nodes over the P2P fabric.
+- **Discover VPK-capable peers** with `kwaainet vpk discover` — finds all Eve nodes on the DHT and returns their PeerId, mode, capacity, and tenant count; no IP addresses involved.
+- **Benchmark storage performance** with `kwaainet vpk bench` — measures local HNSW vs WAN-sharded Eve vs Qdrant (local or cloud) across multiple corpus scales, with recall and upload-time breakdowns.
 
 See the [latest GitHub Release](https://github.com/Kwaai-AI-Lab/KwaaiNet/releases/latest) for the most recent feature list and release notes.
 
@@ -162,27 +165,12 @@ This generates `~/.kwaainet/identity.key` (Ed25519 keypair) and creates a defaul
 > If `kwaainet start` reports that `p2pd` is missing (e.g. manual install from a `.tar.xz`), run `kwaainet setup --get-deps` to download and install it automatically.
 
 Start the node:
-- ✅ **Smart Default Node Name** — `kwaainet setup` now generates `{USER}-{OS}-{ARCH}` (e.g. `alice-linux-aarch64`) instead of `anonymous@kwaai`, making nodes identifiable on the map without manual configuration
-- ✅ **v0.1.1 Released** — first public release with native pre-built binaries for all four platforms; install cycle validated stop → download → install → node on map in ~46 s (no build tools required)
-- ✅ **One-Command Install** — `curl -fsSL .../install.sh | bash` auto-detects platform, installs binaries, runs setup + benchmark, and starts the node; tested on macOS and Linux
-- ✅ **All Four Platform Binaries Tested** — macOS Apple Silicon (M4) and macOS Intel built and tested natively; Linux x86_64 built and tested by Metro on a remote machine; Windows x86_64 (Intel NUC) built and uploaded — all nodes confirmed live on [map.kwaai.ai](https://map.kwaai.ai)
-- ✅ **VPK P2P Vector Database Integration (Phase 1)** — `kwaainet vpk enable/disable/status/discover` commands; nodes advertise VPK capability via `_kwaai.vpk.nodes` DHT key; per-block `vpk` field added to DHT announcements; bridges KwaaiNet nodes to the PHE/VPK encrypted vector database
-- ✅ **Decentralized Trust Graph** — `kwaai-trust` crate implements the ToIP/DIF DTG framework: W3C Verifiable Credentials, `did:peer:` DIDs derived from libp2p PeerIds, Ed25519 signature verification, credential storage at `~/.kwaainet/credentials/`, weighted trust scoring with time-decay, and `kwaainet identity` CLI commands. Trust attestations are included in DHT announcements; map.kwaai.ai can now display trust badges alongside nodes
-- ✅ **Persistent Node Identity** — each node generates and stores a permanent Ed25519 keypair at `~/.kwaainet/identity.key`; the same `PeerId` (and `did:peer:`) is used across restarts, making Verifiable Credentials meaningful
-- ✅ **Bootstrap Resilience** — node announces to all configured bootstrap peers in parallel; if the primary is down the secondary takes over automatically, so `kwaainet start` succeeds even when `bootstrap-1` is unreachable
-- ✅ **`kwaainet start --daemon`** — one command starts a fully managed background node, confirmed **online** on [map.kwaai.ai](https://map.kwaai.ai)
-- ✅ **`kwaainet serve`** — OpenAI-compatible API server (`/v1/models`, `/v1/chat/completions`, `/v1/completions` with SSE streaming); any OpenAI client library works out of the box
-- ✅ **GGUF Tokenizer Special Tokens Fixed** — control tokens (e.g. `<|eot_id|>`) are now registered as `added_tokens` in the HuggingFace tokenizer; generation stops correctly at EOS instead of running to the token limit and leaking raw special-token strings into responses
-- ✅ **Native Rust CLI** — `kwaainet` binary runs nodes directly via `kwaai-p2p` + `kwaai-hivemind-dht` (no Python required)
-- ✅ **Smart Model Selection** — reads the live network map at startup, cross-references locally installed Ollama models, and auto-selects the best model to serve (most popular on the network that you have locally)
-- ✅ **Canonical DHT Prefix** — uses the map's official `dht_prefix` (e.g. `Llama-3-1-8B-Instruct-hf`) so your node joins the correct swarm instead of creating a broken separate entry
-- ✅ **Metal GPU Inference** — native Apple Silicon GPU acceleration via candle + Metal; **33+ tok/s** on M4 Pro with GGUF Q4_K_M
-- ✅ **`kwaainet benchmark`** — fast throughput measurement (warm-up + 20 timed decode steps, completes in <1 s) saved to cache for accurate DHT announcements
-- ✅ **Direct Connection Detection** — announces `using_relay: false` when a public IP is configured, giving full throughput credit on the map
-- ✅ **Full Petals/Hivemind DHT Compatibility** — DHT announcements, RPC health checks, 120-second re-announcement
-- 🌐 **Live Node**: `KwaaiNet-RUST-Node` serving `Llama-3.1-8B-Instruct` blocks 0–7 at **33.2 tok/s**
 
-**What This Means:** Download a single archive for your platform, run `kwaainet setup` once, and `kwaainet start --daemon` launches a production-ready distributed AI node in the background. No Python, no build tools, no configuration required. The node reads the network map, picks the best locally-available model, joins the correct DHT swarm, and appears on [map.kwaai.ai](https://map.kwaai.ai) — all in native Rust.
+```bash
+kwaainet start --daemon
+```
+
+The node will connect to bootstrap peers, announce itself on the DHT, auto-detect available hardware, and appear on [map.kwaai.ai](https://map.kwaai.ai). No Python, no build tools, no manual configuration required.
 
 ## Vision
 
@@ -415,6 +403,74 @@ See **[docs/sharded-llm-processing.md](docs/sharded-llm-processing.md)** for the
 
 ---
 
+## VPK Storage Fabric
+
+Virtual Private Knowledge (VPK) is KwaaiNet's encrypted vector storage layer. Bob encrypts vectors locally before they leave his machine; Eve nodes store and search opaque ciphertext. No raw knowledge ever touches a storage node.
+
+### Architecture
+
+```
+Bob (any node)                         Eve (storage node)
+  │                                         │
+  │── kwaainet vpk discover ──────────────▶ DHT
+  │   returns PeerId, mode, capacity        │  (no IP addresses)
+  │                                         │
+  │── /kwaai/storage/1.0.0 ───────────────▶ kwaainet (Eve)
+  │   libp2p, Noise-encrypted, PeerId-routed│── redb + HNSW index
+  │   CreateTenant / UploadVectors /        │   (multi-tenant)
+  │   SearchVectors → {id, score} only      │
+  │                                         │
+  └── http://127.0.0.1:7432 ─────────────▶ local operator console only
+```
+
+Eve returns only `{id, score}` pairs — vectors never travel back over the wire. Nodes are addressed by PeerId; NAT traversal and routing are handled by the P2P relay layer, never by IP addresses.
+
+### Current status (v0.4.24)
+
+| Capability | Status |
+|------------|--------|
+| Eve storage node (`kwaainet storage init`, `kwaainet vpk enable --mode eve`) | ✅ Shipped |
+| Multi-tenant vector store (redb + hnsw_rs, cosine distance) | ✅ Shipped |
+| P2P vector protocol (`/kwaai/storage/1.0.0` — CreateTenant, UploadVectors, SearchVectors, DeleteTenant) | ✅ Shipped |
+| DHT advertisement (`_kwaai.vpk.nodes`, PeerId-addressed, no IP) | ✅ Shipped |
+| Eve discovery (`kwaainet vpk discover`) | ✅ Shipped |
+| Self-update preserves CUDA DLLs on Windows (`kwaainet update`) | ✅ Shipped |
+| Performance benchmark (`kwaainet vpk bench`) | ✅ Shipped |
+| PHE encryption layer (vectors encrypted before leaving Bob) | 🔄 Phase 2 |
+| Bob fan-out to multiple Eves (`kwaainet vpk shard`) | 🔄 Phase 2 |
+| DHT-backed shard resolution (`kwaainet vpk resolve`) | 🔄 Phase 3 |
+
+### Benchmark results (2026-05-02)
+
+Measured on two metro Eve nodes (WAN P2P RTT p50 = 25.6 ms), 50K vectors, dim=384:
+
+| Backend | Search p50 | Upload (50K vecs) |
+|---------|-----------|-------------------|
+| KwaaiNet local HNSW | **2.5 ms** | 53 s |
+| KwaaiNet WAN sharded (2 Eves) | 31 ms | 224 s |
+| Qdrant local Docker | 1.2 ms | 2.8 s |
+| Qdrant Cloud (us-west-1) | 67 ms † | 298 s |
+
+† 50K spike — likely index-rebuild threshold on the free-tier cluster.
+
+**Key finding:** WAN sharding across Eve nodes is RTT-dominated and cannot beat local HNSW on query latency at any corpus size (breakeven requires K ≈ 2⁶³ shards). Sharding is justified by **capacity** — distributing a corpus too large for one machine's RAM — not latency. LAN-range Eves (≤1 ms RTT) break even at K ≈ 11. PHE-encrypted vectors work equally well on Qdrant; KwaaiNet Eve's unique value is **decentralised, peer-owned storage** with no company intermediary.
+
+Full write-up: [docs/vpk-shard-bench/README.md](docs/vpk-shard-bench/README.md)
+
+### Run as an Eve node
+
+If you run a KwaaiNet node, you can contribute storage capacity to the network:
+
+```bash
+kwaainet update                                  # get v0.4.24+
+kwaainet storage init --capacity-gb 10           # initialise local vector store
+kwaainet vpk enable --mode eve                   # advertise as Eve
+kwaainet start --daemon                          # join the network
+kwaainet vpk discover                            # verify you appear to peers
+```
+
+---
+
 ## Roadmap: destination vs current implementation
 
 KwaaiNet's roadmap is defined as the **gap** between the aspirational Layer 8 architecture in the whitepapers and the currently shipping Rust implementation.
@@ -423,7 +479,7 @@ KwaaiNet's roadmap is defined as the **gap** between the aspirational Layer 8 ar
 |---------|--------------------------------------------------------------------------------------------|---------------------------------------------------------------------------|
 | Trust   | 5-layer trust pipeline including Testable Credentials (PVP-1) and EigenTrust propagation. | Identity + VC wallet + local time-decayed trust scores shipped; ToIP work in progress. |
 | Compute | Sharded inference, decentralized training, safe tool-calling with trust-gated policies.   | Dual backend: llama.cpp for 30+ tok/s local on Apple Silicon, candle for distributed block sharding on Linux/CUDA. Auto-detected GPU with bundled CUDA runtime (no toolkit install needed). Inference circuits, session-pinned paths, selective download, OpenAI-compatible API shipped. |
-| Storage | Fully distributed personal AI memory via cross-node VPK sharding and DHT-backed resolution. | VPK process, roles (bob/eve/both), encrypted vector search, and DHT advertisement shipped. |
+| Storage | Fully distributed personal AI memory via cross-node VPK sharding and DHT-backed resolution. | **Phase 1 complete**: Eve nodes serve multi-tenant vector storage over `/kwaai/storage/1.0.0` libp2p RPC; Bob nodes discover Eves by PeerId via DHT; `kwaainet vpk bench` benchmarks sharded vs local vs Qdrant performance. PHE encryption layer (Phase 2) is next. See [VPK Shard Benchmark](docs/vpk-shard-bench/README.md). |
 | Network | Intent-casting as a Layer 8 business protocol with economic settlement and neutrality guarantees. | libp2p + Kademlia DHT, trust-gated routing by model/trust/latency shipped. |
 
 See **[docs/roadmap.md](docs/roadmap.md)** for the full living roadmap with contribution ideas for each area.
@@ -465,6 +521,7 @@ Learn more at [kwaai.ai](https://www.kwaai.ai) and the [Kwaai-AI-Lab GitHub orga
 | [docs/MLX_BACKEND_PLAN.md](docs/MLX_BACKEND_PLAN.md) | MLX backend research — investigation results and path forward |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Node architecture, lobes, and Layer 8 stack |
 | [docs/WHITEPAPER.md](docs/WHITEPAPER.md) | Layer 8: The Decentralized AI Trust Layer (whitepaper) |
+| [docs/vpk-shard-bench/README.md](docs/vpk-shard-bench/README.md) | VPK shard benchmark — sharded Eve vs local HNSW vs Qdrant, with chart and analysis |
 | [nix/README.md](nix/README.md) | Nix build, dev shell, and test infrastructure |
 | [docs/contributor-guide.md](docs/contributor-guide.md) | How to contribute — 1 hour / 1 day / 1 week paths |
 | [docs/NODE_UI_PLANNING.md](docs/NODE_UI_PLANNING.md) | Node dashboard UI plan — status, config, logs, identity |
