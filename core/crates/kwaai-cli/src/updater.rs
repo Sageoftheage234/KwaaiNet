@@ -179,17 +179,26 @@ impl UpdateChecker {
                         .unwrap_or_default()
                 });
 
-            // Check if CUDA DLLs are already present — if so we only need the small
-            // CPU archive (binaries only) instead of the large CUDA bundle.
-            let cuda_installed = std::fs::read_dir(&install_dir)
-                .ok()
-                .map(|dir| {
-                    dir.filter_map(|e| e.ok()).any(|e| {
-                        let name = e.file_name().to_string_lossy().to_lowercase();
-                        name.starts_with("cublas") && name.ends_with(".dll")
+            // Check if CUDA is already present on this system.
+            // We check four signals in order — the first hit short-circuits:
+            //   1. %CUDA_PATH% env var (set by the CUDA toolkit installer)
+            //   2. %CUDA_HOME% env var (common alternative)
+            //   3. nvidia-smi.exe on PATH (always present with NVIDIA drivers)
+            //   4. cublas*.dll in the kwaainet install dir (bundled by previous update)
+            // Checking only the install dir (the old behaviour) misses system-wide
+            // toolkit installs, causing the full PS1 installer to re-run every time.
+            let cuda_installed = std::env::var_os("CUDA_PATH").is_some()
+                || std::env::var_os("CUDA_HOME").is_some()
+                || which_nvidia_smi()
+                || std::fs::read_dir(&install_dir)
+                    .ok()
+                    .map(|dir| {
+                        dir.filter_map(|e| e.ok()).any(|e| {
+                            let name = e.file_name().to_string_lossy().to_lowercase();
+                            name.starts_with("cublas") && name.ends_with(".dll")
+                        })
                     })
-                })
-                .unwrap_or(false);
+                    .unwrap_or(false);
 
             // For the full (non-CUDA) path we need the PS1 installer on disk before
             // writing the batch file; download it now while we're still async.
@@ -256,7 +265,16 @@ impl UpdateChecker {
             };
 
             if cuda_installed {
-                println!("  CUDA DLLs detected — downloading CPU archive only (fast update).");
+                let reason = if std::env::var_os("CUDA_PATH").is_some() {
+                    "CUDA_PATH env var set"
+                } else if std::env::var_os("CUDA_HOME").is_some() {
+                    "CUDA_HOME env var set"
+                } else if which_nvidia_smi() {
+                    "nvidia-smi found on PATH"
+                } else {
+                    "cublas DLLs in install dir"
+                };
+                println!("  CUDA detected ({reason}) — downloading CPU archive only (fast update).");
             }
 
             std::fs::write(&bat, &bat_content).context("Failed to write updater batch script")?;
@@ -290,6 +308,27 @@ impl UpdateChecker {
             .with_context(|| format!("Failed to write installer to {}", path.display()))?;
         Ok(())
     }
+}
+
+/// Returns true if `nvidia-smi.exe` is reachable on the current PATH.
+/// Used on Windows to detect an existing NVIDIA driver/CUDA install without
+/// scanning DLL directories, which may miss system-wide toolkit installs.
+#[cfg(windows)]
+fn which_nvidia_smi() -> bool {
+    std::process::Command::new("nvidia-smi")
+        .arg("--query-gpu=name")
+        .arg("--format=csv,noheader")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+#[cfg(not(windows))]
+#[allow(dead_code)]
+fn which_nvidia_smi() -> bool {
+    false
 }
 
 /// Returns true if `latest` is strictly greater than `current` (simple semver compare).
