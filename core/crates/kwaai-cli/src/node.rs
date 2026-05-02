@@ -560,10 +560,12 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
                     .vpk_mode
                     .clone()
                     .unwrap_or_else(|| "both".to_string());
-                let endpoint = config
-                    .vpk_endpoint
-                    .clone()
-                    .unwrap_or_else(|| format!("http://localhost:{}", port));
+                let endpoint = config.vpk_endpoint.clone().unwrap_or_else(|| {
+                    config.public_ip
+                        .as_deref()
+                        .map(|ip| format!("http://{}:{}", ip, port))
+                        .unwrap_or_else(|| format!("http://localhost:{}", port))
+                });
                 let capacity_gb = health["capacity_gb_available"].as_f64().unwrap_or(0.0);
                 let tenant_count = health["tenant_count"].as_u64().unwrap_or(0) as u32;
                 let vpk_version = health["version"].as_str().unwrap_or("unknown").to_string();
@@ -777,8 +779,12 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
                     let fresh_vpk = match check_vpk_health(port).await {
                         Some(health) => {
                             let mode = config.vpk_mode.clone().unwrap_or_else(|| "both".to_string());
-                            let endpoint = config.vpk_endpoint.clone()
-                                .unwrap_or_else(|| format!("http://localhost:{}", port));
+                            let endpoint = config.vpk_endpoint.clone().unwrap_or_else(|| {
+                                config.public_ip
+                                    .as_deref()
+                                    .map(|ip| format!("http://{}:{}", ip, port))
+                                    .unwrap_or_else(|| format!("http://localhost:{}", port))
+                            });
                             Some(VpkInfo {
                                 mode,
                                 endpoint,
