@@ -329,12 +329,17 @@ async fn discover(json_output: bool) -> Result<()> {
                         "🟢 relay  {} tenant(s)  {:.1} GB free",
                         h.tenant_count, h.capacity_gb_available
                     ),
-                    Err(e) if format!("{:#}", e).contains("protocols not supported") => {
-                        // Peer is reachable on P2P but hasn't registered the
-                        // storage handler — try the HTTP endpoint instead.
-                        http_health_check(&entry.endpoint).await
+                    Err(_) => {
+                        // P2P relay failed for any reason (storage handler not
+                        // registered, dial timeout, NAT, etc.) — fall back to
+                        // HTTP endpoint before declaring unreachable.
+                        let http = http_health_check(&entry.endpoint).await;
+                        if http.starts_with("🟢") || http.starts_with("⚫") {
+                            http
+                        } else {
+                            "🟡 relay unreachable".to_string()
+                        }
                     }
-                    Err(_) => "🟡 relay unreachable".to_string(),
                 }
             } else {
                 "🟡 invalid peer_id".to_string()

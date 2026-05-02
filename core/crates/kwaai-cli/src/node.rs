@@ -329,6 +329,19 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
         "Configuring KwaaiNet node"
     );
 
+    // Resolve effective public IP — use config override if set, otherwise
+    // detect dynamically. Done here (not only in the Start command) so that
+    // nodes which restart via `kwaainet restart` also get a public endpoint.
+    let effective_public_ip: Option<String> = if config.public_ip.is_some() {
+        config.public_ip.clone()
+    } else {
+        let ip = crate::config::detect_public_ip().await;
+        if let Some(ref s) = ip {
+            info!("Detected public IP: {}", s);
+        }
+        ip
+    };
+
     // Bootstrap peers — prefer config, fall back to Petals defaults
     let net_cfg = NetworkConfig::with_petals_bootstrap();
     let bootstrap_peers: Vec<String> = if config.initial_peers.is_empty() {
@@ -561,7 +574,7 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
                     .clone()
                     .unwrap_or_else(|| "both".to_string());
                 let endpoint = config.vpk_endpoint.clone().unwrap_or_else(|| {
-                    config.public_ip
+                    effective_public_ip
                         .as_deref()
                         .map(|ip| format!("http://{}:{}", ip, port))
                         .unwrap_or_else(|| format!("http://localhost:{}", port))
