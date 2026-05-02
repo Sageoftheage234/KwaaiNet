@@ -34,9 +34,11 @@ type SharedStorage = Arc<RwLock<DHTStorage>>;
 /// Populated by polling `GET http://localhost:{vpk_local_port}/api/health`
 /// immediately before each DHT announcement. When VPK is unreachable the
 /// field is absent from both the per-block record and the nodes registry.
+///
+/// Nodes are identified solely by PeerId — no IP addresses are advertised.
+/// Remote Bobs connect via `/kwaai/storage/1.0.0` over the libp2p relay.
 struct VpkInfo {
     mode: String,
-    endpoint: String,
     capacity_gb: f64,
     tenant_count: u32,
     vpk_version: String,
@@ -50,10 +52,6 @@ impl VpkInfo {
             (
                 rmpv::Value::from("mode"),
                 rmpv::Value::from(self.mode.as_str()),
-            ),
-            (
-                rmpv::Value::from("endpoint"),
-                rmpv::Value::from(self.endpoint.as_str()),
             ),
             (
                 rmpv::Value::from("capacity_gb"),
@@ -329,19 +327,6 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
         "Configuring KwaaiNet node"
     );
 
-    // Resolve effective public IP — use config override if set, otherwise
-    // detect dynamically. Done here (not only in the Start command) so that
-    // nodes which restart via `kwaainet restart` also get a public endpoint.
-    let effective_public_ip: Option<String> = if config.public_ip.is_some() {
-        config.public_ip.clone()
-    } else {
-        let ip = crate::config::detect_public_ip().await;
-        if let Some(ref s) = ip {
-            info!("Detected public IP: {}", s);
-        }
-        ip
-    };
-
     // Bootstrap peers — prefer config, fall back to Petals defaults
     let net_cfg = NetworkConfig::with_petals_bootstrap();
     let bootstrap_peers: Vec<String> = if config.initial_peers.is_empty() {
@@ -573,21 +558,6 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
                     .vpk_mode
                     .clone()
                     .unwrap_or_else(|| "both".to_string());
-                let endpoint = {
-                    let explicit = config.vpk_endpoint.as_deref().unwrap_or("");
-                    let is_loopback = explicit.contains("localhost")
-                        || explicit.contains("127.0.0.1")
-                        || explicit.contains("::1")
-                        || explicit.is_empty();
-                    if is_loopback {
-                        effective_public_ip
-                            .as_deref()
-                            .map(|ip| format!("http://{}:{}", ip, port))
-                            .unwrap_or_else(|| format!("http://localhost:{}", port))
-                    } else {
-                        explicit.to_string()
-                    }
-                };
                 let capacity_gb = health["capacity_gb_available"].as_f64().unwrap_or(0.0);
                 let tenant_count = health["tenant_count"].as_u64().unwrap_or(0) as u32;
                 let vpk_version = health["version"].as_str().unwrap_or("unknown").to_string();
@@ -597,7 +567,6 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
                 );
                 Some(VpkInfo {
                     mode,
-                    endpoint,
                     capacity_gb,
                     tenant_count,
                     vpk_version,
@@ -801,15 +770,8 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
                     let fresh_vpk = match check_vpk_health(port).await {
                         Some(health) => {
                             let mode = config.vpk_mode.clone().unwrap_or_else(|| "both".to_string());
-                            let endpoint = config.vpk_endpoint.clone().unwrap_or_else(|| {
-                                config.public_ip
-                                    .as_deref()
-                                    .map(|ip| format!("http://{}:{}", ip, port))
-                                    .unwrap_or_else(|| format!("http://localhost:{}", port))
-                            });
                             Some(VpkInfo {
                                 mode,
-                                endpoint,
                                 capacity_gb: health["capacity_gb_available"].as_f64().unwrap_or(0.0),
                                 tenant_count: health["tenant_count"].as_u64().unwrap_or(0) as u32,
                                 vpk_version: health["version"].as_str().unwrap_or("unknown").to_string(),

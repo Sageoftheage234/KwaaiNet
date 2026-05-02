@@ -540,8 +540,8 @@ async fn main() -> Result<()> {
                             println!();
                             println!("  🔐 vpk_enabled:  true");
                             println!("  🔐 vpk_mode:     {}", cfg.vpk_mode.as_deref().unwrap_or("(not set)"));
-                            println!("  🔐 vpk_port:     {}", cfg.vpk_local_port.unwrap_or(7432));
-                            println!("  🔐 vpk_endpoint: {}", cfg.vpk_endpoint.as_deref().unwrap_or("(auto: public_ip)"));
+                            println!("  🔐 vpk_port:     {} (local health check)", cfg.vpk_local_port.unwrap_or(7432));
+                            println!("  🔐 vpk_access:   P2P relay via /kwaai/storage/1.0.0");
                         }
                         print_separator();
                     }

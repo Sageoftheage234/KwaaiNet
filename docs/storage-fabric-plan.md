@@ -15,25 +15,25 @@ KwaaiNet's compute layer (block-sharded inference) is shipped. The storage fabri
 ## Architecture Overview
 
 ```
-  Bob (Data Owner)                    Eve (Storage Host)
-  ┌──────────────┐                    ┌──────────────────────┐
-  │  PHE binary   │                    │  kwaainet (Eve role) │
-  │  ┌──────────┐ │    encrypted      │  ┌────────────────┐  │
-  │  │ Encrypt  │ │───vectors────────▶│  │  PGVector       │  │
-  │  │ Scramble │ │    HTTP API       │  │  (per-tenant    │  │
-  │  │ Fan-out  │ │◀──scores─────────│  │   HNSW tables)  │  │
-  │  └──────────┘ │                    │  └────────────────┘  │
-  │  PostgreSQL   │                    │  PostgreSQL          │
-  │  (plaintext)  │                    │  (operator-managed)  │
-  └──────────────┘                    └──────────────────────┘
-         │                                      │
-         └──── KwaaiNet DHT (discovery) ────────┘
+  Bob (Data Owner)                         Eve (Storage Host)
+  ┌───────────────────┐                    ┌──────────────────────────┐
+  │  PHE library      │                    │  kwaainet (Eve role)     │
+  │  ┌─────────────┐  │  /kwaai/storage/   │  ┌──────────────────┐   │
+  │  │ Encrypt     │  │   1.0.0 (P2P,      │  │  kwaai-storage   │   │
+  │  │ Scramble    │──┼──Noise, PeerId) ──▶│  │  redb + HNSW     │   │
+  │  │ Fan-out     │  │◀──indices+scores───│  │  (per-tenant     │   │
+  │  └─────────────┘  │                    │  │   indices)       │   │
+  │                   │                    │  └──────────────────┘   │
+  └───────────────────┘                    └──────────────────────────┘
+         │                                              │
+         └──────── KwaaiNet DHT (PeerId discovery) ─────┘
 ```
 
 **Key properties:**
 - Eve never sees plaintext — only encrypted vectors and scrambled IDs
-- Bob encrypts locally, then fans out to remote Eves over HTTP
-- Each Eve hosts multiple Bobs (tenants) with schema-based isolation
+- Bob encrypts locally, then fans out to remote Eves **via P2P relay (no HTTP, no open ports)**
+- Nodes are addressed by PeerId only — IP addresses are never advertised or needed
+- Each Eve hosts multiple Bobs (tenants) with isolated HNSW indices
 - Tenant discovery and capacity advertisement happens via DHT
 
 ---
@@ -42,11 +42,13 @@ KwaaiNet's compute layer (block-sharded inference) is shipped. The storage fabri
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Eve vector DB backend | **PGVector** | Most memory-efficient (9.9GB), most consistent (CV=1.4%), HNSW+IVFFlat. Sweet spot 10k–500k vectors/tenant. Reuses existing PHE PostgreSQL dependency. |
-| Tenant isolation | **Per-tenant PGVector tables** | `eve_vectors_{tenant_hex8}` with individual HNSW indexes. No cross-tenant FKs. Clean capacity tracking via `pg_total_relation_size()`. |
-| PHE integration model | **Separate binary** | PHE stays in its own repo. KwaaiNet manages PG lifecycle and discovers/advertises PHE via DHT. Same pattern as p2pd. |
-| PG provisioning | **Operator-provided DSN** | `kwaainet storage init --pg-url <DSN>` validates the connection, enables pgvector, and runs schema migrations. Operators supply their own PostgreSQL instance. |
-| Auth (Phase 1) | **PeerId + tenant_secret** | Bob registers with PeerId, Eve issues a UUID API key. Simple, functional. Designed for upgrade to Ed25519-signed requests via intent protocol. |
+| Eve vector DB backend | **redb + hnsw_rs (embedded)** | Zero external dependencies — no PostgreSQL or Docker required. redb for durable vector persistence, hnsw_rs for in-memory ANN search rebuilt on startup. Ships as part of the kwaainet binary. |
+| Tenant isolation | **Per-tenant in-memory HNSW index** | Each tenant gets a `TenantIndex` with its own HNSW graph, id_map, and tombstone layer. Keys in redb are `tenant_id(16) ++ doc_id(8)` — no cross-tenant FKs. |
+| Remote access protocol | **`/kwaai/storage/1.0.0` (P2P relay)** | Follows the same model as `/kwaai/inference/1.0.0`. Noise-encrypted, PeerId-authenticated, NAT-transparent via libp2p circuit relay. No open ports required. |
+| HTTP API scope | **`127.0.0.1:7432` only (operator console)** | Local `kwaainet storage status` and dashboards. Never exposed to remote peers. Remote access always goes through the P2P relay. |
+| Node addressing | **PeerId only** | DHT records contain `peer_id`, `mode`, `capacity_gb`, `tenant_count`, `vpk_version`. No IP addresses or HTTP endpoints. Volatile IPs are irrelevant — libp2p resolves routing by PeerId. |
+| PHE integration model | **Embedded library (PHE repo)** | PHE encryption algorithms are applied locally by Bob before calling `rpc_upload_vectors`. Eve stores and searches opaque float arrays. |
+| Auth (Phase 1) | **PeerId recorded on CreateTenant** | Bob's PeerId is the authoritative identity on tenant creation. No separate API key. Designed for upgrade to Ed25519-signed request envelopes in Phase 2. |
 | HNSW tuning | **m=16, ef_construction=64** | Optimized for 10k–500k chunks per tenant per benchmarking results. |
 | Index strategy | **Flat first, HNSW optional** | See "Index Strategy" section below. When Bob shards across many Eves, each holds a small slice where brute-force beats HNSW. |
 
@@ -61,29 +63,24 @@ An Eve operator runs one command to provision their node for storage rental.
 ```
 kwaainet storage init [OPTIONS]
   --capacity-gb <GB>       Max storage to offer (default: 5)
-  --data-path <PATH>       Where to store PG data (default: ~/.kwaainet/storage)
-  --port <PORT>            VPK API port (default: 7432)
-  --endpoint <URL>         Public endpoint to advertise on DHT (optional)
+  --data-dir <PATH>        Where to store vector data (default: ~/.kwaainet/storage)
+  --port <PORT>            Local health-check API port (default: 7432; localhost only)
 ```
 
 **What it does:**
 
-1. Checks/installs PostgreSQL + pgvector (Homebrew on macOS, apt on Linux)
-2. Initializes a dedicated PG data directory at `~/.kwaainet/storage/pgdata` (avoids conflicts with system PG, uses port 5433)
-3. Starts PG, creates `kwaainet_vpk` database, enables pgvector extension
-4. Downloads PHE binary (same pattern as `kwaainet setup --get-deps` for p2pd)
-5. Runs PHE database migrations
-6. Saves config to `~/.kwaainet/config.yaml`:
+1. Opens (or creates) the embedded redb store at `~/.kwaainet/storage/metadata.redb`
+2. Saves config to `~/.kwaainet/config.yaml`:
    ```yaml
    vpk_enabled: true
    vpk_mode: "eve"
    vpk_local_port: 7432
    storage:
-     pg_url: "postgresql://localhost:5433/kwaainet_vpk"
-     data_path: "~/.kwaainet/storage"
+     data_dir: "~/.kwaainet/storage"
      capacity_gb: 5
-     pg_port: 5433
    ```
+
+No PostgreSQL, Docker, or port forwarding required. Remote Bobs connect via the P2P relay using the node's PeerId.
 
 **Related commands:**
 - `kwaainet storage status` — PG health, disk usage, tenant count, capacity remaining
@@ -148,48 +145,69 @@ Thread `tenant_id` through the VPK orchestrator.
 
 ---
 
-## Phase 4: Eve HTTP API for Remote Bobs
+## Phase 4: P2P Storage Protocol (already implemented)
 
-**Repo: PHE** | **New routes in `src/api/`**
+**Repo: KwaaiNet** | **File: `core/crates/kwaai-cli/src/storage_rpc.rs`**
 
-Eve exposes a tenant-aware REST API that remote Bobs call:
+Remote Bobs access Eve storage via `/kwaai/storage/1.0.0` — a libp2p unary RPC protocol. This is the canonical remote access path: all inter-node storage communication uses this protocol. **No HTTP port forwarding is required.** The libp2p relay (circuit relay v2) handles NAT traversal automatically.
 
-| Route | Method | Purpose |
-|-------|--------|---------|
-| `/api/tenants` | POST | Create tenant (Bob registers on Eve) |
-| `/api/tenants` | GET | List tenants |
-| `/api/tenants/{id}` | GET | Tenant info + stats |
-| `/api/tenants/{id}` | DELETE | Soft-delete tenant |
-| `/api/tenants/{id}/vectors` | POST | Upload encrypted vectors |
-| `/api/tenants/{id}/search` | POST | Search encrypted vectors |
-| `/api/tenants/{id}/vectors` | DELETE | Delete vectors |
-| `/api/health` | GET | Global health + tenant_count + capacity |
+**Wire format** (msgpack over libp2p stream):
 
-All vector endpoints accept **already-encrypted** data. Eve never sees plaintext.
+Request: `{ op: StorageOp, tenant_id: Option<String>, payload: Vec<u8> }`  
+Response: `{ ok: bool, payload: Vec<u8>, error: Option<String> }`
 
-Enhanced `/api/health` response includes `tenant_count`, `capacity_gb_available`, `total_vectors`, `version`, `peer_id` — compatible with what KwaaiNet's `node.rs` already polls.
+**Operations** (`StorageOp` enum):
 
-Existing `/api/upload`, `/api/search` continue to work via default tenant.
+| Operation | Input payload | Output payload |
+|-----------|---------------|----------------|
+| `Health` | — | `HealthPayload { status, tenant_count, total_vectors, capacity_gb_total, capacity_gb_available, version, peer_id }` |
+| `CreateTenant` | `CreateTenantPayload { peer_id, capacity_limit_mb, display_name, vector_dimension }` | `TenantInfo` |
+| `GetTenant` | — (tenant_id in envelope) | `TenantInfo` |
+| `ListTenants` | — | `Vec<TenantInfo>` |
+| `DeleteTenant` | — (tenant_id in envelope) | — |
+| `UploadVectors` | `UploadPayload { vectors: Vec<{ id, embedding }> }` | `usize` (count uploaded) |
+| `SearchVectors` | `SearchPayload { query: Vec<f32>, top_k }` | `Vec<SearchResult { id, score }>` |
+| `DeleteVectors` | `DeleteVectorsPayload { ids: Vec<i64> }` | `usize` (count deleted) |
+
+**Authentication (Phase 1):** Bob's `PeerId` is recorded on `CreateTenant`. Phase 2 will add Ed25519-signed request envelopes.
+
+**Local operator HTTP API** (`127.0.0.1:7432`, localhost only): the same operations are also available as a REST API for `kwaainet storage status` and operator dashboards. This interface is never exposed remotely.
+
+**Handler registration:** when `kwaainet storage serve` starts, it registers `make_storage_rpc_handler()` with the running p2pd via the IPC socket. If p2pd is not running, the P2P relay is unavailable (HTTP-only mode for local use).
 
 ---
 
-## Phase 5: Remote Shard Client
+## Phase 5: Bob Fan-Out Client
 
-**Repo: PHE** | **New file: `src/vectordb/remote.rs`**
+**Repo: KwaaiNet** | **File: `core/crates/kwaai-cli/src/storage_rpc.rs`** (client helpers already present)
 
-Bob's `ShardManager` fans out to **remote Eve HTTP endpoints** instead of local in-memory shards.
+Bob's fan-out to remote Eves uses the P2P client helpers in `storage_rpc.rs`:
 
-**`RemoteEveClient`** implements `VectorStorage` over HTTP:
-- `upload_vectors()` → `POST /api/tenants/{id}/vectors`
-- `search()` → `POST /api/tenants/{id}/search`
-- `delete_vectors()` → `DELETE /api/tenants/{id}/vectors`
+```rust
+// Discover Eves via DHT
+let eves = kwaainet vpk discover --json   // returns [{peer_id, mode, capacity_gb, ...}]
+
+// Create tenant on chosen Eve (by PeerId, no IP needed)
+let tenant = rpc_create_tenant(&p2p_client, &eve_peer_id, CreateTenantPayload { ... }).await?;
+
+// Apply PHE encryption locally — Eve receives opaque vectors
+let encrypted = phe_encrypt(&vectors, &tenant_key);
+
+// Fan out to each Eve shard
+rpc_upload_vectors(&p2p_client, &eve_peer_id, tenant.id, encrypted).await?;
+
+// Query: encrypt → fan out → merge → decrypt
+let results = rpc_search_vectors(&p2p_client, &eve_peer_id, tenant.id, query_vec, top_k).await?;
+```
+
+The PHE encryption library is applied locally by Bob before any network call. Eve stores and searches only opaque float arrays — it has no knowledge of the encryption algorithm, the model used, or the plaintext content.
 
 **Bob's workflow:**
-1. `kwaainet vpk discover` — find Eve nodes on DHT
-2. Create tenants on chosen Eves (`POST /api/tenants`)
-3. Configure PHE `shard_configs` with Eve URLs + tenant IDs
-4. Upload: encrypt locally → fan out to remote Eves
-5. Query: encrypt query → fan out → merge results → decrypt
+1. `kwaainet vpk discover` — find Eve nodes by PeerId via DHT
+2. `rpc_create_tenant()` — register as a tenant on each chosen Eve (authenticated by Bob's PeerId)
+3. Encrypt vectors locally using PHE library
+4. `rpc_upload_vectors()` — fan out to each Eve shard (parallel)
+5. Query: encrypt query locally → `rpc_search_vectors()` fan out → merge results → decrypt → lookup local docs
 
 ---
 
@@ -197,15 +215,17 @@ Bob's `ShardManager` fans out to **remote Eve HTTP endpoints** instead of local 
 
 **Repo: KwaaiNet**
 
-**Tenant management commands:**
+**Tenant management commands** (to be implemented — `VpkAction::Tenant` subcommand):
 ```
-kwaainet vpk tenant create --peer-id <ID> --capacity-mb 1024 [--eve-endpoint <URL>]
-kwaainet vpk tenant list [--eve-endpoint <URL>]
-kwaainet vpk tenant info <TENANT_ID> [--eve-endpoint <URL>]
-kwaainet vpk tenant delete <TENANT_ID> [--eve-endpoint <URL>]
+kwaainet vpk tenant create --eve-peer-id <PeerId> --capacity-mb 1024
+kwaainet vpk tenant list   --eve-peer-id <PeerId>
+kwaainet vpk tenant info   <TENANT_ID> --eve-peer-id <PeerId>
+kwaainet vpk tenant delete <TENANT_ID> --eve-peer-id <PeerId>
 ```
 
-When `--eve-endpoint` is omitted, targets local VPK. When provided, targets a remote Eve.
+`--eve-peer-id` is the Eve node's base58 PeerId (obtained from `kwaainet vpk discover`). No IP address or HTTP endpoint is ever required. When `--eve-peer-id` is omitted, commands target the local node.
+
+Under the hood, all tenant commands call the corresponding `rpc_*` helper in `storage_rpc.rs` via the running p2pd daemon socket.
 
 **Enhanced `kwaainet vpk status`** — per-tenant breakdown from health endpoint.
 
@@ -328,22 +348,30 @@ Phase 6 (KwaaiNet: CLI updates)   ── depends on 4, can parallel with 5
 
 **Unit tests (PHE):** PgVectorClient ops, TenantManager CRUD, RemoteEveClient with mock server, InMemoryVectorStorage backward compat.
 
-**Integration test (both repos):**
+**Integration test:**
 ```bash
-# Eve node
+# Eve node (no port forwarding needed)
 kwaainet storage init --capacity-gb 10
 kwaainet start --daemon
 
-# Bob creates tenant on Eve
-kwaainet vpk tenant create --peer-id $(kwaainet identity show) \
-  --capacity-mb 1024 --eve-endpoint http://eve-host:7432
+# Verify DHT record has no IP/endpoint
+kwaainet vpk discover --json | jq '.[0] | keys'
+# → ["capacity_gb", "mode", "peer_id", "tenant_count", "vpk_version"]
 
-# Bob uploads and queries via remote Eve
-# Cross-tenant isolation: tenant A data invisible to tenant B
+# Remote Bob — connect by PeerId only
+EVE_PEER_ID=$(kwaainet vpk discover --json | jq -r '.[0].peer_id')
+kwaainet vpk tenant create --eve-peer-id $EVE_PEER_ID --capacity-mb 1024
+
+# Verify P2P health check reaches Eve
+# (relay status shown in kwaainet vpk discover output)
+
+# Verify local HTTP is not reachable remotely
+curl http://localhost:7432/api/health          # ✅ works (Eve's own machine)
+curl http://<eve-public-ip>:7432/api/health    # ❌ should be unreachable (bound to 127.0.0.1)
 
 # Health
-kwaainet vpk status        # tenant count, capacity
-kwaainet vpk discover      # Eve metrics in DHT
+kwaainet vpk status        # local health via port 7432
+kwaainet vpk discover      # Eve PeerId + metrics in DHT
 ```
 
 **Backward compat:** existing single-tenant PHE upgrades seamlessly (default tenant auto-created, existing data adopted).

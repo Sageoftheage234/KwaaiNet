@@ -3,10 +3,9 @@
 //! Handles `kwaainet vpk <subcommand>` — enabling/disabling the local VPK
 //! service integration and querying its DHT advertisement status.
 //!
-//! KwaaiNet does not own or spawn VPK. It discovers and advertises it,
-//! exactly as it relates to Ollama today. The two binaries share a single
-//! value: the node's PeerId base58 string, set once in VPK's config.toml
-//! via `kwaainet identity show`.
+//! All inter-node storage access goes through the `/kwaai/storage/1.0.0`
+//! libp2p relay protocol. Nodes are identified by PeerId only — no IP
+//! addresses or HTTP endpoints are advertised in DHT records.
 
 use anyhow::{Context, Result};
 use std::time::Duration;
@@ -24,11 +23,7 @@ use crate::display::*;
 
 pub async fn run(args: VpkArgs) -> Result<()> {
     match args.action {
-        VpkAction::Enable {
-            mode,
-            endpoint,
-            port,
-        } => enable(mode, endpoint, port),
+        VpkAction::Enable { mode, port } => enable(mode, port),
         VpkAction::Disable => disable(),
         VpkAction::Status => status().await,
         VpkAction::Discover { json } => discover(json).await,
@@ -41,38 +36,24 @@ pub async fn run(args: VpkArgs) -> Result<()> {
 // enable
 // ---------------------------------------------------------------------------
 
-fn enable(mode: String, endpoint: Option<String>, port: u16) -> Result<()> {
+fn enable(mode: String, port: u16) -> Result<()> {
     match mode.as_str() {
         "bob" | "eve" | "both" => {}
         _ => anyhow::bail!("Invalid mode '{}'. Must be: bob, eve, or both", mode),
     }
 
     let mut cfg = KwaaiNetConfig::load_or_create()?;
-    // Discard loopback/empty endpoints — the node auto-detects public IP at
-    // runtime. Saving localhost here would suppress that detection permanently.
-    let effective_endpoint = endpoint.clone().filter(|ep| {
-        !ep.is_empty()
-            && !ep.contains("localhost")
-            && !ep.contains("127.0.0.1")
-            && !ep.contains("::1")
-    });
-
     cfg.vpk_enabled = true;
     cfg.vpk_mode = Some(mode.clone());
-    cfg.vpk_endpoint = effective_endpoint.clone();
     cfg.vpk_local_port = Some(port);
     cfg.save()?;
 
     print_box_header("🔐 VPK Integration Enabled");
     println!("  Mode:     {}", mode);
-    println!("  Port:     {}", port);
-    if let Some(ref ep) = effective_endpoint {
-        println!("  Endpoint: {}", ep);
-    } else {
-        println!("  Endpoint: (auto: http://<public-ip>:{port})");
-    }
+    println!("  Port:     {} (local health check)", port);
     println!();
     print_success("VPK integration enabled. Restart the node to advertise on DHT.");
+    print_info("Remote peers connect via PeerId over /kwaai/storage/1.0.0 (no port forwarding needed).");
     print_info("Check status: kwaainet vpk status");
     print_info("Restart node: kwaainet restart");
     print_separator();
@@ -87,7 +68,6 @@ fn disable() -> Result<()> {
     let mut cfg = KwaaiNetConfig::load_or_create()?;
     cfg.vpk_enabled = false;
     cfg.vpk_mode = None;
-    cfg.vpk_endpoint = None;
     cfg.vpk_local_port = None;
     cfg.save()?;
 
@@ -120,11 +100,8 @@ async fn status() -> Result<()> {
 
     println!("  VPK:      Enabled");
     println!("  Mode:     {}", mode);
-    println!("  Port:     {}", port);
-    match &cfg.vpk_endpoint {
-        Some(ep) => println!("  Endpoint: {}", ep),
-        None => println!("  Endpoint: (local-only, not advertised)"),
-    }
+    println!("  Port:     {} (local health check)", port);
+    println!("  Access:   P2P relay via /kwaai/storage/1.0.0 (PeerId-addressed)");
     println!();
 
     // Poll local VPK health endpoint
@@ -304,10 +281,9 @@ async fn discover(json_output: bool) -> Result<()> {
         let mut items: Vec<String> = Vec::new();
         for entry in &found {
             items.push(format!(
-                r#"{{"public_name":{},"peer_id":{},"endpoint":{},"mode":{},"capacity_gb":{},"tenant_count":{}}}"#,
+                r#"{{"public_name":{},"peer_id":{},"mode":{},"capacity_gb":{},"tenant_count":{}}}"#,
                 serde_json::to_string(&entry.public_name).unwrap_or_default(),
                 serde_json::to_string(&entry.peer_id).unwrap_or_default(),
-                serde_json::to_string(&entry.endpoint).unwrap_or_default(),
                 serde_json::to_string(&entry.mode).unwrap_or_default(),
                 entry.capacity_gb,
                 entry.tenant_count,
@@ -330,7 +306,7 @@ async fn discover(json_output: bool) -> Result<()> {
             entry.peer_id.clone()
         };
 
-        // Try p2p relay health check first, fall back to HTTP endpoint.
+        // Verify reachability via P2P relay.
         let relay_status = if entry.peer_id != "unknown" {
             if let Ok(pid) = entry.peer_id.parse::<PeerId>() {
                 match crate::storage_rpc::rpc_health(&client, &pid).await {
@@ -338,23 +314,13 @@ async fn discover(json_output: bool) -> Result<()> {
                         "🟢 relay  {} tenant(s)  {:.1} GB free",
                         h.tenant_count, h.capacity_gb_available
                     ),
-                    Err(_) => {
-                        // P2P relay failed for any reason (storage handler not
-                        // registered, dial timeout, NAT, etc.) — fall back to
-                        // HTTP endpoint before declaring unreachable.
-                        let http = http_health_check(&entry.endpoint).await;
-                        if http.starts_with("🟢") || http.starts_with("⚫") {
-                            http
-                        } else {
-                            "🟡 relay unreachable".to_string()
-                        }
-                    }
+                    Err(_) => "🟡 relay unreachable".to_string(),
                 }
             } else {
                 "🟡 invalid peer_id".to_string()
             }
         } else {
-            http_health_check(&entry.endpoint).await
+            "⚫ no peer_id".to_string()
         };
 
         println!("  [{:>2}] {}", i + 1, relay_status);
@@ -363,8 +329,8 @@ async fn discover(json_output: bool) -> Result<()> {
         }
         println!("       PeerID:   {}", short_id);
         println!("       Mode:     {}", entry.mode);
-        if !entry.endpoint.is_empty() && entry.endpoint != "unknown" {
-            println!("       Endpoint: {}", entry.endpoint);
+        if entry.vpk_version != "unknown" {
+            println!("       Version:  {}", entry.vpk_version);
         }
         println!(
             "       Capacity: {:.1} GB  |  Tenants: {}",
@@ -410,29 +376,6 @@ async fn resolve(kb_id: String) -> Result<()> {
 // Helpers
 // ---------------------------------------------------------------------------
 
-async fn http_health_check(endpoint: &str) -> String {
-    if endpoint.is_empty() || endpoint == "unknown" {
-        return "⚫ no connectivity info".to_string();
-    }
-    // Loopback endpoints can't be verified from a remote node — the request
-    // would hit the caller's own localhost, not the advertised node's service.
-    if endpoint.contains("localhost")
-        || endpoint.contains("127.0.0.1")
-        || endpoint.contains("::1")
-    {
-        return "⚫ local endpoint only".to_string();
-    }
-    let url = format!("{}/api/health", endpoint.trim_end_matches('/'));
-    let hc = reqwest::Client::builder()
-        .timeout(Duration::from_secs(4))
-        .build()
-        .unwrap();
-    match hc.get(&url).send().await {
-        Ok(r) if r.status().is_success() => "🟢 http".to_string(),
-        _ => "🔴 http unreachable".to_string(),
-    }
-}
-
 /// SHA1(msgpack(raw_key)) — same as Hivemind's DHTID.generate().
 fn vpk_dht_id(raw_key: &str) -> Vec<u8> {
     let packed = rmp_serde::to_vec(raw_key).expect("msgpack key");
@@ -443,7 +386,6 @@ fn vpk_dht_id(raw_key: &str) -> Vec<u8> {
 struct VpkNodeEntry {
     peer_id: String,
     mode: String,
-    endpoint: String,
     capacity_gb: f64,
     tenant_count: u32,
     vpk_version: String,
@@ -511,7 +453,7 @@ fn parse_vpk_dictionary(bytes: &[u8], out: &mut Vec<VpkNodeEntry>) {
     }
 }
 
-/// Decode msgpack({ mode, endpoint, capacity_gb, tenant_count, vpk_version })
+/// Decode msgpack({ mode, capacity_gb, tenant_count, vpk_version, public_name })
 /// into a VpkNodeEntry, using `peer_id` as the node identifier.
 fn decode_vpk_map(bytes: &[u8], peer_id: String) -> Option<VpkNodeEntry> {
     let val = rmpv::decode::read_value(&mut &bytes[..]).ok()?;
@@ -538,14 +480,13 @@ fn decode_vpk_map(bytes: &[u8], peer_id: String) -> Option<VpkNodeEntry> {
     };
 
     // If the map doesn't have "mode" it's probably not a VPK record — skip it.
-    if get_str("mode") == "unknown" && get_str("endpoint") == "unknown" {
+    if get_str("mode") == "unknown" {
         return None;
     }
 
     Some(VpkNodeEntry {
         peer_id,
         mode: get_str("mode"),
-        endpoint: get_str("endpoint"),
         capacity_gb: get_f64("capacity_gb"),
         tenant_count: get_u32("tenant_count"),
         vpk_version: get_str("vpk_version"),

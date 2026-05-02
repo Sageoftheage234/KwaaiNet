@@ -185,15 +185,17 @@ Recent work has demonstrated that plain text can often be reconstructed with hig
 
 ### 5.1 Virtual Private Knowledge (VPK)
 
-The Shared Secure Storage layer is implemented as a separate process, **VPK** (Virtual Private Knowledge), which KwaaiNet discovers and advertises via the DHT — analogous to how KwaaiNet relates to a locally running Ollama instance today. KwaaiNet does not own or spawn VPK; the two processes share a single binding value: the node's `PeerId` base58 string, set once in the VPK configuration and obtained from `kwaainet identity show`.
+The Shared Secure Storage layer is implemented as an embedded Rust crate (`kwaai-storage`) running in-process alongside the KwaaiNet node. The storage engine uses `redb` for durable vector persistence and `hnsw_rs` for approximate nearest-neighbour search. Each Eve node manages multiple tenants in isolated per-tenant HNSW indices.
 
 The integration has two channels:
 
-1. **PeerId binding.** VPK is configured with the KwaaiNet node's `PeerId`, binding its tenant data to the node's cryptographic identity in the trust graph.
+1. **PeerId binding.** Each Eve node's storage capability is bound to the node's `PeerId`. Tenants are created with the owner's `PeerId` as the authoritative identity, enabling future credential-gated access policies.
 
-2. **DHT advertisement.** Before each DHT announcement cycle, the KwaaiNet node polls the local VPK health endpoint (`GET http://localhost:{port}/api/health`) and includes the returned capability metadata in two DHT records:
+2. **DHT advertisement.** Before each DHT announcement cycle, the node queries the embedded storage engine directly and includes the capability metadata in two DHT records:
    - The per-block `Ext(64)` record gains a `"vpk"` field.
-   - A separate `_kwaai.vpk.nodes` registry stores a per-peer dictionary of VPK capability maps, each entry containing `mode`, `endpoint`, `capacity_gb`, `tenant_count`, and `vpk_version`.
+   - A separate `_kwaai.vpk.nodes` registry stores a per-peer dictionary of VPK capability maps, each entry containing `mode`, `capacity_gb`, `tenant_count`, and `vpk_version`. **No IP addresses or HTTP endpoints are included** — nodes are identified solely by PeerId.
+
+**Remote access** follows the same model as the inference layer: remote Bobs connect to Eve nodes using the `/kwaai/storage/1.0.0` libp2p protocol, addressed by PeerId. The libp2p transport (circuit relay, Noise encryption, Yamux multiplexing) handles NAT traversal and authenticated transport without requiring port forwarding. An HTTP health API is available on `127.0.0.1:7432` for local operator tooling only; it is never exposed remotely.
 
 Any node on the network can run `kwaainet vpk discover` to locate VPK-capable peers without running VPK itself.
 
@@ -249,10 +251,11 @@ Trust scoring governs which Eve nodes are eligible to hold a given tenant's shar
 
 All inter-node communication uses **libp2p** [8] as the networking substrate, managed through an embedded `go-libp2p-daemon` (`p2pd`) that the CLI starts and supervises alongside the main process. libp2p provides transport-layer encryption via Noise [29] and TLS 1.3, stream multiplexing via Yamux, NAT traversal via circuit relay, and a protocol negotiation layer (multistream-select) that maps human-readable protocol strings to typed handlers.
 
-Two application-layer protocols are currently registered:
+Three application-layer protocols are currently registered:
 
 - `DHTProtocol.rpc_find` — Hivemind DHT lookups; wire-format compatible with Python Hivemind bootstrap nodes.
 - `/kwaai/inference/1.0.0` — block-shard activation transfers (§4.1).
+- `/kwaai/storage/1.0.0` — storage fabric operations (§5.1): tenant CRUD, vector upload/search/delete, and health queries. All operations use a msgpack envelope `{ op, tenant_id, payload }`. Nodes are addressed by PeerId; the libp2p relay provides NAT traversal with no open ports required.
 
 ### 6.2 Distributed Hash Table
 

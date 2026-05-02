@@ -48,9 +48,10 @@ use clap::{Args, Parser, Subcommand};
   shard chain --total-blocks 32            # verify full coverage
 
 ─── Storage fabric (host encrypted vectors for the network) ─────────
-  kwaainet storage init --capacity-gb 10  provision PostgreSQL+pgvector
-  kwaainet storage status                 show PG health and tenants
+  kwaainet storage init --capacity-gb 10  provision embedded vector store
+  kwaainet storage status                 show store health and tenants
   kwaainet vpk status                     VPK health and DHT status
+  kwaainet vpk discover                   find Eve nodes by PeerId via DHT
 
 ─── OpenAI-compatible API ────────────────────────────────────────────
   kwaainet shard api --port 8080
@@ -264,7 +265,7 @@ pub enum ConfigAction {
     /// Valid keys:
     ///   model, blocks, start_block, port, use_gpu, log_level,
     ///   public_name, public_ip, announce_addr, no_relay,
-    ///   vpk_enabled, vpk_mode, vpk_endpoint, vpk_local_port,
+    ///   vpk_enabled, vpk_mode, vpk_local_port,
     ///   auto_rebalance, rebalance_interval_secs, rebalance_min_redundancy
     ///
     /// Example: kwaainet config set public_name "alice-m4"
@@ -467,11 +468,8 @@ pub enum VpkAction {
         #[arg(long, value_name = "MODE")]
         mode: String,
 
-        /// Public HTTP endpoint to advertise to peers (omit for local-only)
-        #[arg(long, value_name = "URL")]
-        endpoint: Option<String>,
-
-        /// Local VPK REST API port for health checks
+        /// Local VPK REST API port for the health check endpoint (default: 7432).
+        /// Remote peers connect via PeerId over /kwaai/storage/1.0.0 — no port forwarding needed.
         #[arg(long, default_value = "7432")]
         port: u16,
     },
@@ -484,7 +482,7 @@ pub enum VpkAction {
 
     /// Discover VPK-capable nodes via DHT
     Discover {
-        /// Output machine-readable JSON (array of {public_name, peer_id, endpoint, ...})
+        /// Output machine-readable JSON (array of {public_name, peer_id, mode, capacity_gb, tenant_count})
         #[arg(long)]
         json: bool,
     },
@@ -527,7 +525,8 @@ pub enum StorageAction {
         #[arg(long, default_value = "5")]
         capacity_gb: f64,
 
-        /// Port the storage API will listen on
+        /// Port for the local storage health-check API (localhost only).
+        /// Remote Bobs connect via PeerId over /kwaai/storage/1.0.0 — no port forwarding needed.
         #[arg(long, default_value = "7432")]
         port: u16,
 
@@ -535,11 +534,6 @@ pub enum StorageAction {
         /// Point this at an external or secondary drive for extra capacity.
         #[arg(long, value_name = "PATH")]
         data_dir: Option<std::path::PathBuf>,
-
-        /// Public HTTP endpoint advertised on the DHT so Bob nodes can reach this Eve.
-        /// Omit for local-only / LAN use.
-        #[arg(long, value_name = "URL")]
-        endpoint: Option<String>,
     },
 
     /// Show embedded store health, tenant count, vector count, and disk usage

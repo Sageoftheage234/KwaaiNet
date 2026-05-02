@@ -103,9 +103,11 @@ pub struct KwaaiNetConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vpk_mode: Option<String>,
 
-    /// HTTP endpoint to advertise to peers in the DHT record.
-    /// When None the field is omitted from the DHT advertisement (local-only).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Deprecated: HTTP endpoint previously advertised in DHT records.
+    /// No longer used — nodes are identified by PeerId only.
+    /// Kept for backward-compatible deserialization of old config files.
+    #[serde(default, skip_serializing)]
+    #[allow(dead_code)]
     pub vpk_endpoint: Option<String>,
 
     /// Local port for the VPK health-check and REST API (default: 7432).

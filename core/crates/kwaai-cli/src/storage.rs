@@ -15,8 +15,7 @@ pub async fn run(args: StorageArgs) -> Result<()> {
             capacity_gb,
             port,
             data_dir,
-            endpoint,
-        } => init(capacity_gb, port, data_dir, endpoint).await,
+        } => init(capacity_gb, port, data_dir).await,
         StorageAction::Status => status().await,
         StorageAction::Serve => serve().await,
         StorageAction::Start => start(),
@@ -33,7 +32,6 @@ async fn init(
     capacity_gb: f64,
     vpk_port: u16,
     data_dir_override: Option<PathBuf>,
-    endpoint: Option<String>,
 ) -> Result<()> {
     print_box_header("Storage Fabric — Init");
 
@@ -50,9 +48,6 @@ async fn init(
     cfg.vpk_enabled = true;
     cfg.vpk_mode = Some("eve".to_string());
     cfg.vpk_local_port = Some(vpk_port);
-    if let Some(ref ep) = endpoint {
-        cfg.vpk_endpoint = Some(ep.clone());
-    }
     cfg.storage = Some(StorageConfig {
         data_dir: data_dir.to_string_lossy().into_owned(),
         capacity_gb,
@@ -75,14 +70,13 @@ async fn init(
         "  │  Capacity:   {:.1} GB                    │",
         capacity_gb
     );
-    println!("  │  VPK port:   {}                      │", vpk_port);
-    println!("  │  Mode:       Eve (storage provider)     │");
-    if let Some(ref ep) = endpoint {
-        println!("  │  Endpoint:   {}│", truncate_path(ep, 28));
-    }
+    println!("  │  Health port: {}                     │", vpk_port);
+    println!("  │  Mode:        Eve (storage provider)    │");
+    println!("  │  Access:      P2P relay (no port fwd)   │");
     println!("  └─────────────────────────────────────────┘");
     println!();
     print_success("Storage fabric initialized");
+    print_info("Remote Bobs connect via /kwaai/storage/1.0.0 using your PeerId.");
     print_info("Start the node: kwaainet start --daemon");
     print_info("Check status:   kwaainet storage status");
     print_separator();
@@ -185,7 +179,8 @@ async fn serve() -> Result<()> {
     };
 
     let vpk_port = cfg.vpk_local_port.unwrap_or(7432);
-    let bind_addr = format!("0.0.0.0:{}", vpk_port);
+    // Bind to loopback only — remote access goes through /kwaai/storage/1.0.0 P2P relay.
+    let bind_addr = format!("127.0.0.1:{}", vpk_port);
     let data_dir = PathBuf::from(&storage.data_dir);
     let capacity_gb = storage.capacity_gb;
 
@@ -238,7 +233,7 @@ async fn serve() -> Result<()> {
         }
     }
 
-    print_success(&format!("Starting HTTP API on {}", bind_addr));
+    print_success(&format!("Starting local health API on {} (operator use only)", bind_addr));
     print_separator();
 
     kwaai_storage::run_storage_api(db, &bind_addr, capacity_gb, peer_id).await?;

@@ -302,6 +302,7 @@ fn encode_ok<T: Serialize>(val: &T) -> StorageResponse {
 }
 
 // ── Client-side helpers ───────────────────────────────────────────────────────
+// Public API for Bob nodes — Phase 2/3 vpk tenant commands will call these.
 
 /// Generic one-shot RPC call to an Eve node.
 async fn call_storage(
@@ -336,6 +337,7 @@ pub async fn rpc_health(client: &P2PClient, peer_id: &PeerId) -> Result<HealthPa
     rmp_serde::from_slice(&resp.payload).context("decode HealthPayload")
 }
 
+#[allow(dead_code)]
 pub async fn rpc_create_tenant(
     client: &P2PClient,
     peer_id: &PeerId,
@@ -355,6 +357,7 @@ pub async fn rpc_create_tenant(
     rmp_serde::from_slice(&resp.payload).context("decode TenantInfo")
 }
 
+#[allow(dead_code)]
 pub async fn rpc_upload_vectors(
     client: &P2PClient,
     peer_id: &PeerId,
@@ -379,6 +382,7 @@ pub async fn rpc_upload_vectors(
     rmp_serde::from_slice::<usize>(&resp.payload).context("decode upload count")
 }
 
+#[allow(dead_code)]
 pub async fn rpc_search_vectors(
     client: &P2PClient,
     peer_id: &PeerId,
@@ -400,6 +404,7 @@ pub async fn rpc_search_vectors(
     rmp_serde::from_slice(&resp.payload).context("decode SearchResults")
 }
 
+#[allow(dead_code)]
 pub async fn rpc_delete_vectors(
     client: &P2PClient,
     peer_id: &PeerId,
@@ -420,6 +425,7 @@ pub async fn rpc_delete_vectors(
     rmp_serde::from_slice::<usize>(&resp.payload).context("decode delete count")
 }
 
+#[allow(dead_code)]
 pub async fn rpc_delete_tenant(
     client: &P2PClient,
     peer_id: &PeerId,
@@ -438,6 +444,7 @@ pub async fn rpc_delete_tenant(
     .map(|_| ())
 }
 
+#[allow(dead_code)]
 pub async fn rpc_list_tenants(client: &P2PClient, peer_id: &PeerId) -> Result<Vec<TenantInfo>> {
     let resp = call_storage(
         client,
