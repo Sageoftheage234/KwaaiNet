@@ -189,7 +189,7 @@ ax1.set_ylabel("Search latency p50 (ms)", fontsize=11)
 ax1.set_title("A  |  Latency vs corpus size", fontsize=12, fontweight="bold", pad=10)
 ax1.set_xlim(1e4, 1e9)
 ax1.set_ylim(0.3, 200)
-ax1.legend(fontsize=7, loc="upper left", framealpha=0.92, ncol=1)
+ax1.legend(fontsize=7, loc="lower right", framealpha=0.92, ncol=1)
 ax1.grid(True, which="both", color="#E5E7EB", lw=0.6)
 ax1.tick_params(labelsize=9)
 ax1.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(
