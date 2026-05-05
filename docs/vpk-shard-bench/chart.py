@@ -118,20 +118,31 @@ ax1.loglog(N, sharded_p50(N, 2, 5_000)/1e3,
            color=C_DC, lw=2, linestyle=":",
            label="Datacenter sharded K=2")
 
-# Qdrant local Docker model + measured points
+# Qdrant local Docker model + measured points (both runs)
 ax1.loglog(N, qdrant_local_model(N)/1e3,
            color=C_QDRANT_L, lw=2.5, linestyle="-",
            label="Qdrant local HNSW (model)")
 ax1.scatter(bench_n, [v/1e3 for v in bench_qdrant_loc],
             color=C_QDRANT_L, s=90, zorder=6, marker="^",
-            label="Qdrant local Docker (measured)")
+            label="Qdrant local Docker (Run 1)")
+ax1.scatter(bench_n, [v/1e3 for v in bench_qdrant_loc2],
+            color=C_QDRANT_L, s=70, zorder=6, marker="^",
+            facecolors="none", linewidths=1.5,
+            label="Qdrant local Docker (Run 2)")
 
 # Qdrant Cloud (us-west-1) — scatter + dotted line (no model; 50K shows index-build spike)
 ax1.scatter(bench_n, [v/1e3 for v in bench_qdrant_cld],
             color=C_QDRANT_C, s=90, zorder=6, marker="v",
-            label="Qdrant Cloud us-west-1 (measured)")
+            label="Qdrant Cloud us-west-1 (Run 1)")
 ax1.plot(bench_n, [v/1e3 for v in bench_qdrant_cld],
          color=C_QDRANT_C, lw=1.2, linestyle=":", alpha=0.7)
+
+# Qdrant Cloud RTT floor line — shows that K=11 WAN (93 ms) is 3× slower than Cloud (29 ms)
+qdrant_cloud_rtt_us = 28_881   # p50 median across 12.5K–25K (pre-spike)
+ax1.axhline(qdrant_cloud_rtt_us/1e3, color=C_QDRANT_C, lw=1, linestyle="dotted", alpha=0.6)
+ax1.text(1.1e4, qdrant_cloud_rtt_us/1e3 * 1.12,
+         f"Qdrant Cloud RTT floor (~{qdrant_cloud_rtt_us/1e3:.0f} ms)",
+         color=C_QDRANT_C, fontsize=7.5, va="bottom")
 
 # Annotate the Qdrant Cloud 50K spike
 ax1.annotate(
@@ -201,53 +212,66 @@ ax2.semilogx(K, savings_qd/1e3, color=C_QDRANT_L, lw=2,   linestyle="--",
              label="Qdrant HNSW compute saved")
 
 # Shade "wins" regions
-ax2.axhspan(0, 1,    alpha=0.12, color=C_LAN, label="LAN overhead (≤1 ms)")
-ax2.axhspan(1, 5,    alpha=0.10, color=C_DC,  label="Datacenter overhead (1–5 ms)")
-ax2.axhspan(5, 100,  alpha=0.07, color=C_WAN, label="WAN overhead (5–100 ms)")
+ax2.axhspan(0,  1,   alpha=0.12, color=C_LAN,     label="LAN overhead (≤1 ms)")
+ax2.axhspan(1,  5,   alpha=0.10, color=C_DC,      label="Datacenter overhead (1–5 ms)")
+ax2.axhspan(5,  29,  alpha=0.07, color=C_WAN,     label="WAN K=2 overhead (5–29 ms)")
+ax2.axhspan(29, 100, alpha=0.04, color=C_QDRANT_C, label="Qdrant Cloud / K=11 WAN zone")
 
 # Horizontal threshold lines
 for rtt, label, col in [
-    (1,   "LAN breakeven  (1 ms)",    C_LAN),
-    (5,   "DC breakeven   (5 ms)",    C_DC),
-    (26,  "WAN breakeven  (26 ms)",   C_WAN),
+    (1,    "LAN breakeven  (1 ms)",        C_LAN),
+    (5,    "DC breakeven   (5 ms)",         C_DC),
+    (26,   "WAN K=2 breakeven  (26 ms)",    C_WAN),
+    (28.9, "Qdrant Cloud RTT  (~29 ms)",    C_QDRANT_C),
+    (92.5, "WAN K=11 RTT  (93 ms)",         C_WAN),
 ]:
     ax2.axhline(rtt, color=col, lw=1.5, linestyle="--", alpha=0.8)
-    ax2.text(2.2, rtt * 1.08, label, color=col, fontsize=8)
+    ax2.text(2.2, rtt * 1.03, label, color=col, fontsize=7.5)
 
 # Annotate crossover points for KwaaiNet
 for rtt_ms, col, rtt_label in [
-    (1,  C_LAN, "LAN"),
-    (5,  C_DC,  "DC"),
-    (26, C_WAN, "WAN"),
+    (1,    C_LAN,     "LAN"),
+    (5,    C_DC,      "DC"),
+    (26,   C_WAN,     "WAN K=2"),
+    (28.9, C_QDRANT_C,"Cloud"),
 ]:
     k_cross = 2 ** (rtt_ms * 1e3 / B)
     if k_cross < 8e3:
         ax2.axvline(k_cross, color=col, lw=1.2, linestyle=":", alpha=0.7)
-        ax2.text(k_cross * 1.15, 0.3,
-                 f"K≈{int(k_cross):,}\nbreakeven\n({rtt_label})", color=col,
-                 fontsize=7.5, ha="left", va="bottom",
+        ax2.text(k_cross * 1.15, 0.5,
+                 f"K≈{int(k_cross):,}\n({rtt_label})", color=col,
+                 fontsize=7, ha="left", va="bottom",
                  bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=col, alpha=0.8))
     else:
         ax2.annotate(
-            "WAN breakeven:\nK ≈ 2⁶⁴  (off-chart\n— impossible)",
-            xy=(9500, 26), xytext=(300, 21),
+            "WAN K=2 breakeven:\nK ≈ 2⁶⁴  (off-chart\n— impossible)",
+            xy=(9500, 26), xytext=(300, 20),
             arrowprops=dict(arrowstyle="->", color=C_WAN, lw=1.2),
             fontsize=7.5, color=C_WAN,
             bbox=dict(boxstyle="round,pad=0.3", fc="white", ec=C_WAN, alpha=0.9),
         )
 
-# Mark our two measured Eves
+# K=11 WAN breakeven annotation (off-chart at ~9.8B vectors)
+ax2.annotate(
+    "K=11 WAN breakeven:\nK ≈ 2⁷⁵  (off-chart\n— impossible)",
+    xy=(9500, 92.5), xytext=(200, 80),
+    arrowprops=dict(arrowstyle="->", color=C_WAN, lw=1.2),
+    fontsize=7.5, color=C_WAN,
+    bbox=dict(boxstyle="round,pad=0.3", fc="white", ec=C_WAN, alpha=0.9),
+)
+
+# Mark our two measured K values
 ax2.axvline(2, color=C_MEAS, lw=1, linestyle=":", alpha=0.5)
-ax2.text(2.1, 24, "← K=2 metro Eves", fontsize=7.5, color=C_MEAS)
+ax2.text(2.1, 96, "← K=2 metro Eves", fontsize=7.5, color=C_MEAS)
 ax2.axvline(11, color=C_MEAS, lw=1, linestyle=(0,(4,2)), alpha=0.5)
-ax2.text(11.5, 24, "← K=11\ndiverse Eves", fontsize=7.5, color=C_MEAS)
+ax2.text(11.5, 96, "← K=11\ndiverse Eves", fontsize=7.5, color=C_MEAS)
 
 ax2.set_xlabel("Number of Eve shards (K)", fontsize=11)
 ax2.set_ylabel("Compute time saved vs local (ms)", fontsize=11)
 ax2.set_title("B  |  HNSW savings vs shard count K\n(independent of N — this is the key insight)",
               fontsize=12, fontweight="bold", pad=10)
 ax2.set_xlim(2, 1e4)
-ax2.set_ylim(0, 30)
+ax2.set_ylim(0, 100)
 ax2.legend(fontsize=8, loc="lower right", framealpha=0.9)
 ax2.grid(True, which="both", color="#E5E7EB", lw=0.6, axis="both")
 ax2.tick_params(labelsize=9)
