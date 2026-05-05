@@ -186,15 +186,34 @@ pub async fn run(args: BenchArgs) -> Result<()> {
             shard.tenant_id = info.tenant_id;
         }
 
+        // Parallel fan-out upload — each shard uploads its slice concurrently,
+        // so shard_upload_ms ≈ max(per-shard time) rather than sum.
         let t0 = Instant::now();
-        for (i, shard) in shards.iter().enumerate() {
-            let start = i * shard_size;
-            let end = ((i + 1) * shard_size).min(n);
-            let client = shard.client.lock().await;
-            for chunk in corpus[start..end].chunks(batch) {
-                rpc_upload_vectors(&*client, &shard.peer_id, shard.tenant_id, chunk.to_vec())
-                    .await?;
-            }
+        let upload_futs: Vec<_> = shards
+            .iter()
+            .enumerate()
+            .map(|(i, shard)| {
+                let start = i * shard_size;
+                let end = ((i + 1) * shard_size).min(n);
+                let client = Arc::clone(&shard.client);
+                let peer_id = shard.peer_id;
+                let tid = shard.tenant_id;
+                let chunks: Vec<Vec<(i64, Vec<f32>)>> = corpus[start..end]
+                    .chunks(batch)
+                    .map(|c| c.to_vec())
+                    .collect();
+                async move {
+                    let c = client.lock().await;
+                    for chunk in chunks {
+                        rpc_upload_vectors(&*c, &peer_id, tid, chunk).await?;
+                    }
+                    anyhow::Ok(())
+                }
+            })
+            .collect();
+        let upload_results = join_all(upload_futs).await;
+        for r in upload_results {
+            r?;
         }
         let shard_upload_ms = t0.elapsed().as_millis() as u64;
 

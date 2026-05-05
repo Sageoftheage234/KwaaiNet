@@ -347,12 +347,27 @@ async fn discover(json_output: bool) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 async fn shard(kb_id: String, eve_count: usize) -> Result<()> {
-    print_box_header("🔐 VPK Knowledge Base Sharding");
+    print_box_header("VPK Knowledge Base Sharding");
     println!("  KB ID:     {}", kb_id);
     println!("  Eve nodes: {}", eve_count);
     println!();
-    print_warning("Phase 2: Cross-node Eve discovery and sharding is not yet implemented.");
-    print_info("Use 'kwaainet vpk discover' to see available Eve nodes.");
+    print_warning("Sharding is not yet implemented as a single command.");
+    println!();
+    print_info("Important: sharding distributes a corpus across Eve nodes for RAM capacity.");
+    print_info("It does NOT reduce query latency on WAN-connected nodes.");
+    println!();
+    println!("  Benchmarks (May 2026) show WAN fan-out search latency is dominated by");
+    println!("  P2P round-trip time (25–93 ms), regardless of corpus size or shard count.");
+    println!("  HNSW compute per shard is 1–2 ms — irrelevant next to WAN overhead.");
+    println!();
+    println!("  Use sharding when your knowledge base exceeds a single Eve's available RAM.");
+    println!("  For latency-sensitive workloads, store locally or on a single nearby Eve.");
+    println!();
+    print_info("To measure your network's RTT before committing to a sharded topology:");
+    println!("  kwaainet vpk bench --eve-peer-ids <PEER_IDS> --vectors 10000");
+    println!();
+    print_info("To see available Eve nodes:  kwaainet vpk discover");
+    print_info("To create tenants manually:  kwaainet vpk tenant create --eve-peer-id <ID>");
     print_separator();
     Ok(())
 }
@@ -362,11 +377,11 @@ async fn shard(kb_id: String, eve_count: usize) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 async fn resolve(kb_id: String) -> Result<()> {
-    print_box_header("🔐 VPK KB Resolution");
+    print_box_header("VPK KB Resolution");
     println!("  KB ID: {}", kb_id);
     println!();
-    print_warning("Phase 3: DHT FIND on _kwaai.vpk.kb.{kb_id} is not yet implemented.");
-    print_info("Shard topology will be recoverable from DHT in Phase 3.");
+    print_warning("KB resolution from DHT is not yet implemented.");
+    print_info("Shard topology recovery (DHT FIND on _kwaai.vpk.kb.<id>) is planned for Phase 3.");
     print_separator();
     Ok(())
 }

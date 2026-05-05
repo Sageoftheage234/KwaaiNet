@@ -181,6 +181,27 @@ Response: `{ ok: bool, payload: Vec<u8>, error: Option<String> }`
 
 **Repo: KwaaiNet** | **File: `core/crates/kwaai-cli/src/storage_rpc.rs`** (client helpers already present)
 
+> **⚠️ Sharding is a capacity mechanism, not a latency optimisation.**
+>
+> Empirical benchmarks (May 2026, K=2 metro Eves and K=11 geographically diverse Eves) show
+> WAN fan-out query latency is dominated entirely by P2P round-trip time:
+>
+> | | K=2 (metro) | K=11 (diverse) |
+> |-|-------------|----------------|
+> | P2P RTT p50 | 25.6 ms | 92.5 ms |
+> | HNSW compute/shard | 1–1.3 ms | ~0.2 ms |
+> | Sharded search p50 | 32 ms | 114 ms |
+> | Local HNSW p50 | 2.2–2.5 ms | 2.0–2.6 ms |
+> | WAN breakeven | K ≈ 2⁶³ shards | ~9.8B vectors |
+>
+> Fan-out latency equals **max(shard RTTs)**, not the mean. Adding fast Eves to a fleet that
+> contains any slow Eve does not help — the slowest node sets the floor for every query.
+>
+> **The correct use case for sharding is RAM capacity:** when Bob's knowledge base is too
+> large to fit in a single Eve's available memory. For latency-sensitive workloads, Bob
+> should store on a single nearby Eve (or locally). See `docs/vpk-shard-bench/README.md`
+> for full empirical data.
+
 Bob's fan-out to remote Eves uses the P2P client helpers in `storage_rpc.rs`:
 
 ```rust
@@ -193,10 +214,10 @@ let tenant = rpc_create_tenant(&p2p_client, &eve_peer_id, CreateTenantPayload { 
 // Apply PHE encryption locally — Eve receives opaque vectors
 let encrypted = phe_encrypt(&vectors, &tenant_key);
 
-// Fan out to each Eve shard
+// Fan out to each Eve shard (parallel uploads)
 rpc_upload_vectors(&p2p_client, &eve_peer_id, tenant.id, encrypted).await?;
 
-// Query: encrypt → fan out → merge → decrypt
+// Query: encrypt → fan out in parallel → merge → decrypt
 let results = rpc_search_vectors(&p2p_client, &eve_peer_id, tenant.id, query_vec, top_k).await?;
 ```
 
@@ -206,8 +227,11 @@ The PHE encryption library is applied locally by Bob before any network call. Ev
 1. `kwaainet vpk discover` — find Eve nodes by PeerId via DHT
 2. `rpc_create_tenant()` — register as a tenant on each chosen Eve (authenticated by Bob's PeerId)
 3. Encrypt vectors locally using PHE library
-4. `rpc_upload_vectors()` — fan out to each Eve shard (parallel)
-5. Query: encrypt query locally → `rpc_search_vectors()` fan out → merge results → decrypt → lookup local docs
+4. `rpc_upload_vectors()` — fan out to each Eve shard **in parallel** (uploads and queries both)
+5. Query: encrypt query locally → `rpc_search_vectors()` parallel fan out → merge results → decrypt → lookup local docs
+
+**When to use multiple Eves:** only when the corpus exceeds a single Eve's RAM. Querying a
+single nearby Eve is always faster on WAN than fan-out across multiple Eves.
 
 ---
 
@@ -235,14 +259,20 @@ Under the hood, all tenant commands call the corresponding `rpc_*` helper in `st
 
 ## Index Strategy: Flat vs HNSW
 
-The [vector DB benchmarking study](https://github.com/Kwaai-AI-Lab/vector_dbs_benchmarking) found that HNSW only delivers benefits at scale (10k+ vectors). Below that threshold, HNSW graphs suffer from sparse connectivity and poor layer distribution — the "warm-up phenomenon" shows up to 74% latency reduction as corpus grows from 1k to 50k chunks.
+> **HNSW vs flat search is a compute and memory optimisation — not a user-visible latency decision on WAN.**
+> Empirical bench (May 2026, K=2 and K=11 WAN Eves) shows P2P RTT dominates total query time at 25–93 ms.
+> HNSW compute savings are at most ~1.5 ms per query — imperceptible at any realistic WAN round-trip.
 
-**In a sharded deployment, each Eve holds a small slice.** A Bob with a 1GB knowledge base (~250k vectors at 384-dim) sharded across 100 Eves means each Eve holds ~2,500 vectors. At that scale:
+For single-Eve local access, HNSW delivers 1–2.5 ms p50 search (empirically measured). For small corpora
+(< 10K vectors per shard), brute-force flat scan matches HNSW quality while avoiding graph-maintenance overhead.
+The flat-first approach reduces per-shard memory use and simplifies correctness at small scale.
+
+**In a sharded deployment, each Eve holds a small slice.** A Bob with a 1GB knowledge base (~250k vectors
+at 384-dim) sharded across 100 Eves means each Eve holds ~2,500 vectors. At that scale:
 
 - Brute-force flat search (sequential scan) is O(n) but with tiny n
-- HNSW index adds write overhead (graph maintenance) with no read benefit
+- HNSW index adds write overhead (graph maintenance) with no read benefit below ~10K vectors
 - Flat search uses less memory (no graph structure)
-- PGVector's `<=>` operator works on both indexed and unindexed columns
 
 **Plan: default to flat (no index), with HNSW as a per-tenant opt-in when vector count exceeds a threshold.**
 
@@ -251,15 +281,11 @@ The `ensure_table()` method should:
 2. When vector count crosses a configurable threshold (e.g., 10k), automatically create the HNSW index
 3. Expose the threshold as a config option so operators can tune it
 
-**Benchmark to validate:** We need to measure the crossover point on PGVector specifically:
-- Flat scan vs HNSW at 1k, 5k, 10k, 25k, 50k vectors (384-dim)
-- Measure: P50/P95 query latency, insert throughput, memory overhead
-- Test on typical Eve hardware (consumer machines, not cloud)
-- Compare with the benchmarking study's Chroma/FAISS/PGVector results
+Note: the HNSW/flat choice has no measurable impact on WAN query latency. It matters only when Bob queries a
+single Eve over a low-latency (LAN or loopback) connection.
 
-This benchmark will tell us the exact threshold where HNSW pays for itself in the KwaaiNet deployment model.
-
-> **Current implementation**: HNSW index is always created. This will be changed to flat-first with auto-HNSW after the benchmark validates the crossover point.
+> **Current implementation**: HNSW index is always created. This will be changed to flat-first with auto-HNSW
+> after benchmarks validate the exact crossover point on Eve-class hardware.
 
 ---
 

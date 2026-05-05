@@ -199,6 +199,8 @@ The integration has two channels:
 
 Any node on the network can run `kwaainet vpk discover` to locate VPK-capable peers without running VPK itself.
 
+**Empirical sharding note (May 2026).** Bench runs with K=2 metro Eves (WAN RTT p50 = 25.6 ms) and K=11 geographically diverse Eves (WAN RTT p50 = 92.5 ms) show that fan-out query latency is dominated entirely by P2P round-trip time. HNSW compute per shard is 1–2.5 ms; the WAN overhead is 10–50× larger at any tested corpus size. No practical shard count K overcomes this gap on internet-connected nodes — the breakeven corpus for K=2 WAN sharding is approximately 2⁶³ vectors. Cross-node sharding is a **capacity mechanism** — distributing a corpus that exceeds a single Eve node's RAM — not a query latency optimisation. LAN deployments (RTT ≤ 1 ms) are the sole exception: they break even at K ≈ 11.
+
 ### 5.2 Multi-Tenant Isolation
 
 VPK nodes serve three roles:
@@ -301,6 +303,8 @@ Step 3 is the point at which trust gating operates: a low-trust node may be unre
 **Phase 4 peer endorsements not yet implemented.** Current trust scores are credential-only; the EigenTrust propagation layer that provides Sybil resistance for peer endorsement graphs is planned for Phase 4.
 
 **Cross-node VPK shard placement.** Eve node discovery is operational (`kwaainet vpk discover`), but cross-node shard splitting — placing a tenant's encrypted knowledge base across multiple Eve nodes with redundancy — is targeted for Phase 2 of the VPK roadmap.
+
+**WAN sharding does not reduce search latency.** Fan-out query time is bounded by the slowest shard's RTT, not the mean. Empirical measurements (May 2026, K=2 and K=11 WAN Eve fleets) record P2P overhead at 25.6 ms and 92.5 ms respectively. HNSW compute savings from sharding are B × log₂K µs — always smaller than one round-trip at any tested corpus size. Sharding should be used to distribute a corpus that exceeds a single Eve's RAM, not to improve query speed on WAN-connected nodes. See [VPK shard benchmark](../docs/vpk-shard-bench/README.md) for full data.
 
 **Node version opacity.** Nodes running older builds silently fail RPC calls when the serving protocol is not registered. The `kwaainet_version` field in the DHT wire format is tracked as a near-term addition to make version skew visible in `kwaainet shard chain` output.
 
