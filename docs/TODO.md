@@ -326,6 +326,48 @@ Metal decode is 130s/token while CPU is 0.2s/token. Prefill is the opposite (Met
 - [ ] **Enhanced `vpk status`** — show per-tenant breakdown from enhanced health endpoint.
 - [ ] **DHT advertisement update in `node.rs`** — add `total_vectors: u64` to `VpkInfo`, emit in `to_msgpack_value()`.
 
+### Scientific Experiments — Fabric Benefits Beyond Latency
+
+> Plan: `.claude/plans/our-recent-finding-is-concurrent-lampson.md`
+> Context: VPK shard bench (K=2, K=11) proved WAN sharding gives no latency benefit.
+> These experiments measure the three *other* benefits of a multi-node fabric.
+
+#### Experiment 1 — Elastic Capacity (H1)
+
+**Hypothesis:** Total storable vectors scales linearly with N Eves; a Bob can store a corpus
+larger than any single Eve's quota with no data loss and no change to search accuracy.
+
+- [ ] **`vpk_capacity_bench.rs`** — new file: `run_capacity_bench(args)` fills each discovered Eve to its declared limit (batch uploads until rejection), records accepted/rejected counts and effective utilisation.
+- [ ] **`CapacityBenchArgs` struct** — fields: `eve_peer_ids`, `batch_size_mb`, `dimensions: u32` (default 384), `json_output: bool`.
+- [ ] **Wire into `vpk.rs`** — add `CapacityBench(CapacityBenchArgs)` to `VpkAction`; add `kwaainet vpk capacity-bench` to `cli.rs`; dispatch in `main.rs`.
+- [ ] **Run experiment** — discover live Eves, fill N=1/2/4/8, plot total accepted vs N Eves.
+- [ ] **Publish results** — `docs/vpk-capacity-bench/README.md` with capacity-vs-N table, effective utilisation %, upload throughput per Eve.
+
+#### Experiment 2 — Read Availability Under Node Failure (H2)
+
+**Hypothesis:** R=2 replication delivers 100% correct search results when one Eve is
+unreachable, with ≤5% latency overhead (parallel fan-out, first-response-wins).
+
+- [ ] **`rpc_upload_vectors_replicated()` in `storage_rpc.rs`** — fan-out write to `peers: &[PeerId]`, return `Ok` if ≥1 succeeds.
+- [ ] **`rpc_search_vectors_with_fallback()` in `storage_rpc.rs`** — race all peers with `tokio::select!`, return first successful response; record which peer responded.
+- [ ] **`kwaainet vpk replicate` subcommand** — copies all vectors for a `--kb-id` from `--from` PeerId to `--to` PeerId via chunked search+upload.
+- [ ] **`kwaainet vpk failover-search` subcommand** — searches with automatic fallback across `--eve-peer-ids`, prints responding peer and latency delta.
+- [ ] **`tests/vpk-redundancy-test.sh`** — 2-machine script: upload to R=2, kill primary, run 100 queries, verify 0 failures.
+- [ ] **Run experiment** — measure success rate (R=1 vs R=2 under failure) and latency (healthy vs degraded).
+- [ ] **Publish results** — `docs/vpk-redundancy-bench/README.md`.
+
+#### Experiment 3 — Data Durability via Async Backup (H3)
+
+**Hypothesis:** Periodic backup to a cold Eve enables full corpus recovery after permanent
+primary destruction, with data-loss window bounded to the backup interval.
+
+- [ ] **`GET /api/tenants/{id}/export` in `kwaai-storage/src/api.rs`** — streams all `(doc_id, vector)` pairs as msgpack chunks (1000 vectors per chunk); memory-bounded.
+- [ ] **`vpk_backup.rs`** — new file: `backup(kb_id, from_peer, to_peer)` exports via relay + uploads to backup Eve; `restore(kb_id, from_peer, to_peer)` exports from backup, uploads to target.
+- [ ] **`kwaainet vpk backup` and `kwaainet vpk restore` subcommands** — wire into `vpk.rs`/`cli.rs`/`main.rs`.
+- [ ] **`tests/vpk-backup-test.sh`** — upload 25K vectors, backup, upload 500 more (post-backup window), destroy primary, restore, measure recall vs pre-backup vs post-backup corpus.
+- [ ] **Run experiment** — measure recovery time at 10K/25K/50K vectors, quantify data-loss window.
+- [ ] **Publish results** — `docs/vpk-durability-bench/README.md`.
+
 ---
 
 ## Networking
