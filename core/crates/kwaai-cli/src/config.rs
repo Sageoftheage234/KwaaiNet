@@ -137,10 +137,49 @@ pub struct KwaaiNetConfig {
     /// Local peer reputation and trust scoring configuration.
     #[serde(default, skip_serializing_if = "reputation_config_is_default")]
     pub reputation: ReputationConfig,
+
+    // ── Contribution policy ───────────────────────────────────────────────────
+    /// Whether to auto-start storage and shard serving when the daemon starts.
+    /// Defaults to true for both (opt-out model for insider builds).
+    #[serde(default, skip_serializing_if = "contribute_config_is_default")]
+    pub contribute: ContributeConfig,
 }
 
 fn reputation_config_is_default(r: &ReputationConfig) -> bool {
     r.enabled && r.max_observations_per_peer == 100
+}
+
+// ---------------------------------------------------------------------------
+// Contribute config
+// ---------------------------------------------------------------------------
+
+/// Controls whether this node automatically contributes storage and shard
+/// serving when the daemon starts. Opt-out via `--no-contribute` or config.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContributeConfig {
+    /// Automatically start storage serving on daemon start (when storage is initialised).
+    #[serde(default = "default_true")]
+    pub storage: bool,
+
+    /// Automatically start shard serving on daemon start (when a model is available).
+    #[serde(default = "default_true")]
+    pub shards: bool,
+}
+
+impl Default for ContributeConfig {
+    fn default() -> Self {
+        Self { storage: true, shards: true }
+    }
+}
+
+fn contribute_config_is_default(c: &ContributeConfig) -> bool {
+    c.storage && c.shards
+}
+
+/// Resolved contribution policy after applying CLI overrides.
+pub struct ContributePolicy {
+    pub storage: bool,
+    pub shards: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -377,6 +416,7 @@ impl Default for KwaaiNetConfig {
             rebalance_interval_secs: default_rebalance_interval(),
             rebalance_min_redundancy: default_rebalance_min_redundancy(),
             reputation: ReputationConfig::default(),
+            contribute: ContributeConfig::default(),
         }
     }
 }
@@ -506,6 +546,14 @@ impl KwaaiNetConfig {
         (self.start_block + self.blocks).min(total)
     }
 
+    /// Resolve the effective contribution policy, honouring the CLI override.
+    pub fn contribute_policy(&self, cli_no_contribute: bool) -> ContributePolicy {
+        ContributePolicy {
+            storage: self.contribute.storage && !cli_no_contribute,
+            shards: self.contribute.shards && !cli_no_contribute,
+        }
+    }
+
     /// Set a top-level key by name (string value coerced to the right type).
     pub fn set_key(&mut self, key: &str, value: &str) -> Result<()> {
         match key {
@@ -534,6 +582,8 @@ impl KwaaiNetConfig {
                     anyhow::anyhow!("rebalance_min_redundancy must be a positive integer")
                 })?
             }
+            "contribute.storage" => self.contribute.storage = parse_bool(value)?,
+            "contribute.shards" => self.contribute.shards = parse_bool(value)?,
             _ => anyhow::bail!(
                 "Unknown config key '{}'. Run `kwaainet config set --help` to see valid keys.",
                 key

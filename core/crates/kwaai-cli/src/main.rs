@@ -79,6 +79,12 @@ fn setup_cuda_library_path() {
     }
 }
 
+/// Returns true when the configured model weights are already on disk.
+/// Checks both HuggingFace snapshot cache and Ollama blob store.
+fn model_is_locally_available(model: &str) -> bool {
+    crate::hf::resolve_snapshot(model).is_ok() || crate::ollama::resolve_model_blob(model).is_ok()
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     setup_cuda_library_path();
@@ -270,38 +276,50 @@ async fn main() -> Result<()> {
             print_separator();
 
             if args.daemon {
-                // Build extra args from current config so the child knows them
                 let child_pid = DaemonManager::spawn_daemon_child(&[])?;
                 println!();
                 print_success(&format!("KwaaiNet daemon started (PID {})", child_pid));
 
-                if args.shard {
-                    // Wait for the node daemon to bind its socket before starting shard serve
-                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                // Wait for p2pd socket to be ready before spawning children.
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+                let policy = cfg.contribute_policy(args.no_contribute);
+
+                // --- Shard serving ---
+                let shard_available = args.shard || model_is_locally_available(&cfg.model);
+                if policy.shards && shard_available {
                     match ShardManager::spawn_shard_child() {
                         Ok(shard_pid) => {
                             ShardManager::new().write_pid(shard_pid);
-                            print_success(&format!("Shard server started   (PID {})", shard_pid));
+                            print_success(&format!("Shard serving started  (PID {})", shard_pid));
                             print_info("Shard logs:   kwaainet logs --shard");
                         }
-                        Err(e) => {
-                            print_warning(&format!("Could not start shard server: {e}"));
-                        }
+                        Err(e) => print_warning(&format!("Could not start shard serving: {e}")),
                     }
+                } else if policy.shards && !shard_available {
+                    print_info(&format!(
+                        "No local model found for '{}' — skipping shard serving.",
+                        cfg.model
+                    ));
+                    print_info("Download: kwaainet shard download");
                 }
 
-                // Auto-start storage API if Eve storage is configured
+                // --- Storage serving ---
                 #[cfg(feature = "storage")]
-                if cfg.storage.is_some() {
+                if policy.storage && cfg.storage.is_some() {
                     match StorageApiManager::spawn_storage_child() {
                         Ok(storage_pid) => {
-                            print_success(&format!("Storage API started    (PID {})", storage_pid));
+                            print_success(&format!("Storage serving started (PID {})", storage_pid));
                             print_info("Storage logs: kwaainet logs --storage");
                         }
-                        Err(e) => {
-                            print_warning(&format!("Could not start storage API: {e}"));
-                        }
+                        Err(e) => print_warning(&format!("Could not start storage serving: {e}")),
                     }
+                } else if policy.storage {
+                    print_info("Storage not initialised — skipping. Run: kwaainet storage init");
+                }
+
+                if args.no_contribute {
+                    print_info("Contribution disabled (--no-contribute). Re-enable: kwaainet config set contribute.shards true");
                 }
 
                 print_info("Check status: kwaainet status");
@@ -365,19 +383,26 @@ async fn main() -> Result<()> {
             let child_pid = DaemonManager::spawn_daemon_child(&[])?;
             print_success(&format!("KwaaiNet daemon restarted (PID {})", child_pid));
 
-            // Re-spawn storage API if configured (same as start --daemon)
-            #[cfg(feature = "storage")]
-            {
-                let cfg = KwaaiNetConfig::load_or_create().unwrap_or_default();
-                if cfg.storage.is_some() {
-                    match StorageApiManager::spawn_storage_child() {
-                        Ok(storage_pid) => {
-                            print_success(&format!("Storage API restarted  (PID {})", storage_pid));
-                        }
-                        Err(e) => {
-                            print_warning(&format!("Could not restart storage API: {e}"));
-                        }
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+            let restart_cfg = KwaaiNetConfig::load_or_create().unwrap_or_default();
+            let policy = restart_cfg.contribute_policy(false);
+
+            if policy.shards && model_is_locally_available(&restart_cfg.model) {
+                match ShardManager::spawn_shard_child() {
+                    Ok(pid) => {
+                        ShardManager::new().write_pid(pid);
+                        print_success(&format!("Shard serving restarted (PID {})", pid));
                     }
+                    Err(e) => print_warning(&format!("Could not restart shard serving: {e}")),
+                }
+            }
+
+            #[cfg(feature = "storage")]
+            if policy.storage && restart_cfg.storage.is_some() {
+                match StorageApiManager::spawn_storage_child() {
+                    Ok(pid) => print_success(&format!("Storage serving restarted (PID {})", pid)),
+                    Err(e) => print_warning(&format!("Could not restart storage serving: {e}")),
                 }
             }
             print_separator();
@@ -447,7 +472,7 @@ async fn main() -> Result<()> {
                     println!("  🟢 Shard:   Running (PID {})", shard_pid.unwrap_or(0));
                 } else {
                     println!("  ⚫ Shard:   Not running");
-                    print_info("Start shard: kwaainet start --daemon --shard");
+                    print_info("Start: kwaainet start --daemon");
                 }
 
                 // Show storage API status (only when storage is configured)

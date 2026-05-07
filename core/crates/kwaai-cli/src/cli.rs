@@ -210,6 +210,10 @@ pub struct StartArgs {
     /// Also start the shard inference server in the background (auto-rebalancing)
     #[arg(long)]
     pub shard: bool,
+
+    /// Disable automatic storage and shard serving (opt out of contributing)
+    #[arg(long)]
+    pub no_contribute: bool,
 }
 
 // ---------------------------------------------------------------------------
