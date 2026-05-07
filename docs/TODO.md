@@ -370,6 +370,10 @@ primary destruction, with data-loss window bounded to the backup interval.
 
 ---
 
+## Peer Reputation
+
+- [ ] **Background peer discovery + ping loop** — Nodes only accumulate reputation data for bootstrap peers (passively, every 300 s via STORE RPC timing) and for inference peers actually used in `shard run`. All other network nodes remain invisible in the reputation list until a user happens to route inference through them. Fix: add a `tokio::spawn` background loop in `run_node()` that fires every ~30 minutes. Each cycle: (1) sends `FindRequest` for a sample of block keys (`{prefix}.0`, `{prefix}.N/2`, `{prefix}.N-1`) to bootstrap peers to get the current FoundDictionary of all serving peers, (2) for each discovered peer_id (excluding self) calls `call_unary_handler(&peer_id_bytes, "DHTProtocol.rpc_find", &probe_bytes)` with a 5 s timeout — p2pd handles routing via peer_id, no multiaddr needed, (3) records `PeerObservation { latency_ms, success }` in the local `ReputationStore`. The FoundDictionary parsing logic should be extracted from `shard_cmd.rs::discover_chain()` into a shared utility rather than duplicated. Frequency chosen to balance freshness vs. network load: 30 min gives ~48 passive pings/day per peer, well below any reasonable rate limit.
+
 ## Networking
 
 - [ ] **Fix relay fallback** — `metro@kwaai` (peer `...5bZ251`) connects via p2p-circuit relay through `76.91.214.120` instead of direct on configured public IP `75.141.127.202:8080`. Node should establish a direct connection. Investigate NAT traversal / port forwarding and `announceAddrs` config.
