@@ -1055,11 +1055,20 @@ async fn announce(
         }
         if let Some(rep) = rep {
             use crate::reputation::{now_secs, PeerObservation};
-            for (peer_id_str, latency_ms, success) in timings {
-                let short = &peer_id_str[..peer_id_str.len().min(12)];
+            for (peer_id_str, addr, latency_ms, success) in timings {
+                // Use the DNS hostname from the multiaddr as the display name
+                // (e.g. "bootstrap-1.kwaai.ai").  Fall back to the first 12
+                // chars of the peer ID when no /dns/ component is present.
+                let name = addr
+                    .split('/')
+                    .collect::<Vec<_>>()
+                    .windows(2)
+                    .find(|w| w[0] == "dns" || w[0] == "dns4" || w[0] == "dns6")
+                    .map(|w| w[1].to_string())
+                    .unwrap_or_else(|| peer_id_str[..peer_id_str.len().min(12)].to_string());
                 rep.record(
                     &peer_id_str,
-                    short,
+                    &name,
                     PeerObservation {
                         timestamp_secs: now_secs(),
                         latency_ms,
@@ -1132,7 +1141,7 @@ async fn announce(
 /// Send a STORE request to each bootstrap peer.
 ///
 /// Returns `(any_success, per_peer_timings)` where timings are
-/// `(peer_id_str, latency_ms, success)` — one entry per bootstrap peer.
+/// `(peer_id_str, addr, latency_ms, success)` — one entry per bootstrap peer.
 /// Callers that record reputation use the timings; others discard them.
 ///
 /// Does NOT call connect_peer() — p2pd already has bootstrap addresses from
@@ -1143,7 +1152,7 @@ async fn send_to_bootstrap(
     client: &mut kwaai_p2p_daemon::P2PClient,
     bootstrap_peers: &[String],
     req: StoreRequest,
-) -> (bool, Vec<(String, f64, bool)>) {
+) -> (bool, Vec<(String, String, f64, bool)>) {
     if bootstrap_peers.is_empty() {
         return (false, vec![]);
     }
@@ -1156,7 +1165,7 @@ async fn send_to_bootstrap(
     }
 
     let mut succeeded = 0usize;
-    let mut timings: Vec<(String, f64, bool)> = Vec::with_capacity(bootstrap_peers.len());
+    let mut timings: Vec<(String, String, f64, bool)> = Vec::with_capacity(bootstrap_peers.len());
 
     for addr in bootstrap_peers {
         let Some(peer_id_str) = addr.split("/p2p/").nth(1) else {
@@ -1183,7 +1192,7 @@ async fn send_to_bootstrap(
             Ok(Ok(_)) => true,
             _ => false,
         };
-        timings.push((peer_id_str.to_string(), latency_ms, rpc_ok));
+        timings.push((peer_id_str.to_string(), addr.clone(), latency_ms, rpc_ok));
 
         match result {
             Ok(Ok(resp_bytes)) => {
