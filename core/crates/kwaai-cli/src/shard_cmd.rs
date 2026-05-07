@@ -733,7 +733,7 @@ async fn cmd_shard_run_local(args: ShardRunArgs) -> Result<()> {
     let mut prefill_spinner: Option<crate::progress::Spinner> = Some(
         crate::progress::Spinner::start(format!("Prefilling {} input tokens", n_input)),
     );
-    let mut gen_bar: Option<crate::progress::GenBar> = None;
+    let mut gen_bar = crate::progress::GenBar::new(max_tokens);
     let mut token_times_ms: Vec<f64> = Vec::new();
 
     use std::io::Write as _;
@@ -763,7 +763,8 @@ async fn cmd_shard_run_local(args: ShardRunArgs) -> Result<()> {
                 .await;
             }
             println!();
-            print!("  Assistant: ");
+            println!("  Assistant:");
+            print!("  ");
             std::io::stdout().flush().ok();
         }
 
@@ -792,11 +793,8 @@ async fn cmd_shard_run_local(args: ShardRunArgs) -> Result<()> {
         generated_ids.push(next_id);
         seq_pos += current_ids.len();
 
-        // Start or tick the generation bar (skip first token = prefill)
-        if generated_ids.len() == 1 {
-            gen_bar = Some(crate::progress::GenBar::new(max_tokens));
-        } else if let Some(ref mut bar) = gen_bar {
-            bar.tick(generated_ids.len(), token_ms);
+        if generated_ids.len() > 1 {
+            gen_bar.tick(generated_ids.len(), token_ms);
         }
 
         if next_id == eos_id || generated_ids.len() >= max_tokens {
@@ -806,19 +804,15 @@ async fn cmd_shard_run_local(args: ShardRunArgs) -> Result<()> {
         current_ids = vec![next_id];
     }
 
-    if let Some(bar) = gen_bar {
-        bar.finish();
-    }
-
     let n = generated_ids.len();
     let total_secs = token_times_ms.iter().sum::<f64>() / 1000.0;
-    let tps = if total_secs > 0.0 { n as f64 / total_secs } else { 0.0 };
+    let tps = gen_bar.tps();
 
     println!();
     println!();
     print_success(&format!(
-        "Generated {} token(s)  ({:.1} tok/s)",
-        n, tps
+        "Generated {} tok  •  {:.1} tok/s  •  {:.1}s",
+        n, tps, total_secs
     ));
     print_separator();
     Ok(())
@@ -1081,7 +1075,7 @@ pub async fn cmd_shard_run(args: ShardRunArgs) -> Result<()> {
     let mut prefill_spinner: Option<crate::progress::Spinner> = Some(
         crate::progress::Spinner::start(format!("Prefilling {n_input} input token(s)"))
     );
-    let mut gen_bar: Option<crate::progress::GenBar> = None;
+    let mut gen_bar = crate::progress::GenBar::new(max_tokens);
 
     loop {
         let token_start = std::time::Instant::now();
@@ -1158,7 +1152,8 @@ pub async fn cmd_shard_run(args: ShardRunArgs) -> Result<()> {
                 .await;
             }
             println!();
-            print!("  Assistant: ");
+            println!("  Assistant:");
+            print!("  ");
             use std::io::Write as _;
             std::io::stdout().flush().ok();
         }
@@ -1195,11 +1190,8 @@ pub async fn cmd_shard_run(args: ShardRunArgs) -> Result<()> {
         generated_ids.push(next_id);
         seq_pos += current_ids.len(); // advance by tokens sent this step
 
-        // Start or tick the generation progress bar.
-        if generated_ids.len() == 1 {
-            gen_bar = Some(crate::progress::GenBar::new(max_tokens));
-        } else if let Some(ref mut bar) = gen_bar {
-            bar.tick(generated_ids.len(), token_ms);
+        if generated_ids.len() > 1 {
+            gen_bar.tick(generated_ids.len(), token_ms);
         }
 
         // Stopping conditions
@@ -1211,16 +1203,13 @@ pub async fn cmd_shard_run(args: ShardRunArgs) -> Result<()> {
         current_ids = vec![next_id];
     }
 
-    if let Some(bar) = gen_bar {
-        bar.finish();
-    }
-
     let total_secs = generation_start.elapsed().as_secs_f64();
     let n = generated_ids.len();
+    let tps = gen_bar.tps();
 
     println!();
     println!();
-    print_success(&format!("Generated {} token(s)", n));
+    print_success(&format!("Generated {} tok  •  {:.1} tok/s  •  {:.1}s", n, tps, total_secs));
 
     if show_stats && !token_times_ms.is_empty() {
         let prefill_ms = token_times_ms[0];

@@ -96,98 +96,38 @@ impl Drop for Spinner {
 
 // ── GenBar ────────────────────────────────────────────────────────────────────
 
-fn bar_str(done: usize, total: usize, width: usize) -> String {
-    let filled = if total == 0 {
-        0
-    } else {
-        (done.min(total) * width) / total
-    };
-    format!(
-        "[{}{}]",
-        "█".repeat(filled),
-        "░".repeat(width.saturating_sub(filled))
-    )
-}
-
-fn fmt_eta(secs: f64) -> String {
-    let s = secs.max(0.0) as u64;
-    if s < 60 {
-        format!("~{}s", s)
-    } else {
-        format!("~{}m{}s", s / 60, s % 60)
-    }
-}
-
-/// Live progress bar for token generation.
+/// Stat tracker for token generation.
 ///
-/// After each token is printed to stdout, call [`GenBar::tick`].  The bar is
-/// rendered on the line *below* the streaming output using ANSI cursor control
-/// and is updated in-place so it never scrolls off screen.
-///
-/// Only active when stdout is a TTY; silently no-ops otherwise.
+/// Tokens stream to stdout uninterrupted.  Call [`GenBar::tick`] after each
+/// token to record timing; call [`GenBar::tps`] at the end to get the
+/// decode-phase throughput for the summary line.
 pub struct GenBar {
-    max: usize,
     recent: Vec<f64>,
-    tty: bool,
-    ever_ticked: bool,
 }
 
 impl GenBar {
-    pub fn new(max_tokens: usize) -> Self {
-        Self {
-            max: max_tokens,
-            recent: Vec::with_capacity(8),
-            tty: is_tty(),
-            ever_ticked: false,
-        }
+    pub fn new(_max_tokens: usize) -> Self {
+        Self { recent: Vec::with_capacity(8) }
     }
 
-    /// Update the status bar. `done` = tokens generated so far, `tok_ms` = wall
-    /// time for the most recent token.
-    ///
-    /// Uses ANSI sequences to keep the bar on the line below the token stream:
-    /// `\n` → next line, clear, print bar, `\x1b[1A\x1b[999C` → back to end of output.
-    pub fn tick(&mut self, done: usize, tok_ms: f64) {
+    /// Record the wall-time for the most recent token (milliseconds).
+    pub fn tick(&mut self, _done: usize, tok_ms: f64) {
         const WINDOW: usize = 8;
         if self.recent.len() == WINDOW {
             self.recent.remove(0);
         }
         self.recent.push(tok_ms);
-        self.ever_ticked = true;
+    }
 
-        if !self.tty {
-            return;
+    /// Rolling-window decode throughput in tokens/second.
+    pub fn tps(&self) -> f64 {
+        if self.recent.is_empty() {
+            return 0.0;
         }
-
         let avg_ms = self.recent.iter().sum::<f64>() / self.recent.len() as f64;
-        let tps = if avg_ms > 0.0 { 1000.0 / avg_ms } else { 0.0 };
-        let remaining = self.max.saturating_sub(done);
-        let eta = if tps > 0.0 && done < self.max {
-            format!(" • {}", fmt_eta(remaining as f64 / tps))
-        } else {
-            String::new()
-        };
-
-        let status = format!(
-            "  {} {}/{} • {:.1} tok/s{}",
-            bar_str(done, self.max, 20),
-            done,
-            self.max,
-            tps,
-            eta
-        );
-
-        // Render on the line below the output, then restore cursor position.
-        print!("\n\r\x1b[K{}\x1b[1A\x1b[999C", status);
-        std::io::stdout().flush().ok();
+        if avg_ms > 0.0 { 1000.0 / avg_ms } else { 0.0 }
     }
 
-    /// Clear the status bar and leave the cursor at the end of the output text.
-    pub fn finish(&self) {
-        if !self.tty || !self.ever_ticked {
-            return;
-        }
-        print!("\n\r\x1b[K\x1b[1A\x1b[999C");
-        std::io::stdout().flush().ok();
-    }
+    /// No-op — no bar was drawn, nothing to clear.
+    pub fn finish(&self) {}
 }
