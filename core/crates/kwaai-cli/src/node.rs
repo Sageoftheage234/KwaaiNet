@@ -793,12 +793,15 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
                 // Passive reputation probing — measure latency to bootstrap peers.
                 probe_bootstrap_peers(&mut client, &bootstrap_peers, &peer_id).await;
 
-                // Auto-update — installs and exec's new binary when available (pre-v1.0).
+                // Auto-update — installs new binary when available (pre-v1.0).
+                // If installed, break the event loop so the daemon exits cleanly
+                // and can be restarted (by systemd/launchd or manually) with the
+                // new binary.
                 let auto_update = KwaaiNetConfig::load_or_create()
                     .map(|c| c.contribute_policy(false).auto_update)
                     .unwrap_or(false);
-                if auto_update {
-                    maybe_auto_update().await;
+                if auto_update && maybe_auto_update().await {
+                    break;
                 }
 
                 let sb = config.start_block as i32;
@@ -1375,43 +1378,40 @@ async fn probe_bootstrap_peers(
 // ---------------------------------------------------------------------------
 
 /// Check for a newer release and, if found, install it automatically.
-/// On Unix the installer runs synchronously then we exec the new binary in-place
-/// (same PID, seamless for the daemon supervisor).
-/// On Windows the batch installer runs detached; the daemon will be replaced when
-/// the batch completes (no in-place exec available).
-async fn maybe_auto_update() {
+/// After a successful install the daemon exits cleanly so the OS service
+/// manager (systemd, launchd) or the user can restart it with the new binary.
+/// On Windows the installer batch runs detached and kills the process itself.
+///
+/// Returns `true` when an update was installed and the caller should break
+/// the event loop to let the daemon exit.
+async fn maybe_auto_update() -> bool {
     let checker = crate::updater::UpdateChecker::new();
     let update = match checker.check(false).await {
         Ok(Some(u)) => u,
-        _ => return,
+        _ => return false,
     };
 
     info!("Auto-update: new version {} available — installing…", update.version);
 
     if let Err(e) = checker.install_update(&update.version).await {
         warn!("Auto-update install failed: {e}");
-        return;
+        return false;
     }
 
     #[cfg(unix)]
     {
-        // Replace this process image with the newly installed binary.
-        // The same arguments (run-node) are preserved — PID stays identical.
-        use std::os::unix::process::CommandExt;
-        let exe = match std::env::current_exe() {
-            Ok(p) => p,
-            Err(e) => { warn!("Auto-update exec failed (can't find exe): {e}"); return; }
-        };
-        info!("Auto-update: exec'ing new binary at {}", exe.display());
-        let err = std::process::Command::new(&exe).arg("run-node").exec();
-        warn!("Auto-update exec failed: {err}");
+        info!(
+            "Auto-update: v{} installed — daemon exiting for restart with new binary.",
+            update.version
+        );
+        return true;
     }
 
     #[cfg(not(unix))]
     {
-        // Windows: the installer batch handles process replacement.
-        // The daemon will be killed by the batch and replaced on disk.
-        info!("Auto-update: installer launched — daemon will restart when complete.");
+        // Windows: the installer batch kills and replaces the process.
+        info!("Auto-update: installer launched — daemon will be replaced when batch completes.");
+        return false;
     }
 }
 

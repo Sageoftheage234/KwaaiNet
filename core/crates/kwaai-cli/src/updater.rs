@@ -95,7 +95,12 @@ impl UpdateChecker {
             .ok()?
             .as_secs();
         if now.saturating_sub(entry.checked_at) < 86400 {
-            Some(entry.update_info)
+            // Re-validate: the binary may have been updated since the cache was
+            // written, making the cached version no longer newer than current.
+            let validated = entry.update_info.filter(|info| {
+                is_newer(&info.version, &self.current_version)
+            });
+            Some(validated)
         } else {
             None
         }
