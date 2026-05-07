@@ -247,8 +247,10 @@ impl ReputationStore {
         let throughput_ratio = if tps_pairs.is_empty() {
             None
         } else {
-            let avg_observed: f64 = tps_pairs.iter().map(|(o, _)| o).sum::<f64>() / tps_pairs.len() as f64;
-            let avg_claimed: f64 = tps_pairs.iter().map(|(_, c)| c).sum::<f64>() / tps_pairs.len() as f64;
+            let avg_observed: f64 =
+                tps_pairs.iter().map(|(o, _)| o).sum::<f64>() / tps_pairs.len() as f64;
+            let avg_claimed: f64 =
+                tps_pairs.iter().map(|(_, c)| c).sum::<f64>() / tps_pairs.len() as f64;
             Some((avg_observed / avg_claimed).clamp(0.0, 1.0))
         };
         let s_throughput = throughput_ratio.unwrap_or(0.0);
@@ -284,7 +286,11 @@ impl ReputationStore {
             .keys()
             .map(|id| (id.clone(), self.score(id)))
             .collect();
-        scored.sort_by(|a, b| b.1.score.partial_cmp(&a.1.score).unwrap_or(std::cmp::Ordering::Equal));
+        scored.sort_by(|a, b| {
+            b.1.score
+                .partial_cmp(&a.1.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         scored
     }
 

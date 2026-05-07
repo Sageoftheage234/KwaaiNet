@@ -20,7 +20,8 @@ pub async fn run(args: ReputationArgs) -> Result<()> {
 
 // Column widths (chars):  NAME=18  TIER=10  SCORE=7  N=6  LATENCY=9  PEER_ID=13
 // Row total: 2 + 18 + 2 + 10 + 2 + 7 + 2 + 6 + 2 + 9 + 2 + 13 = 75
-const TABLE_SEP: &str = "  ───────────────────────────────────────────────────────────────────────────";
+const TABLE_SEP: &str =
+    "  ───────────────────────────────────────────────────────────────────────────";
 
 fn list() -> Result<()> {
     let store = ReputationStore::load();
@@ -90,7 +91,10 @@ fn show(peer_id: &str) -> Result<()> {
     println!("  Score:        {:.4}", score.score);
     println!("  Samples:      {}", score.sample_count);
     println!("  Availability: {:.1}%", score.availability * 100.0);
-    println!("  Avg latency:  {}", format_latency(score.avg_latency_ms, score.sample_count));
+    println!(
+        "  Avg latency:  {}",
+        format_latency(score.avg_latency_ms, score.sample_count)
+    );
     if let Some(ratio) = score.throughput_ratio {
         println!("  Throughput:   {:.1}% of claimed", ratio * 100.0);
     } else {

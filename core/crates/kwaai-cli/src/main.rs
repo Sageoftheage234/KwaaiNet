@@ -309,7 +309,10 @@ async fn main() -> Result<()> {
                 if policy.storage && cfg.storage.is_some() {
                     match StorageApiManager::spawn_storage_child() {
                         Ok(storage_pid) => {
-                            print_success(&format!("Storage serving started (PID {})", storage_pid));
+                            print_success(&format!(
+                                "Storage serving started (PID {})",
+                                storage_pid
+                            ));
                             print_info("Storage logs: kwaainet logs --storage");
                         }
                         Err(e) => print_warning(&format!("Could not start storage serving: {e}")),
@@ -567,8 +570,14 @@ async fn main() -> Result<()> {
                         if cfg.vpk_enabled {
                             println!();
                             println!("  🔐 vpk_enabled:  true");
-                            println!("  🔐 vpk_mode:     {}", cfg.vpk_mode.as_deref().unwrap_or("(not set)"));
-                            println!("  🔐 vpk_port:     {} (local health check)", cfg.vpk_local_port.unwrap_or(7432));
+                            println!(
+                                "  🔐 vpk_mode:     {}",
+                                cfg.vpk_mode.as_deref().unwrap_or("(not set)")
+                            );
+                            println!(
+                                "  🔐 vpk_port:     {} (local health check)",
+                                cfg.vpk_local_port.unwrap_or(7432)
+                            );
                             println!("  🔐 vpk_access:   P2P relay via /kwaai/storage/1.0.0");
                         }
                         print_separator();

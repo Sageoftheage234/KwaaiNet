@@ -305,4 +305,3 @@ fn abbreviate_did(did: &str, max_len: usize) -> String {
         format!("{}…", &did[..max_len])
     }
 }
-

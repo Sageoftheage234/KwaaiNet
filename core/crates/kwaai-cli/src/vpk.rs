@@ -55,7 +55,9 @@ fn enable(mode: String, port: u16) -> Result<()> {
     println!("  Port:     {} (local health check)", port);
     println!();
     print_success("VPK integration enabled. Restart the node to advertise on DHT.");
-    print_info("Remote peers connect via PeerId over /kwaai/storage/1.0.0 (no port forwarding needed).");
+    print_info(
+        "Remote peers connect via PeerId over /kwaai/storage/1.0.0 (no port forwarding needed).",
+    );
     print_info("Check status: kwaainet vpk status");
     print_info("Restart node: kwaainet restart");
     print_separator();
@@ -419,8 +421,8 @@ async fn p2p_connect() -> Result<(P2PClient, PeerId)> {
     let client = P2PClient::connect(&daemon_addr)
         .await
         .context("connect to p2pd — is 'kwaainet start --daemon' running?")?;
-    let identity = crate::identity::NodeIdentity::load_or_create()
-        .context("load local identity")?;
+    let identity =
+        crate::identity::NodeIdentity::load_or_create().context("load local identity")?;
     Ok((client, identity.peer_id))
 }
 
@@ -468,10 +470,7 @@ async fn tenant_create(
     println!("  Created:   {}", info.created_at);
     println!();
     print_info("Save the Tenant ID — you'll need it to upload vectors and query.");
-    println!(
-        "  kwaainet vpk tenant list --eve-peer-id {}",
-        eve_peer_id
-    );
+    println!("  kwaainet vpk tenant list --eve-peer-id {}", eve_peer_id);
     print_separator();
     Ok(())
 }
@@ -491,8 +490,17 @@ async fn tenant_list(eve_peer_id: String) -> Result<()> {
     if tenants.is_empty() {
         println!("  No tenants found.");
     } else {
-        println!("  {:<36}  {:<20}  {:>8}  {}", "Tenant ID", "Name", "Cap MB", "Status");
-        println!("  {}  {}  {}  {}", "─".repeat(36), "─".repeat(20), "─".repeat(8), "─".repeat(8));
+        println!(
+            "  {:<36}  {:<20}  {:>8}  {}",
+            "Tenant ID", "Name", "Cap MB", "Status"
+        );
+        println!(
+            "  {}  {}  {}  {}",
+            "─".repeat(36),
+            "─".repeat(20),
+            "─".repeat(8),
+            "─".repeat(8)
+        );
         for t in &tenants {
             println!(
                 "  {}  {:<20}  {:>8}  {}",

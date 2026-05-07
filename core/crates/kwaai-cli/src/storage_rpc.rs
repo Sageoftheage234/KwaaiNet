@@ -264,7 +264,11 @@ async fn dispatch(
 
             // Capacity checks before any writes.
             let tm = TenantManager::new(db.clone());
-            let dim = input.vectors.first().map(|v| v.embedding.len()).unwrap_or(384) as i64;
+            let dim = input
+                .vectors
+                .first()
+                .map(|v| v.embedding.len())
+                .unwrap_or(384) as i64;
             let bytes_per_vec = 4 * dim + 24;
             let incoming_bytes = input.vectors.len() as i64 * bytes_per_vec;
 

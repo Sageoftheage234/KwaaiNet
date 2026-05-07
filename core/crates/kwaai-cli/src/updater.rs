@@ -97,9 +97,9 @@ impl UpdateChecker {
         if now.saturating_sub(entry.checked_at) < 86400 {
             // Re-validate: the binary may have been updated since the cache was
             // written, making the cached version no longer newer than current.
-            let validated = entry.update_info.filter(|info| {
-                is_newer(&info.version, &self.current_version)
-            });
+            let validated = entry
+                .update_info
+                .filter(|info| is_newer(&info.version, &self.current_version));
             Some(validated)
         } else {
             None
@@ -292,7 +292,9 @@ impl UpdateChecker {
                 } else {
                     "cublas DLLs in install dir"
                 };
-                println!("  CUDA detected ({reason}) — downloading CPU archive only (fast update).");
+                println!(
+                    "  CUDA detected ({reason}) — downloading CPU archive only (fast update)."
+                );
             }
 
             std::fs::write(&bat, &bat_content).context("Failed to write updater batch script")?;
@@ -344,7 +346,11 @@ async fn nvidia_smi_async() -> bool {
             .status(),
     )
     .await;
-    result.ok().and_then(|r| r.ok()).map(|s| s.success()).unwrap_or(false)
+    result
+        .ok()
+        .and_then(|r| r.ok())
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 #[cfg(not(windows))]

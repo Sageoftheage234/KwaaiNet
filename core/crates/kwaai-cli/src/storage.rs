@@ -43,7 +43,10 @@ async fn init(
     let auto_capacity = capacity_gb.is_none();
     let capacity_gb = capacity_gb.unwrap_or_else(|| available_disk_10pct(&data_dir));
     if auto_capacity {
-        println!("         Capacity: {:.1} GB (10% of available disk — use --capacity-gb to override)", capacity_gb);
+        println!(
+            "         Capacity: {:.1} GB (10% of available disk — use --capacity-gb to override)",
+            capacity_gb
+        );
     }
     kwaai_storage::StorageDb::open(&data_dir)
         .with_context(|| format!("cannot open embedded store at {}", data_dir.display()))?;
@@ -244,7 +247,10 @@ async fn serve() -> Result<()> {
         }
     };
 
-    print_success(&format!("Starting local health API on {} (operator use only)", bind_addr));
+    print_success(&format!(
+        "Starting local health API on {} (operator use only)",
+        bind_addr
+    ));
     print_separator();
 
     kwaai_storage::run_storage_api(db, &bind_addr, capacity_gb, peer_id).await?;

@@ -112,9 +112,7 @@ pub fn list_local_models() -> Vec<String> {
     for sub in &["Documents/Kwaai/ollama", "Documents/ollama"] {
         roots.push(home.join(sub).join("manifests"));
     }
-    roots.push(
-        PathBuf::from("/usr/share/ollama/.ollama/models").join("manifests"),
-    );
+    roots.push(PathBuf::from("/usr/share/ollama/.ollama/models").join("manifests"));
     roots.push(home.join(".ollama").join("models").join("manifests"));
 
     let mut models: Vec<String> = Vec::new();

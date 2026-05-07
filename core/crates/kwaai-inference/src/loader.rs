@@ -108,35 +108,35 @@ pub fn load_gguf(path: &Path, device: &Device) -> InferenceResult<GgufModel> {
     };
 
     // Dispatch to the architecture-specific quantized weight loader.
-    let weights =
-        match arch.as_str() {
-            "llama" | "mistral" | "llama3" => {
-                let w = quantized_llama::ModelWeights::from_gguf(gguf, &mut file, device).map_err(
-                    |e| InferenceError::ModelLoadError(format!("Cannot build {arch} weights: {e}")),
-                )?;
-                GgufWeights::Llama(w)
-            }
-            "qwen2" => {
-                let w = quantized_qwen2::ModelWeights::from_gguf(gguf, &mut file, device).map_err(
-                    |e| InferenceError::ModelLoadError(format!("Cannot build qwen2 weights: {e}")),
-                )?;
-                GgufWeights::Qwen2(w)
-            }
-            "gemma3" | "gemma2" | "gemma" | "gemma4" => {
-                let w = quantized_gemma3::ModelWeights::from_gguf(gguf, &mut file, device)
-                    .map_err(|e| {
-                        InferenceError::ModelLoadError(format!("Cannot build {arch} weights: {e}"))
-                    })?;
-                GgufWeights::Gemma3(w)
-            }
-            other => {
-                return Err(InferenceError::InvalidFormat(format!(
-                    "GGUF architecture '{other}' is not yet supported. \
+    let weights = match arch.as_str() {
+        "llama" | "mistral" | "llama3" => {
+            let w =
+                quantized_llama::ModelWeights::from_gguf(gguf, &mut file, device).map_err(|e| {
+                    InferenceError::ModelLoadError(format!("Cannot build {arch} weights: {e}"))
+                })?;
+            GgufWeights::Llama(w)
+        }
+        "qwen2" => {
+            let w =
+                quantized_qwen2::ModelWeights::from_gguf(gguf, &mut file, device).map_err(|e| {
+                    InferenceError::ModelLoadError(format!("Cannot build qwen2 weights: {e}"))
+                })?;
+            GgufWeights::Qwen2(w)
+        }
+        "gemma3" | "gemma2" | "gemma" | "gemma4" => {
+            let w = quantized_gemma3::ModelWeights::from_gguf(gguf, &mut file, device).map_err(
+                |e| InferenceError::ModelLoadError(format!("Cannot build {arch} weights: {e}")),
+            )?;
+            GgufWeights::Gemma3(w)
+        }
+        other => {
+            return Err(InferenceError::InvalidFormat(format!(
+                "GGUF architecture '{other}' is not yet supported. \
                  Supported: llama, mistral, qwen2, gemma3. \
                  See CONTRIBUTORS.md to add support."
-                )));
-            }
-        };
+            )));
+        }
+    };
 
     Ok(GgufModel {
         weights,

@@ -172,7 +172,11 @@ pub struct ContributeConfig {
 
 impl Default for ContributeConfig {
     fn default() -> Self {
-        Self { storage: true, shards: true, auto_update: true }
+        Self {
+            storage: true,
+            shards: true,
+            auto_update: true,
+        }
     }
 }
 

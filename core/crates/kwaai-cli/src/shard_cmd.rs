@@ -916,7 +916,10 @@ pub async fn cmd_shard_run(args: ShardRunArgs) -> Result<()> {
     for (i, entry) in chain.iter().enumerate() {
         let tier_label = if let Some(ref rep) = reputation {
             if let Ok(store) = rep.lock() {
-                format!("  {}", store.score(&entry.peer_id.to_base58()).tier.as_str())
+                format!(
+                    "  {}",
+                    store.score(&entry.peer_id.to_base58()).tier.as_str()
+                )
             } else {
                 String::new()
             }
@@ -2083,13 +2086,11 @@ pub async fn forward_through_chain(
             .filter(|e| !failed_peers.contains(&e.peer_id))
             .collect();
         candidates.sort_by(|a, b| {
-            b.end_block
-                .cmp(&a.end_block)
-                .then_with(|| {
-                    b.trust_score
-                        .partial_cmp(&a.trust_score)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
+            b.end_block.cmp(&a.end_block).then_with(|| {
+                b.trust_score
+                    .partial_cmp(&a.trust_score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
         });
 
         if candidates.is_empty() {

@@ -450,8 +450,13 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
         }
         warn!("⚠️  p2pd crashed during bootstrap — restarting immediately…");
         restart_p2pd(
-            &mut daemon, &mut client, &p2pd_path, &config,
-            &bootstrap_peers, &announce_addr, handler_addr,
+            &mut daemon,
+            &mut client,
+            &p2pd_path,
+            &config,
+            &bootstrap_peers,
+            &announce_addr,
+            handler_addr,
         )
         .await
         .context("p2pd restart after bootstrap crash")?;
@@ -623,17 +628,36 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
         }
         warn!("⚠️  p2pd crashed during initial announce — restarting immediately…");
         match restart_p2pd(
-            &mut daemon, &mut client, &p2pd_path, &config,
-            &bootstrap_peers, &announce_addr, handler_addr,
-        ).await {
+            &mut daemon,
+            &mut client,
+            &p2pd_path,
+            &config,
+            &bootstrap_peers,
+            &announce_addr,
+            handler_addr,
+        )
+        .await
+        {
             Ok(()) => {
                 info!("✅ p2pd restarted — retrying initial announce…");
                 if let Err(e) = announce(
-                    &mut client, peer_id, &storage, &bootstrap_peers,
-                    &prefix, &repository, config.model_total_blocks(),
-                    announce_start, announce_end, &server_info,
-                ).await {
-                    warn!("Initial announce retry failed: {} — will retry at 120s tick", e);
+                    &mut client,
+                    peer_id,
+                    &storage,
+                    &bootstrap_peers,
+                    &prefix,
+                    &repository,
+                    config.model_total_blocks(),
+                    announce_start,
+                    announce_end,
+                    &server_info,
+                )
+                .await
+                {
+                    warn!(
+                        "Initial announce retry failed: {} — will retry at 120s tick",
+                        e
+                    );
                 }
             }
             Err(e) => warn!("p2pd restart failed: {} — will retry at 120s tick", e),
@@ -1211,7 +1235,8 @@ async fn dial_and_wait_for_bootstrap(
 
                 // Log progress every 5 seconds
                 let elapsed = start.elapsed();
-                if elapsed.as_secs() % 5 == 0 && elapsed.as_millis() < POLL_INTERVAL_MS as u128 * 2 {
+                if elapsed.as_secs() % 5 == 0 && elapsed.as_millis() < POLL_INTERVAL_MS as u128 * 2
+                {
                     info!("   Waiting for bootstrap peers... ({:.0}s elapsed, {} total peers connected)",
                           elapsed.as_secs_f64(), peers.len());
                 }
@@ -1349,8 +1374,12 @@ async fn probe_bootstrap_peers(
     let mut store = ReputationStore::load();
 
     for addr in bootstrap_peers {
-        let Some(peer_str) = addr.split("/p2p/").nth(1) else { continue };
-        let Ok(bp) = peer_str.parse::<PeerId>() else { continue };
+        let Some(peer_str) = addr.split("/p2p/").nth(1) else {
+            continue;
+        };
+        let Ok(bp) = peer_str.parse::<PeerId>() else {
+            continue;
+        };
 
         let t0 = std::time::Instant::now();
         let _ = client.connect_peer(addr).await;
@@ -1363,13 +1392,17 @@ async fn probe_bootstrap_peers(
         let success = result.ok().and_then(|r| r.ok()).is_some();
 
         let name = peer_str.get(..12).unwrap_or(peer_str).to_string();
-        store.record(peer_str, &name, PeerObservation {
-            timestamp_secs: now_secs(),
-            latency_ms,
-            success,
-            observed_tps: None,
-            claimed_tps: None,
-        });
+        store.record(
+            peer_str,
+            &name,
+            PeerObservation {
+                timestamp_secs: now_secs(),
+                latency_ms,
+                success,
+                observed_tps: None,
+                claimed_tps: None,
+            },
+        );
     }
 }
 
@@ -1391,7 +1424,10 @@ async fn maybe_auto_update() -> bool {
         _ => return false,
     };
 
-    info!("Auto-update: new version {} available — installing…", update.version);
+    info!(
+        "Auto-update: new version {} available — installing…",
+        update.version
+    );
 
     if let Err(e) = checker.install_update(&update.version).await {
         warn!("Auto-update install failed: {e}");

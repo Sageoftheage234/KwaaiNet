@@ -67,7 +67,9 @@ pub async fn run(args: BenchArgs) -> Result<()> {
     // ── Connect — one client per Eve ─────────────────────────────────────────
 
     let daemon_addr = crate::shard_cmd::daemon_socket();
-    let my_peer_id = crate::identity::NodeIdentity::load_or_create()?.peer_id.to_base58();
+    let my_peer_id = crate::identity::NodeIdentity::load_or_create()?
+        .peer_id
+        .to_base58();
 
     println!("  Connecting to {} Eve node(s)...", k);
     let mut shards: Vec<EveShard> = Vec::with_capacity(k);
@@ -96,7 +98,8 @@ pub async fn run(args: BenchArgs) -> Result<()> {
         if let Err(e) = probe {
             println!(
                 "    {} SKIP — storage health probe failed: {:#}",
-                short_id(&shard.peer_id), e
+                short_id(&shard.peer_id),
+                e
             );
             continue;
         }
@@ -111,7 +114,10 @@ pub async fn run(args: BenchArgs) -> Result<()> {
         let p = percentiles(&mut samples);
         println!(
             "    {} RTT  p50={} µs  p95={} µs  min={} µs",
-            short_id(&shard.peer_id), p.p50, p.p95, p.min
+            short_id(&shard.peer_id),
+            p.p50,
+            p.p95,
+            p.min
         );
         all_rtt_samples.extend(samples);
         healthy_shards.push(shard);
@@ -122,11 +128,21 @@ pub async fn run(args: BenchArgs) -> Result<()> {
     let mut shards = healthy_shards;
     let k = shards.len();
     if k < eves.len() {
-        println!("  ⚠  {}/{} Eve node(s) are storage-capable — skipped {} unresponsive", k, eves.len(), eves.len() - k);
+        println!(
+            "  ⚠  {}/{} Eve node(s) are storage-capable — skipped {} unresponsive",
+            k,
+            eves.len(),
+            eves.len() - k
+        );
     }
     let rtt_stats = percentiles(&mut all_rtt_samples);
     let rtt_overhead_us = rtt_stats.p50;
-    println!("    {}/{} nodes responding  P2P overhead p50: {} µs", k, eves.len(), rtt_overhead_us);
+    println!(
+        "    {}/{} nodes responding  P2P overhead p50: {} µs",
+        k,
+        eves.len(),
+        rtt_overhead_us
+    );
     println!();
 
     // ── Phase 1: Generate corpus ──────────────────────────────────────────────
@@ -240,22 +256,50 @@ pub async fn run(args: BenchArgs) -> Result<()> {
 
             let local_ids: std::collections::HashSet<i64> =
                 local_res.iter().map(|r| r.id).collect();
-            let hits = shard_res.iter().filter(|r| local_ids.contains(&r.id)).count();
+            let hits = shard_res
+                .iter()
+                .filter(|r| local_ids.contains(&r.id))
+                .count();
             recall_sum += hits as f64 / top_k as f64;
         }
 
         // ── Qdrant benchmark (local + Cloud in parallel) ─────────────────────
         let (qdrant_local, qdrant_cloud) = tokio::join!(
-            bench_qdrant(&qdrant_url, qdrant_api_key.as_deref(), &corpus[..n], &query_vecs, top_k, batch, dim),
+            bench_qdrant(
+                &qdrant_url,
+                qdrant_api_key.as_deref(),
+                &corpus[..n],
+                &query_vecs,
+                top_k,
+                batch,
+                dim
+            ),
             async {
                 match &qdrant_cloud_url {
-                    Some(url) => bench_qdrant(url, qdrant_cloud_api_key.as_deref(), &corpus[..n], &query_vecs, top_k, batch, dim).await,
+                    Some(url) => {
+                        bench_qdrant(
+                            url,
+                            qdrant_cloud_api_key.as_deref(),
+                            &corpus[..n],
+                            &query_vecs,
+                            top_k,
+                            batch,
+                            dim,
+                        )
+                        .await
+                    }
                     None => Ok(None),
                 }
             }
         );
-        let qdrant_result = qdrant_local.unwrap_or_else(|e| { println!("    ⚠ Qdrant local error: {e}"); None });
-        let qdrant_cloud_result = qdrant_cloud.unwrap_or_else(|e| { println!("    ⚠ Qdrant Cloud error: {e}"); None });
+        let qdrant_result = qdrant_local.unwrap_or_else(|e| {
+            println!("    ⚠ Qdrant local error: {e}");
+            None
+        });
+        let qdrant_cloud_result = qdrant_cloud.unwrap_or_else(|e| {
+            println!("    ⚠ Qdrant Cloud error: {e}");
+            None
+        });
 
         if let Some(ref qr) = qdrant_result {
             println!("         qdrant-local p50={} µs", qr.search.p50);
@@ -303,36 +347,84 @@ pub async fn run(args: BenchArgs) -> Result<()> {
     if has_qdrant && has_qdrant_cloud {
         println!(
             "  {:>10}  {:>10}  {:>10}  {:>12}  {:>12}  {:>8}  {:>8}  {:>8}  {:>9}",
-            "Vectors", "Local p50", "Shard p50", "Qdrant-loc", "Qdrant-cld", "Speedup", "L p95", "S p95", "Recall"
+            "Vectors",
+            "Local p50",
+            "Shard p50",
+            "Qdrant-loc",
+            "Qdrant-cld",
+            "Speedup",
+            "L p95",
+            "S p95",
+            "Recall"
         );
         println!("  {}", "─".repeat(108));
         for r in &scale_results {
             let speedup = r.local.p50 as f64 / r.sharded.p50.max(1) as f64;
-            let winner = if r.sharded.p50 < r.local.p50 { "✅" } else { "❌" };
-            let ql = r.qdrant.as_ref().map(|q| format!("{:>12}", q.search.p50)).unwrap_or_else(|| format!("{:>12}", "n/a"));
-            let qc = r.qdrant_cloud.as_ref().map(|q| format!("{:>12}", q.search.p50)).unwrap_or_else(|| format!("{:>12}", "n/a"));
+            let winner = if r.sharded.p50 < r.local.p50 {
+                "✅"
+            } else {
+                "❌"
+            };
+            let ql = r
+                .qdrant
+                .as_ref()
+                .map(|q| format!("{:>12}", q.search.p50))
+                .unwrap_or_else(|| format!("{:>12}", "n/a"));
+            let qc = r
+                .qdrant_cloud
+                .as_ref()
+                .map(|q| format!("{:>12}", q.search.p50))
+                .unwrap_or_else(|| format!("{:>12}", "n/a"));
             println!(
                 "  {:>10}  {:>10}  {:>10}  {}  {}  {:>7.2}×{}  {:>8}  {:>8}  {:>8.1}%",
-                r.n, r.local.p50, r.sharded.p50, ql, qc, speedup, winner,
-                r.local.p95, r.sharded.p95, r.recall_pct
+                r.n,
+                r.local.p50,
+                r.sharded.p50,
+                ql,
+                qc,
+                speedup,
+                winner,
+                r.local.p95,
+                r.sharded.p95,
+                r.recall_pct
             );
         }
     } else if has_qdrant {
         println!(
             "  {:>10}  {:>10}  {:>10}  {:>11}  {:>8}  {:>8}  {:>8}  {:>9}",
-            "Vectors", "Local p50", "Shard p50", "Qdrant p50", "Speedup", "L p95", "S p95", "Recall"
+            "Vectors",
+            "Local p50",
+            "Shard p50",
+            "Qdrant p50",
+            "Speedup",
+            "L p95",
+            "S p95",
+            "Recall"
         );
         println!("  {}", "─".repeat(92));
         for r in &scale_results {
             let speedup = r.local.p50 as f64 / r.sharded.p50.max(1) as f64;
-            let winner = if r.sharded.p50 < r.local.p50 { "✅" } else { "❌" };
-            let qdrant_col = r.qdrant.as_ref()
+            let winner = if r.sharded.p50 < r.local.p50 {
+                "✅"
+            } else {
+                "❌"
+            };
+            let qdrant_col = r
+                .qdrant
+                .as_ref()
                 .map(|q| format!("{:>11}", q.search.p50))
                 .unwrap_or_else(|| format!("{:>11}", "n/a"));
             println!(
                 "  {:>10}  {:>10}  {:>10}  {}  {:>7.2}×{}  {:>8}  {:>8}  {:>8.1}%",
-                r.n, r.local.p50, r.sharded.p50, qdrant_col, speedup, winner,
-                r.local.p95, r.sharded.p95, r.recall_pct
+                r.n,
+                r.local.p50,
+                r.sharded.p50,
+                qdrant_col,
+                speedup,
+                winner,
+                r.local.p95,
+                r.sharded.p95,
+                r.recall_pct
             );
         }
     } else {
@@ -343,11 +435,21 @@ pub async fn run(args: BenchArgs) -> Result<()> {
         println!("  {}", "─".repeat(78));
         for r in &scale_results {
             let speedup = r.local.p50 as f64 / r.sharded.p50.max(1) as f64;
-            let winner = if r.sharded.p50 < r.local.p50 { "✅" } else { "❌" };
+            let winner = if r.sharded.p50 < r.local.p50 {
+                "✅"
+            } else {
+                "❌"
+            };
             println!(
                 "  {:>10}  {:>10}  {:>10}  {:>7.2}×{}  {:>8}  {:>8}  {:>8.1}%",
-                r.n, r.local.p50, r.sharded.p50, speedup, winner,
-                r.local.p95, r.sharded.p95, r.recall_pct
+                r.n,
+                r.local.p50,
+                r.sharded.p50,
+                speedup,
+                winner,
+                r.local.p95,
+                r.sharded.p95,
+                r.recall_pct
             );
         }
     }
@@ -356,7 +458,10 @@ pub async fn run(args: BenchArgs) -> Result<()> {
     // Crossover projection
     println!("  P2P overhead breakdown (p50)");
     println!("  ──────────────────────────────────────────────────────────────");
-    println!("  Pure P2P ping (protocol overhead):  {:>8} µs", rtt_overhead_us);
+    println!(
+        "  Pure P2P ping (protocol overhead):  {:>8} µs",
+        rtt_overhead_us
+    );
     for r in &scale_results {
         let protocol_plus_hnsw = r.sharded.p50;
         let hnsw_only = r.local.p50 / k as u64;
@@ -382,7 +487,10 @@ pub async fn run(args: BenchArgs) -> Result<()> {
             let b = (t2 / t1).ln() / (n2 / n1).ln();
             let a = t1 / n1.powf(b);
 
-            println!("  Crossover projection (local p50 model: {:.2e} × N^{:.3})", a, b);
+            println!(
+                "  Crossover projection (local p50 model: {:.2e} × N^{:.3})",
+                a, b
+            );
             println!("  P2P overhead to overcome: {} µs", rtt_overhead_us);
             println!();
 
@@ -410,25 +518,55 @@ pub async fn run(args: BenchArgs) -> Result<()> {
     // Upload time comparison
     println!("  Upload time (ms)");
     if has_qdrant && has_qdrant_cloud {
-        println!("  {:>10}  {:>12}  {:>12}  {:>14}  {:>14}", "Vectors", "Local", "Sharded", "Qdrant-local", "Qdrant-Cloud");
+        println!(
+            "  {:>10}  {:>12}  {:>12}  {:>14}  {:>14}",
+            "Vectors", "Local", "Sharded", "Qdrant-local", "Qdrant-Cloud"
+        );
         println!("  {}", "─".repeat(68));
         for r in &scale_results {
-            let ql = r.qdrant.as_ref().map(|q| format!("{:>14}", q.upload_ms)).unwrap_or_else(|| format!("{:>14}", "n/a"));
-            let qc = r.qdrant_cloud.as_ref().map(|q| format!("{:>14}", q.upload_ms)).unwrap_or_else(|| format!("{:>14}", "n/a"));
-            println!("  {:>10}  {:>12}  {:>12}  {}  {}", r.n, r.local_upload_ms, r.shard_upload_ms, ql, qc);
+            let ql = r
+                .qdrant
+                .as_ref()
+                .map(|q| format!("{:>14}", q.upload_ms))
+                .unwrap_or_else(|| format!("{:>14}", "n/a"));
+            let qc = r
+                .qdrant_cloud
+                .as_ref()
+                .map(|q| format!("{:>14}", q.upload_ms))
+                .unwrap_or_else(|| format!("{:>14}", "n/a"));
+            println!(
+                "  {:>10}  {:>12}  {:>12}  {}  {}",
+                r.n, r.local_upload_ms, r.shard_upload_ms, ql, qc
+            );
         }
     } else if has_qdrant {
-        println!("  {:>10}  {:>12}  {:>12}  {:>12}", "Vectors", "Local", "Sharded", "Qdrant");
+        println!(
+            "  {:>10}  {:>12}  {:>12}  {:>12}",
+            "Vectors", "Local", "Sharded", "Qdrant"
+        );
         println!("  {}", "─".repeat(52));
         for r in &scale_results {
-            let q_col = r.qdrant.as_ref().map(|q| format!("{:>12}", q.upload_ms)).unwrap_or_else(|| format!("{:>12}", "n/a"));
-            println!("  {:>10}  {:>12}  {:>12}  {}", r.n, r.local_upload_ms, r.shard_upload_ms, q_col);
+            let q_col = r
+                .qdrant
+                .as_ref()
+                .map(|q| format!("{:>12}", q.upload_ms))
+                .unwrap_or_else(|| format!("{:>12}", "n/a"));
+            println!(
+                "  {:>10}  {:>12}  {:>12}  {}",
+                r.n, r.local_upload_ms, r.shard_upload_ms, q_col
+            );
         }
     } else {
-        println!("  {:>10}  {:>12}  {:>12}", "Vectors", "Local (ms)", "Sharded (ms)");
+        println!(
+            "  {:>10}  {:>12}  {:>12}",
+            "Vectors", "Local (ms)", "Sharded (ms)"
+        );
         println!("  {}", "─".repeat(40));
         for r in &scale_results {
-            println!("  {:>10}  {:>12}  {:>12}", r.n, r.local_upload_ms, r.shard_upload_ms);
+            println!(
+                "  {:>10}  {:>12}  {:>12}",
+                r.n, r.local_upload_ms, r.shard_upload_ms
+            );
         }
     }
     println!();
@@ -477,7 +615,11 @@ async fn search_sharded(
     for r in results {
         merged.extend(r?);
     }
-    merged.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    merged.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     merged.truncate(top_k);
     Ok(merged)
 }
@@ -517,7 +659,9 @@ async fn bench_qdrant(
     const COLL: &str = "kwaainet-bench";
 
     // Clean up any leftover collection from a prior run.
-    let _ = auth(client.delete(format!("{url}/collections/{COLL}"))).send().await;
+    let _ = auth(client.delete(format!("{url}/collections/{COLL}")))
+        .send()
+        .await;
 
     // Create collection with cosine HNSW.
     let resp = auth(
@@ -575,7 +719,9 @@ async fn bench_qdrant(
     }
 
     // Cleanup.
-    let _ = auth(client.delete(format!("{url}/collections/{COLL}"))).send().await;
+    let _ = auth(client.delete(format!("{url}/collections/{COLL}")))
+        .send()
+        .await;
 
     Ok(Some(QdrantStats {
         upload_ms,
