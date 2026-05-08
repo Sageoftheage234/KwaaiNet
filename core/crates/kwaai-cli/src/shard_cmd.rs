@@ -1108,7 +1108,11 @@ pub async fn cmd_shard_run(args: ShardRunArgs) -> Result<()> {
         {
             Ok(r) => r,
             Err(e) => {
-                // Peer failed — rebuild path excluding it (KV-cache lost for those blocks)
+                // Move to a clean line before printing the warning so it doesn't
+                // appear inline with the last-printed token.
+                if !generated_ids.is_empty() {
+                    println!();
+                }
                 print_warning(&format!(
                     "{e:#} — rebuilding path (KV-cache lost, output may degrade)"
                 ));
@@ -1123,7 +1127,7 @@ pub async fn cmd_shard_run(args: ShardRunArgs) -> Result<()> {
                     shape: shape2,
                     data: data2,
                 };
-                forward_through_chain(
+                let result = forward_through_chain(
                     &mut client,
                     &pinned_path,
                     total_blocks,
@@ -1135,7 +1139,14 @@ pub async fn cmd_shard_run(args: ShardRunArgs) -> Result<()> {
                     show_stats.then_some(&mut token_hops),
                     reputation.clone(),
                 )
-                .await?
+                .await?;
+                // Re-indent so the resumed token stream starts cleanly.
+                if !generated_ids.is_empty() {
+                    use std::io::Write as _;
+                    print!("  ");
+                    std::io::stdout().flush().ok();
+                }
+                result
             }
         };
         if show_stats && !token_hops.is_empty() {
