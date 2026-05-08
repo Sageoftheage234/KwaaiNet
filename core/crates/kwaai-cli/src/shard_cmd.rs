@@ -667,7 +667,12 @@ async fn cmd_shard_run_local(args: ShardRunArgs) -> Result<()> {
     // via the local TCP bypass server instead of loading the model a second time.
     let local_port: Option<u16> = std::fs::read_to_string(local_server_port_file())
         .ok()
-        .and_then(|s| s.trim().parse().ok());
+        .and_then(|s| s.trim().parse().ok())
+        .filter(|&port| {
+            // Quick liveness check: verify the port is still accepting connections.
+            // A stale port file is common after an unclean shutdown.
+            std::net::TcpStream::connect(format!("127.0.0.1:{}", port)).is_ok()
+        });
     if let Some(port) = local_port {
         print_info("Shard serve detected — reusing loaded model (skipping model load)");
         println!();
