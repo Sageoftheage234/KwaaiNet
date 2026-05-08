@@ -317,9 +317,10 @@ impl ShardBlock {
             let k_fa = k.transpose(1, 2).map_err(InferenceError::from)?; // [b, kv_seq, n_kv, hd]
             let v_fa = v.transpose(1, 2).map_err(InferenceError::from)?;
             let scale = (hd as f32).sqrt().recip();
-            // Causal mask only needed for multi-token prefill starting at position 0.
-            // For decode (s==1) or continued prefill (seq_pos>0) use non-causal full attention.
-            let is_causal = s > 1 && seq_pos == 0;
+            // flash_attn's causal mode masks query i to keys 0..=(kv_seq-s+i), handling
+            // cached keys (seq_pos>0) correctly via the key-length offset — no special
+            // casing for seq_pos needed. Single-token decode (s==1) is trivially causal.
+            let is_causal = s > 1;
             let out = candle_flash_attn::flash_attn(&q_fa, &k_fa, &v_fa, scale, is_causal)
                 .map_err(InferenceError::from)?; // [b, s, n_h, hd]
             out.transpose(1, 2).map_err(InferenceError::from)? // [b, n_h, s, hd]
