@@ -96,10 +96,16 @@ async fn main() -> Result<()> {
     setup_cuda_library_path();
     let cli = Cli::parse();
 
-    // Initialise logging (RUST_LOG overrides, default info)
+    // Initialise logging (RUST_LOG overrides config default).
+    // hnsw_rs and kwaai_storage are silenced at INFO — they emit noisy
+    // index-load messages that are implementation detail, not user-facing.
+    let default_filter = format!(
+        "info,hnsw_rs=warn,kwaai_storage=warn,{}=info",
+        env!("CARGO_PKG_NAME")
+    );
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&default_filter)),
         )
         .init();
 
