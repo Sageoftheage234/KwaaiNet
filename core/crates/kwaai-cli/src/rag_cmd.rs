@@ -28,12 +28,9 @@ use crate::storage_rpc::{
 
 pub async fn run(args: RagArgs) -> Result<()> {
     match args.action {
-        RagAction::Init {
-            eve_peer_id,
-            capacity_mb,
-            embed_model,
-            rag_dir,
-        } => cmd_init(eve_peer_id, capacity_mb, embed_model, rag_dir).await,
+        RagAction::Init { embed_model, rag_dir } => cmd_init(embed_model, rag_dir).await,
+
+        RagAction::ConnectEve { peer_id, url } => cmd_connect_eve(peer_id, url).await,
 
         RagAction::Ingest {
             file,
@@ -76,12 +73,7 @@ pub async fn run(args: RagArgs) -> Result<()> {
 
 // ── init ──────────────────────────────────────────────────────────────────────
 
-async fn cmd_init(
-    eve_peer_id_str: Option<String>,
-    capacity_mb: i64,
-    embed_model: String,
-    rag_dir: Option<std::path::PathBuf>,
-) -> Result<()> {
+async fn cmd_init(embed_model: String, rag_dir: Option<std::path::PathBuf>) -> Result<()> {
     #[cfg(not(feature = "storage"))]
     bail!("RAG requires the 'storage' feature. Rebuild with: cargo build --features storage");
 
@@ -89,91 +81,78 @@ async fn cmd_init(
     {
         print_box_header("RAG Init");
 
-        // Resolve Eve peer ID.
-        // For single-node mode (no --eve-peer-id) we read the local identity directly so
-        // the daemon does not need to be running.  Only connect to p2pd when a remote Eve
-        // peer is specified (multi-node mode).
-        let local_identity = crate::identity::NodeIdentity::load_or_create()?;
-        let local_peer_id = local_identity.peer_id;
+        let rag_data_dir_str = rag_dir.as_ref().map(|p| p.to_string_lossy().into_owned());
+        let data_dir = rag_dir.unwrap_or_else(|| kwaainet_dir().join("rag"));
 
-        let (eve_peer_id, remote_client) = match &eve_peer_id_str {
-            Some(s) => {
-                let pid: PeerId = s.parse().context("invalid Eve peer ID")?;
-                let (client, _) = crate::vpk::p2p_connect().await?;
-                (pid, Some(client))
-            }
-            None => {
-                print_info("No --eve-peer-id given; using local peer ID (single-node mode)");
-                (local_peer_id, None)
-            }
-        };
-
-        // Probe embedding model before creating the tenant.
+        // Probe embedding model before touching storage.
         let embed = EmbedClient::new(None, Some(embed_model.clone()));
         print_info(&format!("Probing Ollama ({embed_model})…"));
         embed.check_dim().await?;
         print_success("Embedding model OK (768 dimensions)");
 
-        let my_peer_id = local_peer_id.to_string();
-        let payload = CreateTenantPayload {
-            peer_id: my_peer_id,
-            capacity_limit_mb: capacity_mb,
-            display_name: Some("kwaai-rag".to_string()),
-            vector_dimension: 768,
-        };
-
-        // When Eve == local peer, bypass P2P (daemon refuses dial-to-self) and use HTTP.
-        let is_local = eve_peer_id == local_peer_id;
-        let storage_url = if is_local {
-            let cfg = KwaaiNetConfig::load_or_create()?;
-            let port = cfg.vpk_local_port.unwrap_or(7432);
-            Some(format!("http://localhost:{port}"))
-        } else {
-            None
-        };
-
-        let http = reqwest::Client::new();
-        let info = if let Some(ref url) = storage_url {
-            print_info(&format!("Using local storage at {url}"));
-            http_create_tenant(&http, url, payload)
-                .await
-                .context("creating local tenant")?
-        } else {
-            let client = remote_client.expect("p2p client required for remote Eve");
-            rpc_create_tenant(&client, &eve_peer_id, payload)
-                .await
-                .context("creating Eve tenant")?
-        };
-
+        // Create local embedded vector store + tenant — no network required.
+        let db = kwaai_storage::StorageDb::open(&data_dir)
+            .context("opening local vector store")?;
+        let tm = kwaai_storage::TenantManager::new(db);
+        let local_peer_id = crate::identity::NodeIdentity::load_or_create()?.peer_id;
+        let info = tm
+            .create(&local_peer_id.to_base58(), 0, Some("kwaai-rag"), 768)
+            .await
+            .context("creating local tenant")?;
         let tenant_id = info.tenant_id;
-        print_success(&format!("Tenant created: {tenant_id}"));
 
-        // Resolve and create the metadata directory.
-        let rag_data_dir_str = rag_dir.as_ref().map(|p| p.to_string_lossy().into_owned());
-        let data_dir = rag_dir.unwrap_or_else(|| kwaainet_dir().join("rag"));
+        // Create chunk-metadata store.
         MetaStore::open(&data_dir, tenant_id)?;
-        print_info(&format!("Metadata store: {}", data_dir.display()));
+        print_info(&format!("Knowledge base:  {}", data_dir.display()));
 
-        // Save config.
+        // Save config — storage_url = "local" means in-process StorageDb.
         let mut cfg = KwaaiNetConfig::load_or_create()?;
         cfg.rag = Some(RagConfig {
             tenant_id: Some(tenant_id.to_string()),
-            eve_peer_id: Some(eve_peer_id.to_string()),
+            eve_peer_id: None,
             embed_model,
             inference_url: "http://localhost:8080".to_string(),
             top_k: 5,
-            storage_url,
+            storage_url: Some("local".to_string()),
             rag_data_dir: rag_data_dir_str,
         });
         cfg.save()?;
 
-        print_success(&format!(
-            "RAG initialised. Eve: {}  Tenant: {}",
-            eve_peer_id, tenant_id
-        ));
-        println!("  Next: kwaainet rag ingest <file>");
+        print_success(&format!("Knowledge base initialised  (tenant {tenant_id})"));
+        println!("  Next:  kwaainet rag ingest <file>");
+        println!("  Later: kwaainet rag connect-eve <peer-id>  # outsource to an Eve node");
         Ok(())
     }
+}
+
+// ── connect-eve ───────────────────────────────────────────────────────────────
+
+async fn cmd_connect_eve(peer_id: String, url: Option<String>) -> Result<()> {
+    let eve: PeerId = peer_id.parse().context("invalid peer ID")?;
+
+    let mut cfg = KwaaiNetConfig::load_or_create()?;
+    let rag = cfg
+        .rag
+        .as_mut()
+        .context("RAG not initialised. Run: kwaainet rag init")?;
+
+    rag.eve_peer_id = Some(peer_id);
+    // url = Some("http://...") for HTTP transport, None for P2P RPC.
+    rag.storage_url = url.clone();
+    cfg.save()?;
+
+    print_box_header("RAG Connect Eve");
+    print_success(&format!("Eve: {eve}"));
+    if let Some(ref u) = url {
+        print_info(&format!("Transport: HTTP ({u})"));
+    } else {
+        print_info("Transport: P2P (daemon required for operations)");
+    }
+    print_warning(
+        "Existing local vectors are NOT migrated automatically. \
+         Re-ingest your documents so the Eve node indexes them.",
+    );
+    Ok(())
 }
 
 // ── ingest ────────────────────────────────────────────────────────────────────
@@ -189,7 +168,7 @@ async fn cmd_ingest(
 
     #[cfg(feature = "storage")]
     {
-        let (rag_cfg, tenant_id, eve_peer_id) = load_rag_config()?;
+        let (rag_cfg, tenant_id) = load_rag_config()?;
 
         let doc_name = doc_name.unwrap_or_else(|| {
             file.file_name()
@@ -215,47 +194,62 @@ async fn cmd_ingest(
 
         let spinner = crate::progress::Spinner::start("Ingesting…");
 
-        let result = if let Some(storage_url) = rag_cfg.storage_url.clone() {
-            let http = reqwest::Client::new();
-            ingest_text(
-                &cfg,
-                &meta,
-                &doc_name,
-                &text,
-                move |vectors| {
-                    let http = http.clone();
-                    let url = storage_url.clone();
-                    Box::pin(
-                        async move { http_upload_vectors(&http, &url, tenant_id, vectors).await },
-                    )
-                        as Pin<Box<dyn std::future::Future<Output = Result<usize>> + Send>>
-                },
-                Some(|done: usize, total: usize| {
-                    let _ = (done, total);
-                }),
-            )
-            .await?
-        } else {
-            let (client, _) = crate::vpk::p2p_connect().await?;
-            let client = Arc::new(tokio::sync::Mutex::new(client));
-            ingest_text(
-                &cfg,
-                &meta,
-                &doc_name,
-                &text,
-                move |vectors| {
-                    let client = client.clone();
-                    Box::pin(async move {
-                        let guard = client.lock().await;
-                        rpc_upload_vectors(&*guard, &eve_peer_id, tenant_id, vectors).await
-                    })
-                        as Pin<Box<dyn std::future::Future<Output = Result<usize>> + Send>>
-                },
-                Some(|done: usize, total: usize| {
-                    let _ = (done, total);
-                }),
-            )
-            .await?
+        let result = match rag_cfg.storage_url.as_deref() {
+            Some("local") => {
+                let vs = Arc::new(open_local_vs(&rag_cfg.data_dir())?);
+                ingest_text(
+                    &cfg,
+                    &meta,
+                    &doc_name,
+                    &text,
+                    move |vectors| {
+                        let vs = vs.clone();
+                        Box::pin(async move { vs.upload(tenant_id, &vectors).await })
+                            as Pin<Box<dyn std::future::Future<Output = Result<usize>> + Send>>
+                    },
+                    Some(|done: usize, total: usize| { let _ = (done, total); }),
+                )
+                .await?
+            }
+            Some(url) => {
+                let http = reqwest::Client::new();
+                let url = url.to_string();
+                ingest_text(
+                    &cfg,
+                    &meta,
+                    &doc_name,
+                    &text,
+                    move |vectors| {
+                        let http = http.clone();
+                        let url = url.clone();
+                        Box::pin(async move { http_upload_vectors(&http, &url, tenant_id, vectors).await })
+                            as Pin<Box<dyn std::future::Future<Output = Result<usize>> + Send>>
+                    },
+                    Some(|done: usize, total: usize| { let _ = (done, total); }),
+                )
+                .await?
+            }
+            None => {
+                let eve_peer_id = eve_peer_id(&rag_cfg)?;
+                let (client, _) = crate::vpk::p2p_connect().await?;
+                let client = Arc::new(tokio::sync::Mutex::new(client));
+                ingest_text(
+                    &cfg,
+                    &meta,
+                    &doc_name,
+                    &text,
+                    move |vectors| {
+                        let client = client.clone();
+                        Box::pin(async move {
+                            let guard = client.lock().await;
+                            rpc_upload_vectors(&*guard, &eve_peer_id, tenant_id, vectors).await
+                        })
+                            as Pin<Box<dyn std::future::Future<Output = Result<usize>> + Send>>
+                    },
+                    Some(|done: usize, total: usize| { let _ = (done, total); }),
+                )
+                .await?
+            }
         };
 
         spinner
@@ -276,7 +270,7 @@ async fn cmd_query(query: String, top_k: usize, min_score: f64, json_out: bool) 
 
     #[cfg(feature = "storage")]
     {
-        let (rag_cfg, tenant_id, eve_peer_id) = load_rag_config()?;
+        let (rag_cfg, tenant_id) = load_rag_config()?;
 
         let embed = EmbedClient::new(None, Some(rag_cfg.embed_model.clone()));
         let meta = MetaStore::open(&rag_cfg.data_dir(), tenant_id)?;
@@ -292,32 +286,49 @@ async fn cmd_query(query: String, top_k: usize, min_score: f64, json_out: bool) 
         } else {
             Some(crate::progress::Spinner::start("Retrieving…"))
         };
-        let results = if let Some(storage_url) = rag_cfg.storage_url.clone() {
-            let http = reqwest::Client::new();
-            retrieve(&query, &cfg, &embed, &meta, move |embedding, k| {
-                let http = http.clone();
-                let url = storage_url.clone();
-                Box::pin(async move {
-                    let raw = http_search_vectors(&http, &url, tenant_id, embedding, k).await?;
-                    Ok(raw.into_iter().map(|r| (r.id, r.score)).collect())
+        let results = match rag_cfg.storage_url.as_deref() {
+            Some("local") => {
+                let vs = Arc::new(open_local_vs(&rag_cfg.data_dir())?);
+                retrieve(&query, &cfg, &embed, &meta, move |embedding, k| {
+                    let vs = vs.clone();
+                    Box::pin(async move {
+                        let raw = vs.search(tenant_id, &embedding, k).await?;
+                        Ok(raw.into_iter().map(|r| (r.id, r.score)).collect())
+                    })
+                        as Pin<Box<dyn std::future::Future<Output = Result<Vec<(i64, f64)>>> + Send>>
                 })
-                    as Pin<Box<dyn std::future::Future<Output = Result<Vec<(i64, f64)>>> + Send>>
-            })
-            .await?
-        } else {
-            let (client, _) = crate::vpk::p2p_connect().await?;
-            let client = Arc::new(tokio::sync::Mutex::new(client));
-            retrieve(&query, &cfg, &embed, &meta, move |embedding, k| {
-                let client = client.clone();
-                Box::pin(async move {
-                    let guard = client.lock().await;
-                    let raw =
-                        rpc_search_vectors(&*guard, &eve_peer_id, tenant_id, embedding, k).await?;
-                    Ok(raw.into_iter().map(|r| (r.id, r.score)).collect())
+                .await?
+            }
+            Some(url) => {
+                let http = reqwest::Client::new();
+                let url = url.to_string();
+                retrieve(&query, &cfg, &embed, &meta, move |embedding, k| {
+                    let http = http.clone();
+                    let url = url.clone();
+                    Box::pin(async move {
+                        let raw = http_search_vectors(&http, &url, tenant_id, embedding, k).await?;
+                        Ok(raw.into_iter().map(|r| (r.id, r.score)).collect())
+                    })
+                        as Pin<Box<dyn std::future::Future<Output = Result<Vec<(i64, f64)>>> + Send>>
                 })
-                    as Pin<Box<dyn std::future::Future<Output = Result<Vec<(i64, f64)>>> + Send>>
-            })
-            .await?
+                .await?
+            }
+            None => {
+                let eve_peer_id = eve_peer_id(&rag_cfg)?;
+                let (client, _) = crate::vpk::p2p_connect().await?;
+                let client = Arc::new(tokio::sync::Mutex::new(client));
+                retrieve(&query, &cfg, &embed, &meta, move |embedding, k| {
+                    let client = client.clone();
+                    Box::pin(async move {
+                        let guard = client.lock().await;
+                        let raw =
+                            rpc_search_vectors(&*guard, &eve_peer_id, tenant_id, embedding, k).await?;
+                        Ok(raw.into_iter().map(|r| (r.id, r.score)).collect())
+                    })
+                        as Pin<Box<dyn std::future::Future<Output = Result<Vec<(i64, f64)>>> + Send>>
+                })
+                .await?
+            }
         };
         if let Some(s) = spinner {
             s.finish("").await;
@@ -370,7 +381,7 @@ async fn cmd_chat(top_k: usize, inference_url: String) -> Result<()> {
 
     #[cfg(feature = "storage")]
     {
-        let (rag_cfg, tenant_id, eve_peer_id) = load_rag_config()?;
+        let (rag_cfg, tenant_id) = load_rag_config()?;
 
         let embed = EmbedClient::new(None, Some(rag_cfg.embed_model.clone()));
         let meta = MetaStore::open(&rag_cfg.data_dir(), tenant_id)?;
@@ -384,11 +395,17 @@ async fn cmd_chat(top_k: usize, inference_url: String) -> Result<()> {
         let http = reqwest::Client::new();
         let mut history: Vec<ChatMessage> = vec![];
 
-        // Prepare storage backend once — HTTP or P2P.
-        let local_url = rag_cfg.storage_url.clone();
-        let p2p_client = if local_url.is_none() {
+        // Prepare storage backend once.
+        let storage_mode = rag_cfg.storage_url.clone();
+        let local_vs = if storage_mode.as_deref() == Some("local") {
+            Some(Arc::new(open_local_vs(&rag_cfg.data_dir())?))
+        } else {
+            None
+        };
+        let p2p_client = if storage_mode.is_none() {
+            let eve = eve_peer_id(&rag_cfg)?;
             let (c, _) = crate::vpk::p2p_connect().await?;
-            Some(Arc::new(tokio::sync::Mutex::new(c)))
+            Some((Arc::new(tokio::sync::Mutex::new(c)), eve))
         } else {
             None
         };
@@ -413,7 +430,18 @@ async fn cmd_chat(top_k: usize, inference_url: String) -> Result<()> {
             }
 
             // Retrieve context.
-            let chunks = if let Some(ref url) = local_url {
+            let chunks = if let Some(ref vs) = local_vs {
+                let vs2 = vs.clone();
+                retrieve(&query, &retrieve_cfg, &embed, &meta, move |embedding, k| {
+                    let vs = vs2.clone();
+                    Box::pin(async move {
+                        let raw = vs.search(tenant_id, &embedding, k).await?;
+                        Ok(raw.into_iter().map(|r| (r.id, r.score)).collect())
+                    })
+                        as Pin<Box<dyn std::future::Future<Output = Result<Vec<(i64, f64)>>> + Send>>
+                })
+                .await?
+            } else if let Some(ref url) = storage_mode {
                 let http2 = http.clone();
                 let url2 = url.clone();
                 retrieve(&query, &retrieve_cfg, &embed, &meta, move |embedding, k| {
@@ -423,13 +451,13 @@ async fn cmd_chat(top_k: usize, inference_url: String) -> Result<()> {
                         let raw = http_search_vectors(&h, &u, tenant_id, embedding, k).await?;
                         Ok(raw.into_iter().map(|r| (r.id, r.score)).collect())
                     })
-                        as Pin<
-                            Box<dyn std::future::Future<Output = Result<Vec<(i64, f64)>>> + Send>,
-                        >
+                        as Pin<Box<dyn std::future::Future<Output = Result<Vec<(i64, f64)>>> + Send>>
                 })
                 .await?
             } else {
-                let client2 = p2p_client.as_ref().unwrap().clone();
+                let (client2, eve) = p2p_client.as_ref().unwrap();
+                let client2 = client2.clone();
+                let eve_peer_id = *eve;
                 retrieve(&query, &retrieve_cfg, &embed, &meta, move |embedding, k| {
                     let c = client2.clone();
                     Box::pin(async move {
@@ -439,9 +467,7 @@ async fn cmd_chat(top_k: usize, inference_url: String) -> Result<()> {
                                 .await?;
                         Ok(raw.into_iter().map(|r| (r.id, r.score)).collect())
                     })
-                        as Pin<
-                            Box<dyn std::future::Future<Output = Result<Vec<(i64, f64)>>> + Send>,
-                        >
+                        as Pin<Box<dyn std::future::Future<Output = Result<Vec<(i64, f64)>>> + Send>>
                 })
                 .await?
             };
@@ -488,7 +514,7 @@ async fn cmd_chat(top_k: usize, inference_url: String) -> Result<()> {
 // ── docs ──────────────────────────────────────────────────────────────────────
 
 async fn cmd_docs() -> Result<()> {
-    let (rag_cfg, tenant_id, _) = load_rag_config()?;
+    let (rag_cfg, tenant_id) = load_rag_config()?;
     let meta = MetaStore::open(&rag_cfg.data_dir(), tenant_id)?;
 
     let docs = meta.list_docs()?;
@@ -522,7 +548,7 @@ async fn cmd_delete_doc(name: String, yes: bool) -> Result<()> {
             }
         }
 
-        let (rag_cfg, tenant_id, eve_peer_id) = load_rag_config()?;
+        let (rag_cfg, tenant_id) = load_rag_config()?;
         let meta = MetaStore::open(&rag_cfg.data_dir(), tenant_id)?;
 
         let ids = meta.delete_doc(&name)?;
@@ -531,16 +557,26 @@ async fn cmd_delete_doc(name: String, yes: bool) -> Result<()> {
             return Ok(());
         }
 
-        if let Some(ref url) = rag_cfg.storage_url {
-            let http = reqwest::Client::new();
-            http_delete_vectors(&http, url, tenant_id, ids.clone())
-                .await
-                .context("deleting vectors from local storage")?;
-        } else {
-            let (client, _) = crate::vpk::p2p_connect().await?;
-            rpc_delete_vectors(&client, &eve_peer_id, tenant_id, ids.clone())
-                .await
-                .context("deleting vectors from Eve")?;
+        match rag_cfg.storage_url.as_deref() {
+            Some("local") => {
+                let vs = open_local_vs(&rag_cfg.data_dir())?;
+                vs.delete(tenant_id, &ids)
+                    .await
+                    .context("deleting vectors from local store")?;
+            }
+            Some(url) => {
+                let http = reqwest::Client::new();
+                http_delete_vectors(&http, url, tenant_id, ids.clone())
+                    .await
+                    .context("deleting vectors from Eve (HTTP)")?;
+            }
+            None => {
+                let ep = eve_peer_id(&rag_cfg)?;
+                let (client, _) = crate::vpk::p2p_connect().await?;
+                rpc_delete_vectors(&client, &ep, tenant_id, ids.clone())
+                    .await
+                    .context("deleting vectors from Eve (P2P)")?;
+            }
         }
 
         print_success(&format!("Deleted '{name}' ({} chunks removed)", ids.len()));
@@ -550,7 +586,7 @@ async fn cmd_delete_doc(name: String, yes: bool) -> Result<()> {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-fn load_rag_config() -> Result<(RagConfig, Uuid, PeerId)> {
+fn load_rag_config() -> Result<(RagConfig, Uuid)> {
     let cfg = KwaaiNetConfig::load_or_create()?;
     let rag = cfg
         .rag
@@ -563,14 +599,44 @@ fn load_rag_config() -> Result<(RagConfig, Uuid, PeerId)> {
         .parse()
         .context("invalid tenant_id")?;
 
-    let eve_peer_id: PeerId = rag
-        .eve_peer_id
-        .as_deref()
-        .context("no eve_peer_id in RAG config")?
-        .parse()
-        .context("invalid eve_peer_id")?;
+    Ok((rag, tenant_id))
+}
 
-    Ok((rag, tenant_id, eve_peer_id))
+fn eve_peer_id(rag: &RagConfig) -> Result<PeerId> {
+    rag.eve_peer_id
+        .as_deref()
+        .context("no Eve configured — run: kwaainet rag connect-eve <peer-id>")?
+        .parse()
+        .context("invalid eve_peer_id")
+}
+
+#[cfg(feature = "storage")]
+fn open_local_vs(data_dir: &std::path::Path) -> Result<kwaai_storage::VectorStore> {
+    let db = kwaai_storage::StorageDb::open(data_dir).context("opening local vector store")?;
+    Ok(kwaai_storage::VectorStore::new(db))
+}
+
+/// Fire-and-forget vector delete used by sync — errors are logged, not fatal.
+#[cfg(feature = "storage")]
+async fn sync_delete_vectors(rag_cfg: &RagConfig, tenant_id: uuid::Uuid, ids: Vec<i64>) {
+    let _ = match rag_cfg.storage_url.as_deref() {
+        Some("local") => {
+            if let Ok(vs) = open_local_vs(&rag_cfg.data_dir()) {
+                let _ = vs.delete(tenant_id, &ids).await;
+            }
+        }
+        Some(url) => {
+            let http = reqwest::Client::new();
+            let _ = crate::storage_rpc::http_delete_vectors(&http, url, tenant_id, ids).await;
+        }
+        None => {
+            if let Ok(ep) = eve_peer_id(rag_cfg) {
+                if let Ok((client, _)) = crate::vpk::p2p_connect().await {
+                    let _ = crate::storage_rpc::rpc_delete_vectors(&client, &ep, tenant_id, ids).await;
+                }
+            }
+        }
+    };
 }
 
 fn truncate(s: &str, max: usize) -> &str {
@@ -653,7 +719,7 @@ async fn run_sync_pass(
 ) -> Result<SyncResult> {
     use std::time::UNIX_EPOCH;
 
-    let (rag_cfg, tenant_id, eve_peer_id) = load_rag_config()?;
+    let (rag_cfg, tenant_id) = load_rag_config()?;
     let meta = MetaStore::open(&rag_cfg.data_dir(), tenant_id)?;
 
     // Discover all matching files under the folder.
@@ -696,20 +762,7 @@ async fn run_sync_pass(
         if is_update {
             let old_ids = meta.delete_doc(doc_name)?;
             if !old_ids.is_empty() {
-                if let Some(ref url) = rag_cfg.storage_url {
-                    let http = reqwest::Client::new();
-                    let _ = crate::storage_rpc::http_delete_vectors(&http, url, tenant_id, old_ids)
-                        .await;
-                } else {
-                    let (client, _) = crate::vpk::p2p_connect().await?;
-                    let _ = crate::storage_rpc::rpc_delete_vectors(
-                        &client,
-                        &eve_peer_id,
-                        tenant_id,
-                        old_ids,
-                    )
-                    .await;
-                }
+                sync_delete_vectors(&rag_cfg, tenant_id, old_ids).await;
             }
             meta.delete_sync_meta(doc_name)?;
         }
@@ -727,50 +780,55 @@ async fn run_sync_pass(
         let embed = EmbedClient::new(None, Some(rag_cfg.embed_model.clone()));
         let ingest_cfg = IngestConfig::new(embed);
 
-        let ingest_result = if let Some(ref url) = rag_cfg.storage_url {
-            let http = reqwest::Client::new();
-            let url = url.clone();
-            ingest_text(
-                &ingest_cfg,
-                &meta,
-                doc_name,
-                &text,
-                move |vectors| {
-                    let h = http.clone();
-                    let u = url.clone();
-                    Box::pin(async move {
-                        crate::storage_rpc::http_upload_vectors(&h, &u, tenant_id, vectors).await
-                    })
-                        as Pin<Box<dyn std::future::Future<Output = Result<usize>> + Send>>
-                },
-                None::<fn(usize, usize)>,
-            )
-            .await?
-        } else {
-            let (client, _) = crate::vpk::p2p_connect().await?;
-            let client = Arc::new(tokio::sync::Mutex::new(client));
-            ingest_text(
-                &ingest_cfg,
-                &meta,
-                doc_name,
-                &text,
-                move |vectors| {
-                    let c = client.clone();
-                    Box::pin(async move {
-                        let guard = c.lock().await;
-                        crate::storage_rpc::rpc_upload_vectors(
-                            &*guard,
-                            &eve_peer_id,
-                            tenant_id,
-                            vectors,
-                        )
-                        .await
-                    })
-                        as Pin<Box<dyn std::future::Future<Output = Result<usize>> + Send>>
-                },
-                None::<fn(usize, usize)>,
-            )
-            .await?
+        let ingest_result = match rag_cfg.storage_url.as_deref() {
+            Some("local") => {
+                let vs = Arc::new(open_local_vs(&rag_cfg.data_dir())?);
+                ingest_text(
+                    &ingest_cfg, &meta, doc_name, &text,
+                    move |vectors| {
+                        let vs = vs.clone();
+                        Box::pin(async move { vs.upload(tenant_id, &vectors).await })
+                            as Pin<Box<dyn std::future::Future<Output = Result<usize>> + Send>>
+                    },
+                    None::<fn(usize, usize)>,
+                )
+                .await?
+            }
+            Some(url) => {
+                let http = reqwest::Client::new();
+                let url = url.to_string();
+                ingest_text(
+                    &ingest_cfg, &meta, doc_name, &text,
+                    move |vectors| {
+                        let h = http.clone();
+                        let u = url.clone();
+                        Box::pin(async move {
+                            crate::storage_rpc::http_upload_vectors(&h, &u, tenant_id, vectors).await
+                        })
+                            as Pin<Box<dyn std::future::Future<Output = Result<usize>> + Send>>
+                    },
+                    None::<fn(usize, usize)>,
+                )
+                .await?
+            }
+            None => {
+                let ep = eve_peer_id(&rag_cfg)?;
+                let (client, _) = crate::vpk::p2p_connect().await?;
+                let client = Arc::new(tokio::sync::Mutex::new(client));
+                ingest_text(
+                    &ingest_cfg, &meta, doc_name, &text,
+                    move |vectors| {
+                        let c = client.clone();
+                        Box::pin(async move {
+                            let guard = c.lock().await;
+                            crate::storage_rpc::rpc_upload_vectors(&*guard, &ep, tenant_id, vectors).await
+                        })
+                            as Pin<Box<dyn std::future::Future<Output = Result<usize>> + Send>>
+                    },
+                    None::<fn(usize, usize)>,
+                )
+                .await?
+            }
         };
 
         // Record sync state.
@@ -808,20 +866,7 @@ async fn run_sync_pass(
             let old_ids = meta.delete_doc(&doc_name)?;
             meta.delete_sync_meta(&doc_name)?;
             if !old_ids.is_empty() {
-                if let Some(ref url) = rag_cfg.storage_url {
-                    let http = reqwest::Client::new();
-                    let _ = crate::storage_rpc::http_delete_vectors(&http, url, tenant_id, old_ids)
-                        .await;
-                } else {
-                    let (client, _) = crate::vpk::p2p_connect().await?;
-                    let _ = crate::storage_rpc::rpc_delete_vectors(
-                        &client,
-                        &eve_peer_id,
-                        tenant_id,
-                        old_ids,
-                    )
-                    .await;
-                }
+                sync_delete_vectors(&rag_cfg, tenant_id, old_ids).await;
             }
             println!("  - deleted  '{}' (source: {})", doc_name, sync.file_path);
             result.deleted += 1;

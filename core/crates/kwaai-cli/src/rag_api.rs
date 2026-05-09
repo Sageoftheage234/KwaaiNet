@@ -32,10 +32,14 @@ use kwaai_p2p_daemon::P2PClient;
 
 struct RagState {
     tenant_id: Uuid,
-    eve_peer: PeerId,
-    /// Set when Eve is local; storage calls use HTTP instead of P2P.
+    /// "local" = in-process StorageDb; "http://..." = HTTP Eve; None = P2P RPC Eve.
     storage_url: Option<String>,
-    /// Only populated when storage_url is None (remote Eve via P2P).
+    /// Only set in local mode.
+    #[cfg(feature = "storage")]
+    local_vs: Option<kwaai_storage::VectorStore>,
+    /// Only set in HTTP/RPC mode.
+    eve_peer: Option<PeerId>,
+    /// Only populated in P2P RPC mode.
     client: Option<Arc<Mutex<P2PClient>>>,
     embed: EmbedClient,
     meta: Arc<MetaStore>,
@@ -59,17 +63,30 @@ pub async fn run(port: u16, inference_url: String, top_k: usize) -> Result<()> {
             .context("RAG not initialised. Run: kwaainet rag init")?;
 
         let tenant_id: Uuid = rag.tenant_id.as_deref().context("no tenant_id")?.parse()?;
-        let eve_peer: PeerId = rag
-            .eve_peer_id
-            .as_deref()
-            .context("no eve_peer_id")?
-            .parse()?;
         let storage_url = rag.storage_url.clone();
+        let is_local = storage_url.as_deref() == Some("local");
 
         let embed = EmbedClient::new(None, Some(rag.embed_model.clone()));
         print_info("Probing embedding model…");
         embed.check_dim().await?;
 
+        let local_vs = if is_local {
+            let db = kwaai_storage::StorageDb::open(&rag.data_dir())
+                .context("opening local vector store")?;
+            Some(kwaai_storage::VectorStore::new(db))
+        } else {
+            None
+        };
+        let eve_peer: Option<PeerId> = if !is_local {
+            Some(
+                rag.eve_peer_id
+                    .as_deref()
+                    .context("no eve_peer_id")?
+                    .parse()?,
+            )
+        } else {
+            None
+        };
         let p2p_client = if storage_url.is_none() {
             let (c, _) = crate::vpk::p2p_connect().await?;
             Some(Arc::new(Mutex::new(c)))
@@ -80,8 +97,9 @@ pub async fn run(port: u16, inference_url: String, top_k: usize) -> Result<()> {
 
         let state = Arc::new(RagState {
             tenant_id,
-            eve_peer,
             storage_url,
+            local_vs,
+            eve_peer,
             client: p2p_client,
             embed,
             meta,
@@ -199,31 +217,47 @@ async fn do_chat(state: &RagState, req: ChatRequest) -> Result<serde_json::Value
         };
 
         let retrieval_start = std::time::Instant::now();
-        let chunks = if let Some(ref url) = state.storage_url {
-            let http = state.http.clone();
-            let url = url.clone();
-            retrieve(&query, &cfg, &state.embed, &state.meta, move |emb, k| {
-                let h = http.clone();
-                let u = url.clone();
-                Box::pin(async move {
-                    let raw = http_search_vectors(&h, &u, tenant_id, emb, k).await?;
-                    Ok(raw.into_iter().map(|r| (r.id, r.score)).collect())
+        let chunks = match state.storage_url.as_deref() {
+            Some("local") => {
+                let vs = state.local_vs.as_ref().unwrap().clone();
+                retrieve(&query, &cfg, &state.embed, &state.meta, move |emb, k| {
+                    let vs = vs.clone();
+                    Box::pin(async move {
+                        let raw = vs.search(tenant_id, &emb, k).await?;
+                        Ok(raw.into_iter().map(|r| (r.id, r.score)).collect())
+                    })
+                        as Pin<Box<dyn std::future::Future<Output = Result<Vec<(i64, f64)>>> + Send>>
                 })
-                    as Pin<Box<dyn std::future::Future<Output = Result<Vec<(i64, f64)>>> + Send>>
-            })
-            .await?
-        } else {
-            let client = state.client.as_ref().unwrap().clone();
-            retrieve(&query, &cfg, &state.embed, &state.meta, move |emb, k| {
-                let c = client.clone();
-                Box::pin(async move {
-                    let guard = c.lock().await;
-                    let raw = rpc_search_vectors(&*guard, &eve_peer, tenant_id, emb, k).await?;
-                    Ok(raw.into_iter().map(|r| (r.id, r.score)).collect())
+                .await?
+            }
+            Some(_) => {
+                let http = state.http.clone();
+                let url = state.storage_url.clone().unwrap();
+                retrieve(&query, &cfg, &state.embed, &state.meta, move |emb, k| {
+                    let h = http.clone();
+                    let u = url.clone();
+                    Box::pin(async move {
+                        let raw = http_search_vectors(&h, &u, tenant_id, emb, k).await?;
+                        Ok(raw.into_iter().map(|r| (r.id, r.score)).collect())
+                    })
+                        as Pin<Box<dyn std::future::Future<Output = Result<Vec<(i64, f64)>>> + Send>>
                 })
-                    as Pin<Box<dyn std::future::Future<Output = Result<Vec<(i64, f64)>>> + Send>>
-            })
-            .await?
+                .await?
+            }
+            None => {
+                let ep = eve_peer.unwrap();
+                let client = state.client.as_ref().unwrap().clone();
+                retrieve(&query, &cfg, &state.embed, &state.meta, move |emb, k| {
+                    let c = client.clone();
+                    Box::pin(async move {
+                        let guard = c.lock().await;
+                        let raw = rpc_search_vectors(&*guard, &ep, tenant_id, emb, k).await?;
+                        Ok(raw.into_iter().map(|r| (r.id, r.score)).collect())
+                    })
+                        as Pin<Box<dyn std::future::Future<Output = Result<Vec<(i64, f64)>>> + Send>>
+                })
+                .await?
+            }
         };
         let retrieval_ms = retrieval_start.elapsed().as_millis() as u64;
 
@@ -325,12 +359,26 @@ async fn api_delete_doc(
         if ids.is_empty() {
             return (axum::http::StatusCode::NOT_FOUND, "document not found").into_response();
         }
-        if let Some(ref url) = state.storage_url {
-            let _ = http_delete_vectors(&state.http, url, state.tenant_id, ids.clone()).await;
-        } else {
-            let client = state.client.as_ref().unwrap().lock().await;
-            let _ =
-                rpc_delete_vectors(&*client, &state.eve_peer, state.tenant_id, ids.clone()).await;
+        match state.storage_url.as_deref() {
+            Some("local") => {
+                if let Some(ref vs) = state.local_vs {
+                    let _ = vs.delete(state.tenant_id, &ids).await;
+                }
+            }
+            Some(_) => {
+                let url = state.storage_url.as_deref().unwrap();
+                let _ = http_delete_vectors(&state.http, url, state.tenant_id, ids.clone()).await;
+            }
+            None => {
+                let client = state.client.as_ref().unwrap().lock().await;
+                let _ = rpc_delete_vectors(
+                    &*client,
+                    &state.eve_peer.unwrap(),
+                    state.tenant_id,
+                    ids.clone(),
+                )
+                .await;
+            }
         }
         Json(serde_json::json!({"deleted": ids.len()})).into_response()
     }
@@ -369,47 +417,55 @@ async fn api_ingest(
             };
 
             let tenant_id = state.tenant_id;
-            let eve_peer = state.eve_peer;
             let meta = state.meta.clone();
             let cfg = IngestConfig::new(state.embed.clone());
 
-            let result = if let Some(ref url) = state.storage_url {
-                let http = state.http.clone();
-                let url = url.clone();
-                ingest_text(
-                    &cfg,
-                    &meta,
-                    &doc_name,
-                    &text,
-                    move |vectors| {
-                        let h = http.clone();
-                        let u = url.clone();
-                        Box::pin(
-                            async move { http_upload_vectors(&h, &u, tenant_id, vectors).await },
-                        )
-                            as Pin<Box<dyn std::future::Future<Output = Result<usize>> + Send>>
-                    },
-                    None::<fn(usize, usize)>,
-                )
-                .await
-            } else {
-                let client = state.client.as_ref().unwrap().clone();
-                ingest_text(
-                    &cfg,
-                    &meta,
-                    &doc_name,
-                    &text,
-                    move |vectors| {
-                        let c = client.clone();
-                        Box::pin(async move {
-                            let guard = c.lock().await;
-                            rpc_upload_vectors(&*guard, &eve_peer, tenant_id, vectors).await
-                        })
-                            as Pin<Box<dyn std::future::Future<Output = Result<usize>> + Send>>
-                    },
-                    None::<fn(usize, usize)>,
-                )
-                .await
+            let result = match state.storage_url.as_deref() {
+                Some("local") => {
+                    let vs = Arc::new(state.local_vs.as_ref().unwrap().clone());
+                    ingest_text(
+                        &cfg, &meta, &doc_name, &text,
+                        move |vectors| {
+                            let vs = vs.clone();
+                            Box::pin(async move { vs.upload(tenant_id, &vectors).await })
+                                as Pin<Box<dyn std::future::Future<Output = Result<usize>> + Send>>
+                        },
+                        None::<fn(usize, usize)>,
+                    )
+                    .await
+                }
+                Some(_) => {
+                    let http = state.http.clone();
+                    let url = state.storage_url.clone().unwrap();
+                    ingest_text(
+                        &cfg, &meta, &doc_name, &text,
+                        move |vectors| {
+                            let h = http.clone();
+                            let u = url.clone();
+                            Box::pin(async move { http_upload_vectors(&h, &u, tenant_id, vectors).await })
+                                as Pin<Box<dyn std::future::Future<Output = Result<usize>> + Send>>
+                        },
+                        None::<fn(usize, usize)>,
+                    )
+                    .await
+                }
+                None => {
+                    let ep = state.eve_peer.unwrap();
+                    let client = state.client.as_ref().unwrap().clone();
+                    ingest_text(
+                        &cfg, &meta, &doc_name, &text,
+                        move |vectors| {
+                            let c = client.clone();
+                            Box::pin(async move {
+                                let guard = c.lock().await;
+                                rpc_upload_vectors(&*guard, &ep, tenant_id, vectors).await
+                            })
+                                as Pin<Box<dyn std::future::Future<Output = Result<usize>> + Send>>
+                        },
+                        None::<fn(usize, usize)>,
+                    )
+                    .await
+                }
             };
 
             match result {

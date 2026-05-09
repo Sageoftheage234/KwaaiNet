@@ -1001,24 +1001,26 @@ pub struct RagArgs {
 
 #[derive(Subcommand)]
 pub enum RagAction {
-    /// Initialise a RAG knowledge base (creates Eve tenant + local metadata store)
+    /// Initialise a local RAG knowledge base (no network required)
     Init {
-        /// Eve node peer ID (base58). Defaults to the local node's peer ID.
-        #[arg(long, value_name = "PEER_ID")]
-        eve_peer_id: Option<String>,
-
-        /// Storage capacity to request from Eve (MB)
-        #[arg(long, default_value = "2048")]
-        capacity_mb: i64,
-
         /// Ollama embedding model (must produce 768-dim vectors)
         #[arg(long, default_value = "nomic-embed-text")]
         embed_model: String,
 
-        /// Directory for chunk metadata (defaults to ~/.kwaainet/rag/).
+        /// Directory for the knowledge base (defaults to ~/.kwaainet/rag/).
         /// Point to an external drive for large corpora.
         #[arg(long, value_name = "PATH")]
         rag_dir: Option<std::path::PathBuf>,
+    },
+
+    /// Outsource this knowledge base's vector storage to an Eve node on the network
+    ConnectEve {
+        /// Eve node peer ID (base58)
+        peer_id: String,
+
+        /// Eve HTTP URL (e.g. http://192.168.1.10:7432). Omit to use P2P transport.
+        #[arg(long)]
+        url: Option<String>,
     },
 
     /// Ingest a document into the knowledge base
