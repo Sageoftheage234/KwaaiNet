@@ -101,3 +101,7 @@ result-*
 
 # OS generated
 .Trash-*
+# RAG benchmark results (re-generated; not committed)
+tests/rag-bench/results/*.json
+tests/rag-bench/results/*.md
+

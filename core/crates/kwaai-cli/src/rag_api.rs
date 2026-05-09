@@ -149,6 +149,9 @@ struct ChatRequest {
     max_tokens: Option<u32>,
     #[serde(default)]
     temperature: Option<f32>,
+    /// When true, include retrieved chunks and latency breakdown in the response.
+    #[serde(default)]
+    include_sources: bool,
 }
 
 fn default_stream() -> bool {
@@ -179,6 +182,8 @@ async fn do_chat(state: &RagState, req: ChatRequest) -> Result<serde_json::Value
         .unwrap_or("")
         .to_string();
 
+    let include_sources = req.include_sources;
+
     #[cfg(not(feature = "storage"))]
     bail!("storage feature required");
 
@@ -193,6 +198,7 @@ async fn do_chat(state: &RagState, req: ChatRequest) -> Result<serde_json::Value
             use_sentence_window: false,
         };
 
+        let retrieval_start = std::time::Instant::now();
         let chunks = if let Some(ref url) = state.storage_url {
             let http = state.http.clone();
             let url = url.clone();
@@ -219,6 +225,7 @@ async fn do_chat(state: &RagState, req: ChatRequest) -> Result<serde_json::Value
             })
             .await?
         };
+        let retrieval_ms = retrieval_start.elapsed().as_millis() as u64;
 
         // Build history from prior messages (all but last).
         let history: Vec<kwaai_rag::prompt::ChatMessage> = req
@@ -249,6 +256,7 @@ async fn do_chat(state: &RagState, req: ChatRequest) -> Result<serde_json::Value
             payload["max_tokens"] = serde_json::json!(m);
         }
 
+        let generation_start = std::time::Instant::now();
         let resp = state
             .http
             .post(format!("{}/v1/chat/completions", state.inference_url))
@@ -256,8 +264,28 @@ async fn do_chat(state: &RagState, req: ChatRequest) -> Result<serde_json::Value
             .send()
             .await
             .context("calling shard API")?;
+        let mut body: serde_json::Value = resp.json().await.context("parsing shard response")?;
+        let generation_ms = generation_start.elapsed().as_millis() as u64;
 
-        let body: serde_json::Value = resp.json().await.context("parsing shard response")?;
+        if include_sources {
+            let sources: Vec<serde_json::Value> = chunks
+                .iter()
+                .map(|c| {
+                    serde_json::json!({
+                        "doc": c.chunk_meta.doc_name,
+                        "chunk": c.chunk_meta.chunk_index,
+                        "score": c.score,
+                        "text": c.chunk_meta.text,
+                    })
+                })
+                .collect();
+            body["sources"] = serde_json::json!(sources);
+            body["usage"] = serde_json::json!({
+                "retrieval_ms": retrieval_ms,
+                "generation_ms": generation_ms,
+            });
+        }
+
         Ok(body)
     }
 }

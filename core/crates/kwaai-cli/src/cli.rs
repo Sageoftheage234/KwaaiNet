@@ -1051,6 +1051,10 @@ pub enum RagAction {
         /// Minimum cosine similarity score (0.0–1.0)
         #[arg(long, default_value = "0.0")]
         min_score: f64,
+
+        /// Output results as JSON (for benchmark scripts)
+        #[arg(long)]
+        json: bool,
     },
 
     /// Interactive RAG chat REPL (streams from shard API)

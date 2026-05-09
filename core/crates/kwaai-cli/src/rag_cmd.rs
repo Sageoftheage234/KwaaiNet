@@ -46,7 +46,8 @@ pub async fn run(args: RagArgs) -> Result<()> {
             text,
             top_k,
             min_score,
-        } => cmd_query(text, top_k, min_score).await,
+            json,
+        } => cmd_query(text, top_k, min_score, json).await,
 
         RagAction::Chat {
             top_k,
@@ -259,7 +260,7 @@ async fn cmd_ingest(
 
 // ── query ─────────────────────────────────────────────────────────────────────
 
-async fn cmd_query(query: String, top_k: usize, min_score: f64) -> Result<()> {
+async fn cmd_query(query: String, top_k: usize, min_score: f64, json_out: bool) -> Result<()> {
     #[cfg(not(feature = "storage"))]
     bail!("RAG requires the 'storage' feature.");
 
@@ -276,7 +277,11 @@ async fn cmd_query(query: String, top_k: usize, min_score: f64) -> Result<()> {
             use_sentence_window: false,
         };
 
-        let spinner = crate::progress::Spinner::start("Retrieving…");
+        let spinner = if json_out {
+            None
+        } else {
+            Some(crate::progress::Spinner::start("Retrieving…"))
+        };
         let results = if let Some(storage_url) = rag_cfg.storage_url.clone() {
             let http = reqwest::Client::new();
             retrieve(&query, &cfg, &embed, &meta, move |embedding, k| {
@@ -304,7 +309,27 @@ async fn cmd_query(query: String, top_k: usize, min_score: f64) -> Result<()> {
             })
             .await?
         };
-        spinner.finish("").await;
+        if let Some(s) = spinner {
+            s.finish("").await;
+        }
+
+        if json_out {
+            let arr: Vec<serde_json::Value> = results
+                .iter()
+                .enumerate()
+                .map(|(i, r)| {
+                    serde_json::json!({
+                        "rank": i + 1,
+                        "score": r.score,
+                        "doc": r.chunk_meta.doc_name,
+                        "chunk": r.chunk_meta.chunk_index,
+                        "text": r.chunk_meta.text,
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&arr)?);
+            return Ok(());
+        }
 
         if results.is_empty() {
             print_warning("No results found.");
