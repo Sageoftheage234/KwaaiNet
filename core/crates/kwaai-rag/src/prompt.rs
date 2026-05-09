@@ -49,9 +49,12 @@ pub fn build_chat_messages(
 }
 
 fn build_context_block(chunks: &[RetrievedChunk], max_chars: usize) -> String {
+    // Reorder to mitigate lost-in-the-middle: put even ranks at start, odd ranks
+    // reversed at end. Best evidence lands at positions 1 and last where LLMs attend most.
+    let reordered = reorder_for_context(chunks);
     let mut out = String::new();
     let mut used = 0usize;
-    for (i, chunk) in chunks.iter().enumerate() {
+    for (i, chunk) in reordered.iter().enumerate() {
         let text = if chunk.chunk_meta.surrounding.len() > chunk.chunk_meta.text.len() {
             &chunk.chunk_meta.surrounding
         } else {
@@ -65,4 +68,14 @@ fn build_context_block(chunks: &[RetrievedChunk], max_chars: usize) -> String {
         used += entry.len();
     }
     out
+}
+
+fn reorder_for_context(chunks: &[RetrievedChunk]) -> Vec<&RetrievedChunk> {
+    let (evens, odds): (Vec<_>, Vec<_>) = chunks
+        .iter()
+        .enumerate()
+        .partition(|(i, _)| i % 2 == 0);
+    let mut result: Vec<&RetrievedChunk> = evens.into_iter().map(|(_, c)| c).collect();
+    result.extend(odds.into_iter().rev().map(|(_, c)| c));
+    result
 }
