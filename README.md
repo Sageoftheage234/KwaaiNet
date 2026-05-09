@@ -55,6 +55,7 @@ Today, a KwaaiNet node can:
 - **Run as a VPK Eve storage node** — initialize an encrypted vector database (`kwaainet storage init --capacity-gb N`), enable VPK mode (`kwaainet vpk enable --mode eve`), and serve vector search to remote Bob nodes over the P2P fabric.
 - **Discover VPK-capable peers** with `kwaainet vpk discover` — finds all Eve nodes on the DHT and returns their PeerId, mode, capacity, and tenant count; no IP addresses involved.
 - **Benchmark storage performance** with `kwaainet vpk bench` — measures local HNSW vs WAN-sharded Eve vs Qdrant (local or cloud) across multiple corpus scales, with recall and upload-time breakdowns.
+- **Inspect live P2P state** with `kwaainet p2p info` (peer ID, observed addresses, NAT verdict), `kwaainet p2p peers list` (active connections tagged direct/relay/bootstrap), and `kwaainet p2p peers find <peer>` (active DHT lookup) — all talking to the local p2pd over IPC without touching the network except for `find`.
 - **RAG knowledge base** — ingest local documents (`txt`, `md`, `pdf`, `docx`, `doc`) into a private vector knowledge base with `kwaainet rag ingest`, then query it with semantic search or run a RAG-augmented chat session. Supports external drives for large corpora.
 - **Folder sync** — `kwaainet rag sync <folder>` continuously mirrors a directory into the knowledge base, detecting new, changed, and deleted files. Pass `--watch` for continuous mode.
 - **OpenAI-compatible RAG server** — `kwaainet rag serve` exposes an OpenAI-compatible HTTP API on port 9090 with RAG baked in. Point OpenWebUI or any OpenAI-compatible client at it as a custom base URL.
@@ -441,7 +442,7 @@ Bob (any node)                         Eve (storage node)
 
 Eve returns only `{id, score}` pairs — vectors never travel back over the wire. Nodes are addressed by PeerId; NAT traversal and routing are handled by the P2P relay layer, never by IP addresses.
 
-### Current status (v0.4.39)
+### Current status (v0.4.40)
 
 | Capability | Status |
 |------------|--------|
@@ -455,6 +456,8 @@ Eve returns only `{id, score}` pairs — vectors never travel back over the wire
 | Eve discovery (`kwaainet vpk discover`) | ✅ Shipped |
 | Self-update preserves CUDA DLLs on Windows (`kwaainet update`) | ✅ Shipped |
 | Performance benchmark (`kwaainet vpk bench`) | ✅ Shipped |
+| P2P live diagnostics (`kwaainet p2p info`, `kwaainet p2p peers list/find`) | ✅ Shipped |
+| Unicode-correct terminal box alignment (emoji + CJK in headers) | ✅ Shipped |
 | RAG knowledge base — ingest, query, chat (`kwaainet rag init/ingest/query/chat/docs`) | ✅ Shipped |
 | Folder sync with change detection (`kwaainet rag sync --watch`) | ✅ Shipped |
 | PDF, DOCX, DOC document parsing (native Rust, no external tools for PDF/DOCX) | ✅ Shipped |
