@@ -375,6 +375,21 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
     // to silently fail).
     let trusted_relays = config.trusted_relays.clone();
 
+    // Reachability is decided by libp2p at runtime: AutoNAT probes the
+    // bootstraps, and if dialback fails AutoRelay reserves a circuit on a
+    // trusted relay. The IDENTIFY discover step polls host.Addrs() until
+    // either a verified direct address or a /p2p-circuit address appears,
+    // then announces whatever the daemon reports.
+    //
+    // The DaemonBuilder's dht_server(true) knob (see kwaai-p2p-daemon/src/
+    // daemon.rs) keeps a node in DHT server mode regardless of AutoNAT
+    // verdict — without it p2pd defaults to client mode until reachability
+    // is confirmed, which means the node never gets advertised into peers'
+    // routing tables and FindPeer lookups for it fail. Not used here for
+    // regular nodes (the default `dht(true)` auto-mode is correct), but
+    // available for bootstrap-style deployments that need to be findable
+    // from t=0.
+
     let builder = P2PDaemon::builder()
         .dht(true)
         .bootstrap(!bootstrap_peers.is_empty())
@@ -526,10 +541,22 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
     // Determine effective throughput using the Petals formula:
     //   effective_tps = min(compute_tps, network_rps × relay_penalty)
     //   network_rps   = download_bps / (hidden_size × 16)
-    // using_relay: true only if we have no explicit address and IDENTIFY
-    // discovery also came up empty. If we have confirmed announce addresses
-    // (directly or via IDENTIFY) we are directly reachable — no relay needed.
-    let using_relay = announce_addr.is_none() && discovered_addrs.is_empty() && !config.no_relay;
+    //
+    // using_relay drives the map's "Direct" vs "Via relay" badge:
+    //   - explicit announce_addr/public_ip  → false (Direct)
+    //   - all discovered addrs are circuits → true  (Via relay)
+    //   - mix of circuit + direct           → false (Direct, relay is fallback)
+    //   - no usable addrs discovered        → true  (intent is relay; the
+    //     node has no public reachability and no relay reservation succeeded
+    //     yet, but treating it as Direct on the map would be misleading
+    //     since libp2p's leaked LAN listen addr is not actually reachable)
+    let using_relay = if announce_addr.is_some() {
+        false
+    } else if discovered_addrs.is_empty() {
+        true
+    } else {
+        all_addrs_are_relay(&discovered_addrs)
+    };
 
     // Measure network bandwidth once at startup (1 MiB Cloudflare probe).
     // Stored so re-announcements can recompute effective_tps without re-probing.
@@ -861,7 +888,7 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
                             warn!("Deferred p2pd restart failed: {}", e);
                         } else {
                             discovered_addrs = new_addrs.clone();
-                            server_info.using_relay = false;
+                            server_info.using_relay = all_addrs_are_relay(&discovered_addrs);
                             pending_restart = None;
                         }
                     }
@@ -1496,10 +1523,17 @@ async fn discover_and_restart_with_announce(
     }
 
     restart_p2pd_with_addrs(
-        &mut daemon, &mut client, &discovered_addrs,
-        host_addr, bootstrap_peers, identity_key_path,
-        p2pd_path, handler_addr, no_relay,
-    ).await?;
+        &mut daemon,
+        &mut client,
+        &discovered_addrs,
+        host_addr,
+        bootstrap_peers,
+        identity_key_path,
+        p2pd_path,
+        handler_addr,
+        no_relay,
+    )
+    .await?;
 
     Ok((daemon, client, discovered_addrs))
 }
@@ -1520,15 +1554,17 @@ async fn collect_observed_addresses(
     client: &mut kwaai_p2p_daemon::P2PClient,
     min_confirmations: usize,
     timeout: Duration,
-    port: u16,
+    _port: u16,
 ) -> Vec<String> {
     use libp2p::Multiaddr;
     use std::collections::HashMap;
 
-    // Poll for the full timeout window so every address has an equal chance
-    // to accumulate confirmations. Returning early as soon as any address hits
-    // the threshold causes addresses that appear later (e.g. the public IP
-    // observed by the second bootstrap peer) to be dropped.
+    // host.Addrs() is libp2p's authoritative set of advertised addresses:
+    //   - AutoNAT-confirmed direct addresses (bootstraps verified inbound dialback)
+    //   - AutoRelay-reserved /p2p-circuit addresses
+    //   - Local listen interfaces (loopback, LAN)
+    // Trust the daemon's filtering — we don't second-guess its port or IP.
+    // We only drop entries that are obviously unusable (loopback/link-local).
     let deadline = tokio::time::Instant::now() + timeout;
     let mut counts: HashMap<String, usize> = HashMap::new();
 
@@ -1539,10 +1575,10 @@ async fn collect_observed_addresses(
                 for addr_bytes in &addrs {
                     if let Ok(ma) = Multiaddr::try_from(addr_bytes.clone()) {
                         let s = ma.to_string();
-                        if let Some(normalized) = normalize_announce_addr(&ma, port) {
-                            let count = counts.entry(normalized.clone()).or_insert(0);
+                        if is_announceable_addr(&ma) {
+                            let count = counts.entry(s.clone()).or_insert(0);
                             *count += 1;
-                            tracing::debug!("  addr={} → {} ({}x)", s, normalized, count);
+                            tracing::debug!("  addr={} ({}x)", s, count);
                         } else {
                             tracing::debug!("  addr={} → filtered", s);
                         }
@@ -1576,60 +1612,90 @@ async fn collect_observed_addresses(
     confirmed
 }
 
-/// Normalise a multiaddr from `host.Addrs()` into an announce address, or
-/// return `None` if it should be filtered.
+/// Decide whether a multiaddr from p2pd's `host.Addrs()` is suitable to
+/// announce.
 ///
-/// `host.Addrs()` contains two kinds of entries:
-///   - Our own listen addresses (loopback, LAN) — always on `our_port`.
-///   - Peer-observed addresses from the libp2p IDENTIFY protocol — our IP as
-///     seen by the peer, but with an ephemeral source port because they were
-///     recorded from our outbound TCP connections to those peers.
+/// Three kinds of entries appear there:
+///   - AutoNAT-confirmed direct: `/ip4/PUB/tcp/PORT` — the bootstraps verified
+///     they can dial us back at this exact address. Announce.
+///   - AutoRelay-reserved circuit: `/.../p2p-circuit` — we hold a reservation
+///     on a relay; peers can reach us through it. Announce.
+///   - Local listen interface: loopback / LAN — only useful inside our box or
+///     LAN, never as a public announce. Drop.
 ///
-/// Private and loopback addresses are accepted as-is — `host.Addrs()` only
-/// ever contains our own interfaces for these ranges, so no port filter is
-/// needed.
+/// We accept any address with a `/p2p-circuit` segment, or one with a
+/// globally-routable IP. RFC1918 / CGNAT / loopback / link-local IPs are
+/// rejected when standalone — they appear in `host.Addrs()` because they are
+/// our local listen interfaces, but they are not reachable from outside the
+/// LAN and announcing them produces Direct-but-unreachable nodes.
 ///
-/// Unspecified (`0.0.0.0`/`::`) and link-local addresses are rejected.
-/// Addresses with no TCP component are rejected.
-fn normalize_announce_addr(ma: &libp2p::Multiaddr, our_port: u16) -> Option<String> {
+/// Operators with unusual topologies (private overlays, port-forwarded
+/// routers, deployments where the public IP genuinely is RFC1918) should set
+/// `public_ip` or `announce_addr` explicitly to bypass IDENTIFY discovery.
+fn is_announceable_addr(ma: &libp2p::Multiaddr) -> bool {
     use libp2p::multiaddr::Protocol;
-    use std::net::IpAddr;
 
-    let mut ip: Option<IpAddr> = None;
-    let mut has_tcp = false;
+    let mut has_circuit = false;
+    let mut routable_ip = false;
+    let mut bad_ip = false;
 
     for proto in ma.iter() {
         match proto {
+            Protocol::P2pCircuit => has_circuit = true,
             Protocol::Ip4(a) => {
-                if a.is_unspecified() || a.is_link_local() {
-                    return None;
+                if !is_globally_routable_v4(a) {
+                    bad_ip = true;
+                } else {
+                    routable_ip = true;
                 }
-                ip = Some(IpAddr::V4(a));
             }
             Protocol::Ip6(a) => {
-                if a.is_unspecified() {
-                    return None;
+                if a.is_unspecified() || a.is_loopback() {
+                    bad_ip = true;
+                } else {
+                    routable_ip = true;
                 }
-                ip = Some(IpAddr::V6(a));
             }
-            Protocol::Tcp(_) => has_tcp = true,
             _ => {}
         }
     }
 
-    let ip = ip?;
-    if !has_tcp {
-        return None;
+    if has_circuit {
+        return true;
     }
+    routable_ip && !bad_ip
+}
 
-    // Always announce on our_port. For peer-observed addresses the port is
-    // ephemeral (outbound NAT mapping) and must be replaced. For listen
-    // addresses our_port is already correct.
-    let normalized = match ip {
-        IpAddr::V4(a) => format!("/ip4/{}/tcp/{}", a, our_port),
-        IpAddr::V6(a) => format!("/ip6/{}/tcp/{}", a, our_port),
-    };
-    Some(normalized)
+/// True iff `a` is plausibly an externally-reachable IPv4 address. Rejects
+/// loopback, link-local, unspecified, broadcast, multicast, and the RFC1918 /
+/// RFC6598 (CGNAT) private ranges.
+///
+/// We deliberately do NOT reject RFC5737 documentation ranges
+/// (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`) here — they are
+/// reserved by IANA but not LAN-private, and our nat-test topology uses
+/// `198.51.100.0/24` as a simulated public network.
+fn is_globally_routable_v4(a: std::net::Ipv4Addr) -> bool {
+    if a.is_unspecified()
+        || a.is_loopback()
+        || a.is_link_local()
+        || a.is_broadcast()
+        || a.is_multicast()
+        || a.is_private()
+    {
+        return false;
+    }
+    let [b0, b1, ..] = a.octets();
+    // RFC6598 carrier-grade NAT: 100.64.0.0/10
+    if b0 == 100 && (64..=127).contains(&b1) {
+        return false;
+    }
+    true
+}
+
+/// Returns true if every confirmed announce address is a relay circuit
+/// (`/p2p-circuit`). Used to set `using_relay` on the DHT record.
+fn all_addrs_are_relay(addrs: &[String]) -> bool {
+    !addrs.is_empty() && addrs.iter().all(|s| s.contains("/p2p-circuit"))
 }
 
 /// Wait for p2pd's own DHT bootstrap to establish connections.

@@ -505,7 +505,7 @@ fn default_identify_min_confirmations() -> usize {
     2
 }
 fn default_identify_timeout_secs() -> u64 {
-    10
+    45
 }
 fn default_rebalance_interval() -> u64 {
     300
