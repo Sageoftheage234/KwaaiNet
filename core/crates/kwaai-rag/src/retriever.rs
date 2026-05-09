@@ -62,7 +62,7 @@ pub async fn retrieve_hybrid(
         .iter()
         .map(|(id, cm)| (*id, cm.doc_name.as_str(), cm.text.as_str()))
         .collect();
-    let bm25 = BM25Index::build(&triples);
+    let bm25 = BM25Index::build_in_ram(&triples)?;
 
     // Run both searches concurrently (semantic + keyword).
     let candidate_k = cfg.top_k * 4;
