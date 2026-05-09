@@ -90,12 +90,21 @@ async fn cmd_init(
         print_box_header("RAG Init");
 
         // Resolve Eve peer ID.
-        let (client, local_peer_id) = crate::vpk::p2p_connect().await?;
-        let eve_peer_id: PeerId = match &eve_peer_id_str {
-            Some(s) => s.parse().context("invalid Eve peer ID")?,
+        // For single-node mode (no --eve-peer-id) we read the local identity directly so
+        // the daemon does not need to be running.  Only connect to p2pd when a remote Eve
+        // peer is specified (multi-node mode).
+        let local_identity = crate::identity::NodeIdentity::load_or_create()?;
+        let local_peer_id = local_identity.peer_id;
+
+        let (eve_peer_id, remote_client) = match &eve_peer_id_str {
+            Some(s) => {
+                let pid: PeerId = s.parse().context("invalid Eve peer ID")?;
+                let (client, _) = crate::vpk::p2p_connect().await?;
+                (pid, Some(client))
+            }
             None => {
                 print_info("No --eve-peer-id given; using local peer ID (single-node mode)");
-                local_peer_id
+                (local_peer_id, None)
             }
         };
 
@@ -130,6 +139,7 @@ async fn cmd_init(
                 .await
                 .context("creating local tenant")?
         } else {
+            let client = remote_client.expect("p2p client required for remote Eve");
             rpc_create_tenant(&client, &eve_peer_id, payload)
                 .await
                 .context("creating Eve tenant")?
