@@ -1343,14 +1343,40 @@ async fn dial_and_wait_for_bootstrap(
 // Incoming RPC stream handler
 // ---------------------------------------------------------------------------
 
+/// Try to decode `bytes` as a protobuf `T`.  If that fails, try again after
+/// stripping a leading unsigned-varint length prefix (Hivemind Python sends
+/// `encode_uvarint(len) + protobuf_bytes`; our own nodes send raw protobuf).
+/// Returns the decoded message and whether the prefix was present (so the
+/// response can be framed consistently).
+fn decode_with_varint_fallback<T: prost::Message + Default>(
+    bytes: &[u8],
+) -> Result<(T, bool)> {
+    // Try 1: raw protobuf (our own nodes)
+    if let Ok(msg) = T::decode(bytes) {
+        return Ok((msg, false));
+    }
+    // Try 2: varint-length-prefixed (Hivemind Python compat)
+    if !bytes.is_empty() {
+        if let Ok((len, rest)) = unsigned_varint::decode::usize(bytes) {
+            if rest.len() >= len {
+                if let Ok(msg) = T::decode(&rest[..len]) {
+                    return Ok((msg, true));
+                }
+            }
+        }
+    }
+    // Both failed — return the raw-decode error for the original bytes
+    T::decode(bytes)
+        .map(|m| (m, false))
+        .map_err(|e| anyhow::anyhow!("{}", e))
+}
+
 async fn handle_rpc_stream(tcp: &mut tokio::net::TcpStream, storage: SharedStorage) -> Result<()> {
     let info = stream::parse_stream_info(tcp)
         .await
         .map_err(|e| anyhow::anyhow!("parse stream info: {}", e))?;
     info!("RPC {}", info.proto);
 
-    // Read all request bytes — senders write raw prost bytes then close their
-    // write side, so read_to_end terminates naturally when p2pd forwards EOF.
     use prost::Message as _;
     use tokio::io::AsyncReadExt as _;
     let mut bytes = Vec::new();
@@ -1358,24 +1384,21 @@ async fn handle_rpc_stream(tcp: &mut tokio::net::TcpStream, storage: SharedStora
         .await
         .map_err(|e| anyhow::anyhow!("read request: {}", e))?;
 
-    // Decode as the specific request type based on the protocol name from StreamInfo.
-    // Incoming callers (Hivemind and our own nodes) send raw prost protobuf — no
-    // custom marker byte — so we dispatch on the protocol string instead.
-    let req = match info.proto.as_str() {
+    let (req, varint_framed) = match info.proto.as_str() {
         "DHTProtocol.rpc_store" => {
-            let r = kwaai_hivemind_dht::protocol::StoreRequest::decode(bytes.as_slice())
+            let (r, vf) = decode_with_varint_fallback::<kwaai_hivemind_dht::protocol::StoreRequest>(&bytes)
                 .map_err(|e| anyhow::anyhow!("decode StoreRequest: {}", e))?;
-            DHTRequest::Store(r)
+            (DHTRequest::Store(r), vf)
         }
         "DHTProtocol.rpc_find" => {
-            let r = kwaai_hivemind_dht::protocol::FindRequest::decode(bytes.as_slice())
+            let (r, vf) = decode_with_varint_fallback::<kwaai_hivemind_dht::protocol::FindRequest>(&bytes)
                 .map_err(|e| anyhow::anyhow!("decode FindRequest: {}", e))?;
-            DHTRequest::Find(r)
+            (DHTRequest::Find(r), vf)
         }
         _ => {
-            let r = kwaai_hivemind_dht::protocol::PingRequest::decode(bytes.as_slice())
+            let (r, vf) = decode_with_varint_fallback::<kwaai_hivemind_dht::protocol::PingRequest>(&bytes)
                 .map_err(|e| anyhow::anyhow!("decode PingRequest: {}", e))?;
-            DHTRequest::Ping(r)
+            (DHTRequest::Ping(r), vf)
         }
     };
 
@@ -1384,13 +1407,22 @@ async fn handle_rpc_stream(tcp: &mut tokio::net::TcpStream, storage: SharedStora
         let resp = g
             .handle_request(req)
             .map_err(|e| anyhow::anyhow!("handle_request: {}", e))?;
-        // Encode as raw prost bytes — no length prefix or marker — matching
-        // the Hivemind wire format that callers expect on the response stream.
         use kwaai_hivemind_dht::codec::DHTResponse;
-        match resp {
+        let raw = match resp {
             DHTResponse::Store(r) => r.encode_to_vec(),
             DHTResponse::Find(r) => r.encode_to_vec(),
             DHTResponse::Ping(r) => r.encode_to_vec(),
+        };
+        // Mirror the request framing so the caller can parse the response.
+        if varint_framed {
+            let mut buf = unsigned_varint::encode::usize_buffer();
+            let prefix = unsigned_varint::encode::usize(raw.len(), &mut buf);
+            let mut framed = Vec::with_capacity(prefix.len() + raw.len());
+            framed.extend_from_slice(prefix);
+            framed.extend_from_slice(&raw);
+            framed
+        } else {
+            raw
         }
     };
 

@@ -3074,6 +3074,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "unicode-width",
+ "unsigned-varint 0.7.2",
  "uuid",
 ]
 
