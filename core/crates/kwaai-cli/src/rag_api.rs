@@ -16,7 +16,7 @@ use kwaai_rag::{
     ingestion::{ingest_text, IngestConfig},
     meta_store::MetaStore,
     prompt::build_chat_messages,
-    retriever::{retrieve, RetrieveConfig},
+    retriever::{retrieve_hybrid, RetrieveConfig},
 };
 
 use crate::display::*;
@@ -221,7 +221,7 @@ async fn do_chat(state: &RagState, req: ChatRequest) -> Result<serde_json::Value
         let chunks = match state.storage_url.as_deref() {
             Some("local") => {
                 let vs = state.local_vs.as_ref().unwrap().clone();
-                retrieve(&query, &cfg, &state.embed, &state.meta, move |emb, k| {
+                retrieve_hybrid(&query, &cfg, &state.embed, &state.meta, move |emb, k| {
                     let vs = vs.clone();
                     Box::pin(async move {
                         let raw = vs.search(tenant_id, &emb, k).await?;
@@ -236,7 +236,7 @@ async fn do_chat(state: &RagState, req: ChatRequest) -> Result<serde_json::Value
             Some(_) => {
                 let http = state.http.clone();
                 let url = state.storage_url.clone().unwrap();
-                retrieve(&query, &cfg, &state.embed, &state.meta, move |emb, k| {
+                retrieve_hybrid(&query, &cfg, &state.embed, &state.meta, move |emb, k| {
                     let h = http.clone();
                     let u = url.clone();
                     Box::pin(async move {
@@ -252,7 +252,7 @@ async fn do_chat(state: &RagState, req: ChatRequest) -> Result<serde_json::Value
             None => {
                 let ep = eve_peer.unwrap();
                 let client = state.client.as_ref().unwrap().clone();
-                retrieve(&query, &cfg, &state.embed, &state.meta, move |emb, k| {
+                retrieve_hybrid(&query, &cfg, &state.embed, &state.meta, move |emb, k| {
                     let c = client.clone();
                     Box::pin(async move {
                         let guard = c.lock().await;
@@ -378,7 +378,7 @@ async fn do_search(
         let chunks = match state.storage_url.as_deref() {
             Some("local") => {
                 let vs = state.local_vs.as_ref().unwrap().clone();
-                retrieve(query, &cfg, &state.embed, &state.meta, move |emb, k| {
+                retrieve_hybrid(query, &cfg, &state.embed, &state.meta, move |emb, k| {
                     let vs = vs.clone();
                     Box::pin(async move {
                         let raw = vs.search(tenant_id, &emb, k).await?;
@@ -393,7 +393,7 @@ async fn do_search(
             Some(_) => {
                 let http = state.http.clone();
                 let url = state.storage_url.clone().unwrap();
-                retrieve(query, &cfg, &state.embed, &state.meta, move |emb, k| {
+                retrieve_hybrid(query, &cfg, &state.embed, &state.meta, move |emb, k| {
                     let h = http.clone();
                     let u = url.clone();
                     Box::pin(async move {
@@ -409,7 +409,7 @@ async fn do_search(
             None => {
                 let ep = state.eve_peer.unwrap();
                 let client = state.client.as_ref().unwrap().clone();
-                retrieve(query, &cfg, &state.embed, &state.meta, move |emb, k| {
+                retrieve_hybrid(query, &cfg, &state.embed, &state.meta, move |emb, k| {
                     let c = client.clone();
                     Box::pin(async move {
                         let guard = c.lock().await;

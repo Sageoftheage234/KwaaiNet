@@ -45,6 +45,10 @@ pub(crate) struct TenantRecord {
 // TenantIndex — in-memory HNSW per tenant
 // ---------------------------------------------------------------------------
 
+/// Corpora below this size use exact brute-force cosine search.
+/// HNSW graph connectivity degrades badly at low vector counts.
+const BRUTE_FORCE_THRESHOLD: usize = 2_000;
+
 /// In-memory HNSW index for one tenant, with a tombstone layer for deletes.
 pub(crate) struct TenantIndex {
     pub hnsw: Hnsw<'static, f32, DistCosine>,
@@ -52,6 +56,8 @@ pub(crate) struct TenantIndex {
     pub id_map: Vec<Option<i64>>,
     /// external doc id → hnsw_internal_id (for upsert / delete).
     pub rev_map: HashMap<i64, usize>,
+    /// Raw vectors for exact search on small corpora (mirrors redb but in-memory).
+    pub stored_vecs: HashMap<i64, Vec<f32>>,
     pub next_id: usize,
     pub dimension: usize,
 }
@@ -64,6 +70,7 @@ impl TenantIndex {
             hnsw,
             id_map: Vec::new(),
             rev_map: HashMap::new(),
+            stored_vecs: HashMap::new(),
             next_id: 0,
             dimension,
         }
@@ -81,6 +88,7 @@ impl TenantIndex {
         }
         self.id_map[hnsw_id] = Some(doc_id);
         self.rev_map.insert(doc_id, hnsw_id);
+        self.stored_vecs.insert(doc_id, embedding.to_vec());
         self.hnsw.insert((embedding, hnsw_id));
     }
 
@@ -89,6 +97,7 @@ impl TenantIndex {
         if let Some(&hnsw_id) = self.rev_map.get(&doc_id) {
             self.id_map[hnsw_id] = None;
             self.rev_map.remove(&doc_id);
+            self.stored_vecs.remove(&doc_id);
             true
         } else {
             false
@@ -101,10 +110,58 @@ impl TenantIndex {
     }
 
     /// ANN search: returns top-k (doc_id, cosine_similarity) pairs.
+    ///
+    /// Falls back to exact brute-force cosine for corpora smaller than BRUTE_FORCE_THRESHOLD
+    /// because HNSW loses recall significantly on small graphs.
     pub fn search(&self, query: &[f32], top_k: usize) -> Vec<(i64, f64)> {
         if self.rev_map.is_empty() || top_k == 0 {
             return vec![];
         }
+        if self.rev_map.len() < BRUTE_FORCE_THRESHOLD {
+            self.search_exact(query, top_k)
+        } else {
+            self.search_hnsw(query, top_k)
+        }
+    }
+
+    /// Exact cosine search over all live vectors — O(n) but precise.
+    fn search_exact(&self, query: &[f32], top_k: usize) -> Vec<(i64, f64)> {
+        let qnorm: f64 = query
+            .iter()
+            .map(|&x| (x as f64) * (x as f64))
+            .sum::<f64>()
+            .sqrt();
+        if qnorm == 0.0 {
+            return vec![];
+        }
+        let mut scored: Vec<(i64, f64)> = self
+            .stored_vecs
+            .iter()
+            .map(|(&doc_id, emb)| {
+                let dot: f64 = query
+                    .iter()
+                    .zip(emb.iter())
+                    .map(|(&q, &d)| (q as f64) * (d as f64))
+                    .sum();
+                let dnorm: f64 = emb
+                    .iter()
+                    .map(|&x| (x as f64) * (x as f64))
+                    .sum::<f64>()
+                    .sqrt();
+                let sim = if dnorm > 0.0 {
+                    (dot / (qnorm * dnorm)).clamp(-1.0, 1.0)
+                } else {
+                    0.0
+                };
+                (doc_id, sim)
+            })
+            .collect();
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(top_k);
+        scored
+    }
+
+    fn search_hnsw(&self, query: &[f32], top_k: usize) -> Vec<(i64, f64)> {
         // Fetch extra candidates to compensate for tombstoned slots.
         let fetch_k = (top_k * 4).max(top_k + 16);
         let neighbours = self.hnsw.search(query, fetch_k, 64);

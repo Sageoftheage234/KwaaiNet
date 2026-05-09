@@ -12,7 +12,7 @@ use kwaai_rag::{
     ingestion::{ingest_text, IngestConfig},
     meta_store::{MetaStore, SyncMeta},
     prompt::{build_chat_messages, ChatMessage},
-    retriever::{retrieve, RetrieveConfig},
+    retriever::{retrieve_hybrid, RetrieveConfig},
 };
 
 use crate::cli::{RagAction, RagArgs};
@@ -377,7 +377,7 @@ async fn cmd_query(query: String, top_k: usize, min_score: f64, json_out: bool) 
         let results = match rag_cfg.storage_url.as_deref() {
             Some("local") => {
                 let vs = Arc::new(open_local_vs(&rag_cfg.data_dir())?);
-                retrieve(&query, &cfg, &embed, &meta, move |embedding, k| {
+                retrieve_hybrid(&query, &cfg, &embed, &meta, move |embedding, k| {
                     let vs = vs.clone();
                     Box::pin(async move {
                         let raw = vs.search(tenant_id, &embedding, k).await?;
@@ -392,7 +392,7 @@ async fn cmd_query(query: String, top_k: usize, min_score: f64, json_out: bool) 
             Some(url) => {
                 let http = reqwest::Client::new();
                 let url = url.to_string();
-                retrieve(&query, &cfg, &embed, &meta, move |embedding, k| {
+                retrieve_hybrid(&query, &cfg, &embed, &meta, move |embedding, k| {
                     let http = http.clone();
                     let url = url.clone();
                     Box::pin(async move {
@@ -409,7 +409,7 @@ async fn cmd_query(query: String, top_k: usize, min_score: f64, json_out: bool) 
                 let eve_peer_id = eve_peer_id(&rag_cfg)?;
                 let (client, _) = crate::vpk::p2p_connect().await?;
                 let client = Arc::new(tokio::sync::Mutex::new(client));
-                retrieve(&query, &cfg, &embed, &meta, move |embedding, k| {
+                retrieve_hybrid(&query, &cfg, &embed, &meta, move |embedding, k| {
                     let client = client.clone();
                     Box::pin(async move {
                         let guard = client.lock().await;
@@ -529,7 +529,7 @@ async fn cmd_chat(top_k: usize, inference_url: String) -> Result<()> {
             // Retrieve context.
             let chunks = if let Some(ref vs) = local_vs {
                 let vs2 = vs.clone();
-                retrieve(&query, &retrieve_cfg, &embed, &meta, move |embedding, k| {
+                retrieve_hybrid(&query, &retrieve_cfg, &embed, &meta, move |embedding, k| {
                     let vs = vs2.clone();
                     Box::pin(async move {
                         let raw = vs.search(tenant_id, &embedding, k).await?;
@@ -543,7 +543,7 @@ async fn cmd_chat(top_k: usize, inference_url: String) -> Result<()> {
             } else if let Some(ref url) = storage_mode {
                 let http2 = http.clone();
                 let url2 = url.clone();
-                retrieve(&query, &retrieve_cfg, &embed, &meta, move |embedding, k| {
+                retrieve_hybrid(&query, &retrieve_cfg, &embed, &meta, move |embedding, k| {
                     let h = http2.clone();
                     let u = url2.clone();
                     Box::pin(async move {
@@ -559,7 +559,7 @@ async fn cmd_chat(top_k: usize, inference_url: String) -> Result<()> {
                 let (client2, eve) = p2p_client.as_ref().unwrap();
                 let client2 = client2.clone();
                 let eve_peer_id = *eve;
-                retrieve(&query, &retrieve_cfg, &embed, &meta, move |embedding, k| {
+                retrieve_hybrid(&query, &retrieve_cfg, &embed, &meta, move |embedding, k| {
                     let c = client2.clone();
                     Box::pin(async move {
                         let guard = c.lock().await;

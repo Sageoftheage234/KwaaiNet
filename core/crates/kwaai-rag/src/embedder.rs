@@ -5,6 +5,12 @@ const DEFAULT_BASE_URL: &str = "http://localhost:11434";
 const DEFAULT_MODEL: &str = "nomic-embed-text";
 pub const EXPECTED_DIM: usize = 768;
 
+/// nomic-embed-text requires asymmetric instruction prefixes for accurate retrieval.
+/// Without them all texts land in general-purpose space and score in a tight 0.62-0.66
+/// cluster with no useful separation between relevant and irrelevant chunks.
+const NOMIC_QUERY_PREFIX: &str = "search_query: ";
+const NOMIC_DOC_PREFIX: &str = "search_document: ";
+
 #[derive(Clone)]
 pub struct EmbedClient {
     http: reqwest::Client,
@@ -35,12 +41,39 @@ impl EmbedClient {
         }
     }
 
+    fn is_nomic(&self) -> bool {
+        self.model.contains("nomic")
+    }
+
+    /// Embed a single search query. Adds the `search_query:` prefix for nomic-embed-text.
     pub async fn embed_one(&self, text: &str) -> Result<Vec<f32>> {
-        let mut batch = self.embed_batch(&[text]).await?;
+        let owned;
+        let text = if self.is_nomic() {
+            owned = format!("{NOMIC_QUERY_PREFIX}{text}");
+            owned.as_str()
+        } else {
+            text
+        };
+        let mut batch = self.embed_raw(&[text]).await?;
         batch.pop().context("empty embedding response")
     }
 
+    /// Embed a batch of document chunks. Adds the `search_document:` prefix for nomic-embed-text.
     pub async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+        if self.is_nomic() {
+            let prefixed: Vec<String> = texts
+                .iter()
+                .map(|t| format!("{NOMIC_DOC_PREFIX}{t}"))
+                .collect();
+            let refs: Vec<&str> = prefixed.iter().map(|s| s.as_str()).collect();
+            self.embed_raw(&refs).await
+        } else {
+            self.embed_raw(texts).await
+        }
+    }
+
+    /// Raw embed call — no prefix manipulation.
+    async fn embed_raw(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
         let url = format!("{}/api/embed", self.base_url);
         let body = EmbedRequest {
             model: &self.model,
@@ -64,9 +97,10 @@ impl EmbedClient {
         Ok(parsed.embeddings)
     }
 
-    /// Probe Ollama and verify the embedding dimension.  Call at startup.
+    /// Probe Ollama and verify the embedding dimension. Call at startup.
     pub async fn check_dim(&self) -> Result<()> {
-        let emb = self.embed_one("probe").await?;
+        let emb = self.embed_raw(&["probe"]).await?;
+        let emb = emb.into_iter().next().context("empty probe response")?;
         if emb.len() != EXPECTED_DIM {
             bail!(
                 "Embedding model '{}' returns {} dimensions; expected {}. \

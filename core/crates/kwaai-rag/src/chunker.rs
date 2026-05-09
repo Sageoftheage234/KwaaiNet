@@ -4,6 +4,9 @@ use sha2::{Digest, Sha256};
 pub struct ChunkConfig {
     pub chunk_size: usize,
     pub chunk_overlap: usize,
+    /// Chunks shorter than this (in chars) are dropped — prevents short tail
+    /// fragments from dominating retrieval as noisy high-cosine attractors.
+    pub min_chunk_len: usize,
 }
 
 impl Default for ChunkConfig {
@@ -11,6 +14,7 @@ impl Default for ChunkConfig {
         Self {
             chunk_size: 800,
             chunk_overlap: 200,
+            min_chunk_len: 100,
         }
     }
 }
@@ -59,16 +63,18 @@ pub fn split_text(text: &str, doc_name: &str, cfg: &ChunkConfig) -> Vec<Chunk> {
         let surr_end = (end + surr_half).min(total);
         let surrounding: String = chars[surr_start..surr_end].iter().collect();
 
-        chunks.push(Chunk {
-            id: chunk_id(doc_name, index),
-            text: text_str,
-            surrounding,
-            doc_name: doc_name.to_string(),
-            chunk_index: index,
-            page_num: None,
-        });
+        if text_str.chars().count() >= cfg.min_chunk_len {
+            chunks.push(Chunk {
+                id: chunk_id(doc_name, index),
+                text: text_str,
+                surrounding,
+                doc_name: doc_name.to_string(),
+                chunk_index: index,
+                page_num: None,
+            });
+            index += 1;
+        }
 
-        index += 1;
         pos += step;
     }
     chunks
@@ -91,6 +97,7 @@ mod tests {
         let cfg = ChunkConfig {
             chunk_size: 10,
             chunk_overlap: 2,
+            min_chunk_len: 5,
         };
         let chunks = split_text("Hello world foo bar baz", "test.txt", &cfg);
         assert!(!chunks.is_empty());

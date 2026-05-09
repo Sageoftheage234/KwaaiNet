@@ -1,3 +1,4 @@
+pub mod bm25;
 pub mod chunker;
 pub mod document;
 pub mod embedder;
