@@ -377,7 +377,7 @@ async fn peers_connect(
         match client
             .call_unary_handler(
                 &dest_peer.to_bytes(),
-                crate::p2p_hello::HELLO_PROTO,
+                kwaai_p2p_daemon::hello::HELLO_PROTO,
                 msg.as_bytes(),
             )
             .await

@@ -1197,7 +1197,7 @@ pub enum PeersAction {
     /// and replies with `b"ok"`), but with `--proto` works as a generic
     /// diagnostic for any registered handler. Doubles as the in-tree
     /// example of how to invoke a custom unary protocol over the libp2p
-    /// fabric — see `p2p_hello.rs` for the handler.
+    /// fabric — see `kwaai_p2p_daemon::hello` for the handler.
     ///
     /// Specify exactly one payload source: --message, --payload-hex,
     /// --payload-bin, or --stdin. The bytes are sent as-is; no encoding,
@@ -1210,7 +1210,7 @@ pub enum PeersAction {
         /// Protocol ID. Default is the hello protocol (a peer running
         /// kwaainet logs the payload and replies with `b"ok"`); for any
         /// other in-tree or third-party unary protocol, name it here.
-        #[arg(long, default_value = HELLO_PROTO_DEFAULT)]
+        #[arg(long, default_value = kwaai_p2p_daemon::hello::HELLO_PROTO)]
         proto: String,
 
         /// Send the bytes of this UTF-8 string as the payload. Identical
@@ -1243,5 +1243,3 @@ pub enum PeersAction {
         timeout: u64,
     },
 }
-
-const HELLO_PROTO_DEFAULT: &str = "/kwaai/p2p/hello/1.0.0";

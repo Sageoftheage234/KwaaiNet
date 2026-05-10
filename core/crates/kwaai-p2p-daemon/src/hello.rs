@@ -8,19 +8,28 @@
 //! fabric — see [`make_handler`] for the server side.
 //!
 //! Sending side has no helper here on purpose: callers go through
-//! [`P2PClient::call_unary_handler`] directly with the bytes they want to
-//! send. `peers send --message <text>` and `peers send --payload-hex <hex>`
-//! produce identical wire output for the same bytes — that's the no-magic
-//! property we want from a diagnostic tool.
+//! [`crate::P2PClient::call_unary_handler`] directly with the bytes they
+//! want to send. `peers send --message <text>` and
+//! `peers send --payload-hex <hex>` (in `kwaainet`) produce identical wire
+//! output for the same bytes — that's the no-magic property we want from a
+//! diagnostic tool.
+//!
+//! Lives in `kwaai-p2p-daemon` rather than `kwaai-cli` because the protocol
+//! is daemon-shaped infrastructure (handler registered via
+//! [`crate::P2PClient::add_unary_handler`], called via
+//! [`crate::P2PClient::call_unary_handler`]) and the CLI is just one
+//! caller. Future code that wants to participate in the hello protocol —
+//! whether to register the handler, to invoke it, or to reference its
+//! protocol ID — imports from here.
 
-use kwaai_p2p_daemon::error::Result as DaemonResult;
+use crate::error::Result;
 use std::pin::Pin;
 use tracing::info;
 
 /// libp2p protocol string registered with the p2p daemon.
 pub const HELLO_PROTO: &str = "/kwaai/p2p/hello/1.0.0";
 
-/// Build a unary handler suitable for [`P2PClient::add_unary_handler`].
+/// Build a unary handler suitable for [`crate::P2PClient::add_unary_handler`].
 ///
 /// Decodes the request payload as UTF-8, prints it to stdout (so it's
 /// visible in `docker logs` even with default tracing filters), and emits a
@@ -32,7 +41,7 @@ pub const HELLO_PROTO: &str = "/kwaai/p2p/hello/1.0.0";
 /// operator can see the protocol was misused.
 #[allow(clippy::type_complexity)]
 pub fn make_handler(
-) -> impl Fn(Vec<u8>) -> Pin<Box<dyn std::future::Future<Output = DaemonResult<Vec<u8>>> + Send>>
+) -> impl Fn(Vec<u8>) -> Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>>> + Send>>
        + Send
        + Sync
        + 'static {

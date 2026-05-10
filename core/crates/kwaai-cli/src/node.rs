@@ -439,8 +439,8 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
     // node's "while we're alive, please answer these" surface area.
     client
         .add_unary_handler(
-            crate::p2p_hello::HELLO_PROTO,
-            crate::p2p_hello::make_handler(),
+            kwaai_p2p_daemon::hello::HELLO_PROTO,
+            kwaai_p2p_daemon::hello::make_handler(),
             false,
         )
         .await
