@@ -201,6 +201,12 @@ pub struct StartArgs {
     #[arg(long)]
     pub announce_addr: Option<String>,
 
+    /// Path to a libp2p-protobuf-encoded identity key file.
+    /// Overrides the default `~/.kwaainet/identity.key`. Used by bootstrap
+    /// deployments to keep their existing RSA peer IDs across restarts.
+    #[arg(long)]
+    pub identity_key: Option<std::path::PathBuf>,
+
     /// Disable automatic relay
     #[arg(long)]
     pub no_relay: bool,

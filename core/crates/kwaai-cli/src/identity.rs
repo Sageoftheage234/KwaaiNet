@@ -40,16 +40,29 @@ impl NodeIdentity {
     pub fn load_or_create() -> Result<Self> {
         let path = Self::key_file_path();
         if path.exists() {
-            let bytes = std::fs::read(&path)
-                .with_context(|| format!("reading identity key: {}", path.display()))?;
-            let keypair = Keypair::from_protobuf_encoding(&bytes)
-                .context("decoding identity key — file may be corrupted")?;
-            let peer_id = keypair.public().to_peer_id();
-            info!("Loaded persistent identity: {}", peer_id.to_base58());
-            Ok(Self { keypair, peer_id })
+            Self::load_from(&path)
         } else {
             Self::generate_and_save()
         }
+    }
+
+    /// Load an identity from an explicit libp2p-protobuf-encoded key file.
+    /// Unlike `load_or_create`, this does not fall back to generating a new
+    /// key — used for bootstrap deployments that mount a pre-existing key
+    /// (e.g. an RSA `bootstrap_keyN.bin`).
+    pub fn load_from(path: &Path) -> Result<Self> {
+        let bytes = std::fs::read(path)
+            .with_context(|| format!("reading identity key: {}", path.display()))?;
+        let keypair = Keypair::from_protobuf_encoding(&bytes).context(
+            "decoding identity key — file may be corrupted or use an unsupported key type",
+        )?;
+        let peer_id = keypair.public().to_peer_id();
+        info!(
+            "Loaded identity from {}: {}",
+            path.display(),
+            peer_id.to_base58()
+        );
+        Ok(Self { keypair, peer_id })
     }
 
     /// Generate a fresh Ed25519 keypair, save it, and return the identity

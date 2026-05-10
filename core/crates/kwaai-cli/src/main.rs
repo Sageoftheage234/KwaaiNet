@@ -156,6 +156,9 @@ async fn main() -> Result<()> {
             if let Some(a) = args.announce_addr {
                 cfg.announce_addr = Some(a);
             }
+            if let Some(p) = args.identity_key {
+                cfg.identity_key = Some(p);
+            }
             if args.no_relay {
                 cfg.no_relay = true;
             }
