@@ -48,7 +48,7 @@ struct RagState {
     http: reqwest::Client,
 }
 
-pub async fn run(port: u16, inference_url: String, top_k: usize) -> Result<()> {
+pub async fn run(port: u16, inference_url: String, top_k: usize, kb: String) -> Result<()> {
     #[cfg(not(feature = "storage"))]
     bail!("RAG requires the 'storage' feature. Rebuild with: cargo build --features storage");
 
@@ -59,8 +59,9 @@ pub async fn run(port: u16, inference_url: String, top_k: usize) -> Result<()> {
 
         let cfg = KwaaiNetConfig::load_or_create()?;
         let rag = cfg
-            .rag
-            .context("RAG not initialised. Run: kwaainet rag init")?;
+            .get_rag_kb(&kb)
+            .cloned()
+            .with_context(|| format!("KB '{kb}' not initialised. Run: kwaainet rag init --name {kb}"))?;
 
         let tenant_id: Uuid = rag.tenant_id.as_deref().context("no tenant_id")?.parse()?;
         let storage_url = rag.storage_url.clone();

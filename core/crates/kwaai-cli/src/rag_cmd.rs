@@ -29,42 +29,52 @@ use crate::storage_rpc::{
 pub async fn run(args: RagArgs) -> Result<()> {
     match args.action {
         RagAction::Init {
+            name,
             embed_model,
             rag_dir,
-        } => cmd_init(embed_model, rag_dir).await,
+        } => cmd_init(name, embed_model, rag_dir).await,
 
-        RagAction::ConnectEve { peer_id, url } => cmd_connect_eve(peer_id, url).await,
+        RagAction::List => cmd_list().await,
+
+        RagAction::ConnectEve { peer_id, url, kb } => cmd_connect_eve(peer_id, url, kb).await,
 
         RagAction::Ingest {
             file,
             doc_name,
             chunk_size,
             chunk_overlap,
-        } => cmd_ingest(file, doc_name, chunk_size, chunk_overlap).await,
+            kb,
+        } => cmd_ingest(file, doc_name, chunk_size, chunk_overlap, kb).await,
 
         RagAction::Query {
             text,
             top_k,
             min_score,
             json,
-        } => cmd_query(text, top_k, min_score, json).await,
+            kb,
+            understand,
+            inference_url,
+        } => cmd_query(text, top_k, min_score, json, kb, understand, inference_url).await,
 
         RagAction::Chat {
             top_k,
             inference_url,
-        } => cmd_chat(top_k, inference_url).await,
+            kb,
+            understand,
+        } => cmd_chat(top_k, inference_url, kb, understand).await,
 
-        RagAction::Docs => cmd_docs().await,
+        RagAction::Docs { kb } => cmd_docs(kb).await,
 
-        RagAction::DeleteDoc { name, yes } => cmd_delete_doc(name, yes).await,
+        RagAction::DeleteDoc { name, yes, kb } => cmd_delete_doc(name, yes, kb).await,
 
-        RagAction::Destroy { yes } => cmd_destroy(yes).await,
+        RagAction::Destroy { yes, kb } => cmd_destroy(yes, kb).await,
 
         RagAction::Serve {
             port,
             inference_url,
             top_k,
-        } => crate::rag_api::run(port, inference_url, top_k).await,
+            kb,
+        } => crate::rag_api::run(port, inference_url, top_k, kb).await,
 
         RagAction::Sync {
             folder,
@@ -72,22 +82,35 @@ pub async fn run(args: RagArgs) -> Result<()> {
             delete,
             watch,
             interval,
-        } => cmd_sync(folder, extensions, delete, watch, interval).await,
+            kb,
+        } => cmd_sync(folder, extensions, delete, watch, interval, kb).await,
     }
 }
 
 // ── init ──────────────────────────────────────────────────────────────────────
 
-async fn cmd_init(embed_model: String, rag_dir: Option<std::path::PathBuf>) -> Result<()> {
+async fn cmd_init(
+    name: String,
+    embed_model: String,
+    rag_dir: Option<std::path::PathBuf>,
+) -> Result<()> {
     #[cfg(not(feature = "storage"))]
     bail!("RAG requires the 'storage' feature. Rebuild with: cargo build --features storage");
 
     #[cfg(feature = "storage")]
     {
-        print_box_header("RAG Init");
+        print_box_header(&format!("RAG Init ({})", name));
 
-        let rag_data_dir_str = rag_dir.as_ref().map(|p| p.to_string_lossy().into_owned());
-        let data_dir = rag_dir.unwrap_or_else(|| kwaainet_dir().join("rag"));
+        let data_dir = rag_dir
+            .clone()
+            .unwrap_or_else(|| RagConfig::default_data_dir_for(&name));
+        // For non-default KBs, always persist the resolved path so data_dir() works
+        // correctly when the KB name is not available (e.g., in load_rag_config_for).
+        let rag_data_dir_str = if name == "default" {
+            rag_dir.as_ref().map(|p| p.to_string_lossy().into_owned())
+        } else {
+            Some(data_dir.to_string_lossy().into_owned())
+        };
 
         // Probe embedding model before touching storage.
         let embed = EmbedClient::new(None, Some(embed_model.clone()));
@@ -95,14 +118,12 @@ async fn cmd_init(embed_model: String, rag_dir: Option<std::path::PathBuf>) -> R
         embed.check_dim().await?;
         print_success("Embedding model OK (768 dimensions)");
 
-        // If already initialised with local storage, skip DB creation (idempotent).
-        // Verify the tenant actually exists in the DB — it may be missing if the DB
-        // was wiped externally or the node was upgraded from an older build that used
-        // a per-tenant DB file instead of the shared metadata.redb.
+        // If already initialised, verify the tenant exists in the DB (idempotent).
+        // If the DB was wiped or rebuilt from an old format, fall through to recreate.
         let existing_cfg = KwaaiNetConfig::load_or_create()?;
-        if let Some(ref rag) = existing_cfg.rag {
-            if rag.storage_url.as_deref() == Some("local") {
-                if let Some(ref tid) = rag.tenant_id {
+        if let Some(existing_rag) = existing_cfg.get_rag_kb(&name) {
+            if existing_rag.storage_url.as_deref() == Some("local") {
+                if let Some(ref tid) = existing_rag.tenant_id {
                     let tenant_id: Uuid = tid.parse().context("invalid tenant_id in config")?;
                     let tenant_in_db = if let Ok(db) = kwaai_storage::StorageDb::open(&data_dir) {
                         let tm = kwaai_storage::TenantManager::new(db);
@@ -111,79 +132,111 @@ async fn cmd_init(embed_model: String, rag_dir: Option<std::path::PathBuf>) -> R
                         false
                     };
                     if tenant_in_db {
-                        print_info(&format!("Knowledge base:  {}", data_dir.display()));
+                        print_info(&format!("Knowledge base '{}':  {}", name, data_dir.display()));
                         print_success(&format!(
                             "Already initialised (tenant {tenant_id}) — embedding model updated."
                         ));
-                        // Update embed model in case it changed.
                         let mut cfg = existing_cfg;
-                        if let Some(ref mut r) = cfg.rag {
+                        if let Some(r) = cfg.rag_kbs.get_mut(&name).or(cfg.rag.as_mut()) {
                             r.embed_model = embed_model;
                             if rag_data_dir_str.is_some() {
                                 r.rag_data_dir = rag_data_dir_str;
                             }
                         }
                         cfg.save()?;
-                        println!("  Next:  kwaainet rag ingest <file>");
+                        println!("  Next:  kwaainet rag ingest <file> --kb {name}");
                         return Ok(());
                     }
-                    // Tenant missing from DB — fall through to recreate it.
                     print_warning("Tenant record missing from local DB — recreating knowledge base.");
                 }
             }
         }
 
-        // Fresh init: create local embedded vector store + tenant — no network required.
+        // Fresh init: create local embedded vector store + tenant.
         let db = kwaai_storage::StorageDb::open(&data_dir).context("opening local vector store")?;
         let tm = kwaai_storage::TenantManager::new(db);
         let local_peer_id = crate::identity::NodeIdentity::load_or_create()?.peer_id;
         let info = tm
-            .create(&local_peer_id.to_base58(), 0, Some("kwaai-rag"), 768)
+            .create(&local_peer_id.to_base58(), 0, Some(&format!("kwaai-rag/{name}")), 768)
             .await
             .context("creating local tenant")?;
         let tenant_id = info.tenant_id;
 
-        // Create chunk-metadata store.
         MetaStore::open(&data_dir, tenant_id)?;
-        print_info(&format!("Knowledge base:  {}", data_dir.display()));
+        print_info(&format!("Knowledge base '{}':  {}", name, data_dir.display()));
 
-        // Save config — storage_url = "local" means in-process StorageDb.
         let mut cfg = KwaaiNetConfig::load_or_create()?;
-        cfg.rag = Some(RagConfig {
-            tenant_id: Some(tenant_id.to_string()),
-            eve_peer_id: None,
-            embed_model,
-            inference_url: "http://localhost:8080".to_string(),
-            top_k: 5,
-            storage_url: Some("local".to_string()),
-            rag_data_dir: rag_data_dir_str,
-        });
+        cfg.set_rag_kb(
+            &name,
+            RagConfig {
+                tenant_id: Some(tenant_id.to_string()),
+                eve_peer_id: None,
+                embed_model,
+                inference_url: "http://localhost:8080".to_string(),
+                top_k: 5,
+                storage_url: Some("local".to_string()),
+                rag_data_dir: rag_data_dir_str,
+            },
+        );
         cfg.save()?;
 
-        print_success(&format!("Knowledge base initialised  (tenant {tenant_id})"));
-        println!("  Next:  kwaainet rag ingest <file>");
-        println!("  Later: kwaainet rag connect-eve <peer-id>  # outsource to an Eve node");
+        print_success(&format!("Knowledge base '{}' initialised  (tenant {tenant_id})", name));
+        if name == "default" {
+            println!("  Next:  kwaainet rag ingest <file>");
+        } else {
+            println!("  Next:  kwaainet rag ingest <file> --kb {name}");
+        }
+        println!("  Later: kwaainet rag connect-eve <peer-id> --kb {name}  # outsource to Eve");
         Ok(())
     }
 }
 
+// ── list ─────────────────────────────────────────────────────────────────────
+
+async fn cmd_list() -> Result<()> {
+    let cfg = KwaaiNetConfig::load_or_create()?;
+    let names = cfg.rag_kb_names();
+    if names.is_empty() {
+        print_info("No knowledge bases initialised. Run: kwaainet rag init");
+        return Ok(());
+    }
+    print_box_header(&format!("{} knowledge base(s)", names.len()));
+    for name in &names {
+        if let Some(kb) = cfg.get_rag_kb(name) {
+            let storage = match kb.storage_url.as_deref() {
+                Some("local") => "local".to_string(),
+                Some(url) => format!("HTTP ({url})"),
+                None => kb
+                    .eve_peer_id
+                    .as_deref()
+                    .map(|p| format!("P2P ({}…)", &p[..8.min(p.len())]))
+                    .unwrap_or_else(|| "unconfigured".to_string()),
+            };
+            let data_dir = kb.data_dir();
+            println!("  • {name}  [{storage}]  {}", data_dir.display());
+        }
+    }
+    Ok(())
+}
+
 // ── connect-eve ───────────────────────────────────────────────────────────────
 
-async fn cmd_connect_eve(peer_id: String, url: Option<String>) -> Result<()> {
+async fn cmd_connect_eve(peer_id: String, url: Option<String>, kb: String) -> Result<()> {
     let eve: PeerId = peer_id.parse().context("invalid peer ID")?;
 
     let mut cfg = KwaaiNetConfig::load_or_create()?;
     let rag = cfg
-        .rag
-        .as_mut()
-        .context("RAG not initialised. Run: kwaainet rag init")?;
+        .rag_kbs
+        .get_mut(&kb)
+        .or(if kb == "default" { cfg.rag.as_mut() } else { None })
+        .with_context(|| format!("KB '{kb}' not initialised. Run: kwaainet rag init --name {kb}"))?;
 
     rag.eve_peer_id = Some(peer_id);
     // url = Some("http://...") for HTTP transport, None for P2P RPC.
     rag.storage_url = url.clone();
     cfg.save()?;
 
-    print_box_header("RAG Connect Eve");
+    print_box_header(&format!("RAG Connect Eve ({})", kb));
     print_success(&format!("Eve: {eve}"));
     if let Some(ref u) = url {
         print_info(&format!("Transport: HTTP ({u})"));
@@ -204,13 +257,14 @@ async fn cmd_ingest(
     doc_name: Option<String>,
     chunk_size: usize,
     chunk_overlap: usize,
+    kb: String,
 ) -> Result<()> {
     #[cfg(not(feature = "storage"))]
     bail!("RAG requires the 'storage' feature.");
 
     #[cfg(feature = "storage")]
     {
-        let (rag_cfg, tenant_id) = load_rag_config()?;
+        let (rag_cfg, tenant_id) = load_rag_config_for(&kb)?;
 
         let doc_name = doc_name.unwrap_or_else(|| {
             file.file_name()
@@ -354,104 +408,132 @@ async fn try_serve_query(
     }
 }
 
-async fn cmd_query(query: String, top_k: usize, min_score: f64, json_out: bool) -> Result<()> {
+async fn cmd_query(
+    query: String,
+    top_k: usize,
+    min_score: f64,
+    json_out: bool,
+    kb: String,
+    understand: bool,
+    inference_url: Option<String>,
+) -> Result<()> {
     #[cfg(not(feature = "storage"))]
     bail!("RAG requires the 'storage' feature.");
 
     #[cfg(feature = "storage")]
     {
-        let (rag_cfg, tenant_id) = load_rag_config()?;
-
-        // If local mode, try proxying through a running `rag serve` first.
-        // This avoids the redb exclusive-lock conflict when the server is up.
-        if rag_cfg.storage_url.as_deref() == Some("local") {
-            match try_serve_query(&query, top_k, min_score, 9090).await {
-                Ok(Some(results)) => return render_query_results(&query, &results, json_out),
-                Ok(None) => {} // server not running, fall through to direct DB access
-                Err(e) => return Err(e),
-            }
-        }
-
-        let embed = EmbedClient::new(None, Some(rag_cfg.embed_model.clone()));
-        let meta = MetaStore::open(&rag_cfg.data_dir(), tenant_id)?;
-
-        let cfg = RetrieveConfig {
-            top_k,
-            min_score,
-            use_sentence_window: false,
-        };
-
-        let spinner = if json_out {
-            None
+        let global_cfg = KwaaiNetConfig::load_or_create()?;
+        let kb_names: Vec<String> = if kb == "all" {
+            global_cfg.rag_kb_names()
         } else {
-            Some(crate::progress::Spinner::start("Retrieving…"))
+            vec![kb.clone()]
         };
-        let results = match rag_cfg.storage_url.as_deref() {
-            Some("local") => {
-                let vs = Arc::new(open_local_vs(&rag_cfg.data_dir())?);
-                retrieve_hybrid(&query, &cfg, &embed, &meta, move |embedding, k| {
-                    let vs = vs.clone();
-                    Box::pin(async move {
-                        let raw = vs.search(tenant_id, &embedding, k).await?;
-                        Ok(raw.into_iter().map(|r| (r.id, r.score)).collect())
-                    })
-                        as Pin<
-                            Box<dyn std::future::Future<Output = Result<Vec<(i64, f64)>>> + Send>,
-                        >
-                })
-                .await?
-            }
-            Some(url) => {
-                let http = reqwest::Client::new();
-                let url = url.to_string();
-                retrieve_hybrid(&query, &cfg, &embed, &meta, move |embedding, k| {
-                    let http = http.clone();
-                    let url = url.clone();
-                    Box::pin(async move {
-                        let raw = http_search_vectors(&http, &url, tenant_id, embedding, k).await?;
-                        Ok(raw.into_iter().map(|r| (r.id, r.score)).collect())
-                    })
-                        as Pin<
-                            Box<dyn std::future::Future<Output = Result<Vec<(i64, f64)>>> + Send>,
-                        >
-                })
-                .await?
-            }
-            None => {
-                let eve_peer_id = eve_peer_id(&rag_cfg)?;
-                let (client, _) = crate::vpk::p2p_connect().await?;
-                let client = Arc::new(tokio::sync::Mutex::new(client));
-                retrieve_hybrid(&query, &cfg, &embed, &meta, move |embedding, k| {
-                    let client = client.clone();
-                    Box::pin(async move {
-                        let guard = client.lock().await;
-                        let raw =
-                            rpc_search_vectors(&*guard, &eve_peer_id, tenant_id, embedding, k)
-                                .await?;
-                        Ok(raw.into_iter().map(|r| (r.id, r.score)).collect())
-                    })
-                        as Pin<
-                            Box<dyn std::future::Future<Output = Result<Vec<(i64, f64)>>> + Send>,
-                        >
-                })
-                .await?
-            }
-        };
-        if let Some(s) = spinner {
-            s.finish("").await;
+        if kb_names.is_empty() {
+            bail!("No knowledge bases initialised. Run: kwaainet rag init");
         }
 
-        let arr: Vec<serde_json::Value> = results
+        // Single local KB: try proxying through a running `rag serve` first.
+        if kb_names.len() == 1 {
+            if let Some(rag_cfg) = global_cfg.get_rag_kb(&kb_names[0]) {
+                if rag_cfg.storage_url.as_deref() == Some("local") {
+                    match try_serve_query(&query, top_k, min_score, 9090).await {
+                        Ok(Some(results)) => return render_query_results(&query, &results, json_out),
+                        Ok(None) => {}
+                        Err(e) => return Err(e),
+                    }
+                }
+            }
+        }
+
+        let retrieve_cfg = RetrieveConfig { top_k, min_score, use_sentence_window: false };
+        let spinner = if json_out { None } else { Some(crate::progress::Spinner::start("Retrieving…")) };
+
+        let mut all_results: Vec<kwaai_rag::retriever::RetrievedChunk> = vec![];
+
+        for kb_name in &kb_names {
+            let (rag_cfg, tenant_id) = match load_rag_config_for(kb_name) {
+                Ok(v) => v,
+                Err(e) => { tracing::warn!("skipping KB '{kb_name}': {e}"); continue; }
+            };
+            let embed = EmbedClient::new(None, Some(rag_cfg.embed_model.clone()));
+            let meta = MetaStore::open(&rag_cfg.data_dir(), tenant_id)?;
+            let infer_url = inference_url.clone().unwrap_or_else(|| rag_cfg.inference_url.clone());
+
+            let mut chunks = match rag_cfg.storage_url.as_deref() {
+                Some("local") => {
+                    let vs = Arc::new(open_local_vs(&rag_cfg.data_dir())?);
+                    if understand {
+                        kwaai_rag::query_understanding::retrieve_with_understanding(
+                            &query, &retrieve_cfg, &embed, &meta, &infer_url,
+                            move |emb, k| {
+                                let vs = vs.clone();
+                                Box::pin(async move {
+                                    let raw = vs.search(tenant_id, &emb, k).await?;
+                                    Ok(raw.into_iter().map(|r| (r.id, r.score)).collect())
+                                }) as Pin<Box<dyn std::future::Future<Output = Result<Vec<(i64, f64)>>> + Send>>
+                            },
+                        ).await?
+                    } else {
+                        retrieve_hybrid(&query, &retrieve_cfg, &embed, &meta, move |emb, k| {
+                            let vs = vs.clone();
+                            Box::pin(async move {
+                                let raw = vs.search(tenant_id, &emb, k).await?;
+                                Ok(raw.into_iter().map(|r| (r.id, r.score)).collect())
+                            }) as Pin<Box<dyn std::future::Future<Output = Result<Vec<(i64, f64)>>> + Send>>
+                        }).await?
+                    }
+                }
+                Some(url) => {
+                    let http = reqwest::Client::new();
+                    let url = url.to_string();
+                    retrieve_hybrid(&query, &retrieve_cfg, &embed, &meta, move |emb, k| {
+                        let http = http.clone(); let url = url.clone();
+                        Box::pin(async move {
+                            let raw = http_search_vectors(&http, &url, tenant_id, emb, k).await?;
+                            Ok(raw.into_iter().map(|r| (r.id, r.score)).collect())
+                        }) as Pin<Box<dyn std::future::Future<Output = Result<Vec<(i64, f64)>>> + Send>>
+                    }).await?
+                }
+                None => {
+                    let ep = eve_peer_id(&rag_cfg)?;
+                    let (client, _) = crate::vpk::p2p_connect().await?;
+                    let client = Arc::new(tokio::sync::Mutex::new(client));
+                    retrieve_hybrid(&query, &retrieve_cfg, &embed, &meta, move |emb, k| {
+                        let client = client.clone();
+                        Box::pin(async move {
+                            let guard = client.lock().await;
+                            let raw = rpc_search_vectors(&*guard, &ep, tenant_id, emb, k).await?;
+                            Ok(raw.into_iter().map(|r| (r.id, r.score)).collect())
+                        }) as Pin<Box<dyn std::future::Future<Output = Result<Vec<(i64, f64)>>> + Send>>
+                    }).await?
+                }
+            };
+            if kb_names.len() > 1 {
+                for c in &mut chunks { c.source_kb = Some(kb_name.clone()); }
+            }
+            all_results.append(&mut chunks);
+        }
+
+        all_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        all_results.truncate(top_k);
+
+        if let Some(s) = spinner { s.finish("").await; }
+
+        let arr: Vec<serde_json::Value> = all_results
             .iter()
             .enumerate()
             .map(|(i, r)| {
-                serde_json::json!({
+                let mut v = serde_json::json!({
                     "rank": i + 1,
                     "score": r.score,
                     "doc": r.chunk_meta.doc_name,
                     "chunk": r.chunk_meta.chunk_index,
                     "text": r.chunk_meta.text,
-                })
+                });
+                if let Some(ref kb_name) = r.source_kb {
+                    v["kb"] = serde_json::json!(kb_name);
+                }
+                v
             })
             .collect();
         render_query_results(&query, &arr, json_out)
@@ -484,13 +566,13 @@ fn render_query_results(query: &str, results: &[serde_json::Value], json_out: bo
 
 // ── chat ──────────────────────────────────────────────────────────────────────
 
-async fn cmd_chat(top_k: usize, inference_url: String) -> Result<()> {
+async fn cmd_chat(top_k: usize, inference_url: String, kb: String, understand: bool) -> Result<()> {
     #[cfg(not(feature = "storage"))]
     bail!("RAG requires the 'storage' feature.");
 
     #[cfg(feature = "storage")]
     {
-        let (rag_cfg, tenant_id) = load_rag_config()?;
+        let (rag_cfg, tenant_id) = load_rag_config_for(&kb)?;
 
         let embed = EmbedClient::new(None, Some(rag_cfg.embed_model.clone()));
         let meta = MetaStore::open(&rag_cfg.data_dir(), tenant_id)?;
@@ -538,20 +620,23 @@ async fn cmd_chat(top_k: usize, inference_url: String) -> Result<()> {
                 break;
             }
 
-            // Retrieve context.
+            // Retrieve context (with optional query understanding).
             let chunks = if let Some(ref vs) = local_vs {
                 let vs2 = vs.clone();
-                retrieve_hybrid(&query, &retrieve_cfg, &embed, &meta, move |embedding, k| {
+                let search_fn = move |emb: Vec<f32>, k: usize| {
                     let vs = vs2.clone();
                     Box::pin(async move {
-                        let raw = vs.search(tenant_id, &embedding, k).await?;
+                        let raw = vs.search(tenant_id, &emb, k).await?;
                         Ok(raw.into_iter().map(|r| (r.id, r.score)).collect())
-                    })
-                        as Pin<
-                            Box<dyn std::future::Future<Output = Result<Vec<(i64, f64)>>> + Send>,
-                        >
-                })
-                .await?
+                    }) as Pin<Box<dyn std::future::Future<Output = Result<Vec<(i64, f64)>>> + Send>>
+                };
+                if understand {
+                    kwaai_rag::query_understanding::retrieve_with_understanding(
+                        &query, &retrieve_cfg, &embed, &meta, &inference_url, search_fn,
+                    ).await?
+                } else {
+                    retrieve_hybrid(&query, &retrieve_cfg, &embed, &meta, search_fn).await?
+                }
             } else if let Some(ref url) = storage_mode {
                 let http2 = http.clone();
                 let url2 = url.clone();
@@ -561,12 +646,8 @@ async fn cmd_chat(top_k: usize, inference_url: String) -> Result<()> {
                     Box::pin(async move {
                         let raw = http_search_vectors(&h, &u, tenant_id, embedding, k).await?;
                         Ok(raw.into_iter().map(|r| (r.id, r.score)).collect())
-                    })
-                        as Pin<
-                            Box<dyn std::future::Future<Output = Result<Vec<(i64, f64)>>> + Send>,
-                        >
-                })
-                .await?
+                    }) as Pin<Box<dyn std::future::Future<Output = Result<Vec<(i64, f64)>>> + Send>>
+                }).await?
             } else {
                 let (client2, eve) = p2p_client.as_ref().unwrap();
                 let client2 = client2.clone();
@@ -575,16 +656,10 @@ async fn cmd_chat(top_k: usize, inference_url: String) -> Result<()> {
                     let c = client2.clone();
                     Box::pin(async move {
                         let guard = c.lock().await;
-                        let raw =
-                            rpc_search_vectors(&*guard, &eve_peer_id, tenant_id, embedding, k)
-                                .await?;
+                        let raw = rpc_search_vectors(&*guard, &eve_peer_id, tenant_id, embedding, k).await?;
                         Ok(raw.into_iter().map(|r| (r.id, r.score)).collect())
-                    })
-                        as Pin<
-                            Box<dyn std::future::Future<Output = Result<Vec<(i64, f64)>>> + Send>,
-                        >
-                })
-                .await?
+                    }) as Pin<Box<dyn std::future::Future<Output = Result<Vec<(i64, f64)>>> + Send>>
+                }).await?
             };
 
             let messages = build_chat_messages(&query, &chunks, &history, 8192);
@@ -628,13 +703,13 @@ async fn cmd_chat(top_k: usize, inference_url: String) -> Result<()> {
 
 // ── docs ──────────────────────────────────────────────────────────────────────
 
-async fn cmd_docs() -> Result<()> {
-    let (rag_cfg, tenant_id) = load_rag_config()?;
+async fn cmd_docs(kb: String) -> Result<()> {
+    let (rag_cfg, tenant_id) = load_rag_config_for(&kb)?;
     let meta = MetaStore::open(&rag_cfg.data_dir(), tenant_id)?;
 
     let docs = meta.list_docs()?;
     if docs.is_empty() {
-        print_info("No documents ingested yet. Run: kwaainet rag ingest <file>");
+        print_info(&format!("No documents ingested yet. Run: kwaainet rag ingest <file> --kb {kb}"));
     } else {
         print_box_header(&format!("{} document(s)", docs.len()));
         for d in &docs {
@@ -646,7 +721,7 @@ async fn cmd_docs() -> Result<()> {
 
 // ── delete-doc ────────────────────────────────────────────────────────────────
 
-async fn cmd_delete_doc(name: String, yes: bool) -> Result<()> {
+async fn cmd_delete_doc(name: String, yes: bool, kb: String) -> Result<()> {
     #[cfg(not(feature = "storage"))]
     bail!("RAG requires the 'storage' feature.");
 
@@ -663,7 +738,7 @@ async fn cmd_delete_doc(name: String, yes: bool) -> Result<()> {
             }
         }
 
-        let (rag_cfg, tenant_id) = load_rag_config()?;
+        let (rag_cfg, tenant_id) = load_rag_config_for(&kb)?;
         let meta = MetaStore::open(&rag_cfg.data_dir(), tenant_id)?;
 
         let ids = meta.delete_doc(&name)?;
@@ -701,11 +776,12 @@ async fn cmd_delete_doc(name: String, yes: bool) -> Result<()> {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-fn load_rag_config() -> Result<(RagConfig, Uuid)> {
+fn load_rag_config_for(kb: &str) -> Result<(RagConfig, Uuid)> {
     let cfg = KwaaiNetConfig::load_or_create()?;
     let rag = cfg
-        .rag
-        .context("RAG not initialised. Run: kwaainet rag init")?;
+        .get_rag_kb(kb)
+        .cloned()
+        .with_context(|| format!("KB '{kb}' not initialised. Run: kwaainet rag init --name {kb}"))?;
 
     let tenant_id: Uuid = rag
         .tenant_id
@@ -765,21 +841,16 @@ fn truncate(s: &str, max: usize) -> &str {
 
 // ── destroy ───────────────────────────────────────────────────────────────────
 
-async fn cmd_destroy(yes: bool) -> Result<()> {
+async fn cmd_destroy(yes: bool, kb: String) -> Result<()> {
     let cfg = KwaaiNetConfig::load_or_create()?;
     let rag = cfg
-        .rag
-        .as_ref()
-        .context("No knowledge base initialised (nothing to destroy).")?;
+        .get_rag_kb(&kb)
+        .with_context(|| format!("KB '{kb}' not initialised (nothing to destroy)."))?;
 
-    let data_dir = match &rag.rag_data_dir {
-        Some(d) => std::path::PathBuf::from(d),
-        None => kwaainet_dir().join("rag"),
-    };
-
+    let data_dir = rag.data_dir();
     let tenant_id = rag.tenant_id.as_deref().unwrap_or("<unknown>");
 
-    print_box_header("RAG Destroy");
+    print_box_header(&format!("RAG Destroy ({})", kb));
     println!("  Knowledge base: {}", data_dir.display());
     println!("  Tenant:         {tenant_id}");
     println!();
@@ -802,13 +873,12 @@ async fn cmd_destroy(yes: bool) -> Result<()> {
             .with_context(|| format!("deleting {}", data_dir.display()))?;
     }
 
-    // Clear the rag section from config.
     let mut cfg = KwaaiNetConfig::load_or_create()?;
-    cfg.rag = None;
+    cfg.remove_rag_kb(&kb);
     cfg.save()?;
 
-    print_success("Knowledge base destroyed.");
-    println!("  Run  kwaainet rag init  to start fresh.");
+    print_success(&format!("Knowledge base '{}' destroyed.", kb));
+    println!("  Run  kwaainet rag init --name {kb}  to start fresh.");
     Ok(())
 }
 
@@ -820,6 +890,7 @@ async fn cmd_sync(
     delete: bool,
     watch: bool,
     interval: u64,
+    kb: String,
 ) -> Result<()> {
     #[cfg(not(feature = "storage"))]
     bail!("RAG requires the 'storage' feature.");
@@ -843,7 +914,7 @@ async fn cmd_sync(
         print_separator();
 
         loop {
-            let result = run_sync_pass(&folder, &exts, delete).await?;
+            let result = run_sync_pass(&folder, &exts, delete, &kb).await?;
 
             let SyncResult {
                 ingested,
@@ -881,10 +952,11 @@ async fn run_sync_pass(
     folder: &std::path::Path,
     exts: &[String],
     delete: bool,
+    kb: &str,
 ) -> Result<SyncResult> {
     use std::time::UNIX_EPOCH;
 
-    let (rag_cfg, tenant_id) = load_rag_config()?;
+    let (rag_cfg, tenant_id) = load_rag_config_for(kb)?;
     let meta = MetaStore::open(&rag_cfg.data_dir(), tenant_id)?;
 
     // Discover all matching files under the folder.

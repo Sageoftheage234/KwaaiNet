@@ -1003,15 +1003,22 @@ pub struct RagArgs {
 pub enum RagAction {
     /// Initialise a local RAG knowledge base (no network required)
     Init {
+        /// Knowledge base name (default: "default"). Use --name to create additional KBs.
+        #[arg(long, default_value = "default", value_name = "NAME")]
+        name: String,
+
         /// Ollama embedding model (must produce 768-dim vectors)
         #[arg(long, default_value = "nomic-embed-text")]
         embed_model: String,
 
-        /// Directory for the knowledge base (defaults to ~/.kwaainet/rag/).
-        /// Point to an external drive for large corpora.
+        /// Directory for the knowledge base (defaults to ~/.kwaainet/rag/ for "default",
+        /// ~/.kwaainet/rag/<name>/ for named KBs). Point to an external drive for large corpora.
         #[arg(long, value_name = "PATH")]
         rag_dir: Option<std::path::PathBuf>,
     },
+
+    /// List all knowledge bases
+    List,
 
     /// Outsource this knowledge base's vector storage to an Eve node on the network
     ConnectEve {
@@ -1021,6 +1028,10 @@ pub enum RagAction {
         /// Eve HTTP URL (e.g. http://192.168.1.10:7432). Omit to use P2P transport.
         #[arg(long)]
         url: Option<String>,
+
+        /// Knowledge base name (default: "default")
+        #[arg(long, default_value = "default", value_name = "NAME")]
+        kb: String,
     },
 
     /// Ingest a document into the knowledge base
@@ -1039,6 +1050,10 @@ pub enum RagAction {
         /// Chunk overlap in characters
         #[arg(long, default_value = "200")]
         chunk_overlap: usize,
+
+        /// Knowledge base name (default: "default")
+        #[arg(long, default_value = "default", value_name = "NAME")]
+        kb: String,
     },
 
     /// Retrieve top-K chunks for a query (no LLM — debug tool)
@@ -1057,6 +1072,18 @@ pub enum RagAction {
         /// Output results as JSON (for benchmark scripts)
         #[arg(long)]
         json: bool,
+
+        /// Knowledge base name, or "all" to query all KBs and merge results (default: "default")
+        #[arg(long, default_value = "default", value_name = "NAME")]
+        kb: String,
+
+        /// Decompose query into sub-queries via LLM for better recall on complex questions
+        #[arg(long)]
+        understand: bool,
+
+        /// Inference URL for query understanding (defaults to config inference_url)
+        #[arg(long, value_name = "URL")]
+        inference_url: Option<String>,
     },
 
     /// Interactive RAG chat REPL (streams from shard API)
@@ -1068,10 +1095,22 @@ pub enum RagAction {
         /// Shard API base URL
         #[arg(long, default_value = "http://localhost:8080")]
         inference_url: String,
+
+        /// Knowledge base name, or "all" to query all KBs (default: "default")
+        #[arg(long, default_value = "default", value_name = "NAME")]
+        kb: String,
+
+        /// Decompose each user query into sub-queries via LLM for better recall
+        #[arg(long)]
+        understand: bool,
     },
 
     /// List ingested documents
-    Docs,
+    Docs {
+        /// Knowledge base name (default: "default")
+        #[arg(long, default_value = "default", value_name = "NAME")]
+        kb: String,
+    },
 
     /// Delete a document from the knowledge base
     DeleteDoc {
@@ -1081,6 +1120,10 @@ pub enum RagAction {
         /// Skip confirmation prompt
         #[arg(long, short = 'y')]
         yes: bool,
+
+        /// Knowledge base name (default: "default")
+        #[arg(long, default_value = "default", value_name = "NAME")]
+        kb: String,
     },
 
     /// Permanently delete the local knowledge base and all its data
@@ -1088,6 +1131,10 @@ pub enum RagAction {
         /// Skip confirmation prompt
         #[arg(long, short = 'y')]
         yes: bool,
+
+        /// Knowledge base name (default: "default")
+        #[arg(long, default_value = "default", value_name = "NAME")]
+        kb: String,
     },
 
     /// Serve an OpenAI-compatible RAG API (port 9090 by default)
@@ -1103,6 +1150,10 @@ pub enum RagAction {
         /// Number of context chunks to inject per request
         #[arg(long, short = 'k', default_value = "5")]
         top_k: usize,
+
+        /// Knowledge base name (default: "default")
+        #[arg(long, default_value = "default", value_name = "NAME")]
+        kb: String,
     },
 
     /// Sync a folder of documents into the knowledge base
@@ -1125,6 +1176,10 @@ pub enum RagAction {
         /// Polling interval in seconds (watch mode only)
         #[arg(long, default_value = "60")]
         interval: u64,
+
+        /// Knowledge base name (default: "default")
+        #[arg(long, default_value = "default", value_name = "NAME")]
+        kb: String,
     },
 }
 

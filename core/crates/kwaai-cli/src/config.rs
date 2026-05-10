@@ -145,7 +145,12 @@ pub struct KwaaiNetConfig {
     pub contribute: ContributeConfig,
 
     // ── RAG (Bob role) ────────────────────────────────────────────────────────
-    /// Local RAG knowledge base configuration.
+    /// Named RAG knowledge bases. Key = KB name (e.g. "default", "work", "research").
+    /// Use `kwaainet rag init --name <name>` to create additional KBs.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub rag_kbs: std::collections::HashMap<String, RagConfig>,
+
+    /// Legacy single-KB config — kept for deserialization only; migrated to rag_kbs on first save.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rag: Option<RagConfig>,
 }
@@ -346,11 +351,21 @@ fn default_top_k() -> usize {
 }
 
 impl RagConfig {
-    /// Resolve the chunk-metadata directory: explicit config or ~/.kwaainet/rag/
+    /// Resolve the chunk-metadata directory: explicit config or ~/.kwaainet/rag/<name>.
+    /// For the "default" KB the path is ~/.kwaainet/rag/ (backward-compatible).
     pub fn data_dir(&self) -> std::path::PathBuf {
         match &self.rag_data_dir {
             Some(p) => std::path::PathBuf::from(p),
             None => kwaainet_dir().join("rag"),
+        }
+    }
+
+    /// Return the data dir scoped to a KB name (used by rag init for non-default KBs).
+    pub fn default_data_dir_for(name: &str) -> std::path::PathBuf {
+        if name == "default" {
+            kwaainet_dir().join("rag")
+        } else {
+            kwaainet_dir().join("rag").join(name)
         }
     }
 }
@@ -514,6 +529,7 @@ impl Default for KwaaiNetConfig {
             rebalance_min_redundancy: default_rebalance_min_redundancy(),
             reputation: ReputationConfig::default(),
             contribute: ContributeConfig::default(),
+            rag_kbs: std::collections::HashMap::new(),
             rag: None,
         }
     }
@@ -580,15 +596,60 @@ impl KwaaiNetConfig {
         }
     }
 
-    /// Persist the current config to disk.
+    /// Persist the current config to disk, migrating legacy `rag:` to `rag_kbs` first.
     pub fn save(&self) -> Result<()> {
         let cfg_file = config_file();
         std::fs::create_dir_all(cfg_file.parent().unwrap())?;
-        let text = serde_yaml::to_string(self).context("serializing config")?;
+        // Migrate legacy single-KB entry to rag_kbs before serializing.
+        let mut out = self.clone();
+        if let Some(legacy) = out.rag.take() {
+            out.rag_kbs.entry("default".to_string()).or_insert(legacy);
+        }
+        let text = serde_yaml::to_string(&out).context("serializing config")?;
         std::fs::write(&cfg_file, text)
             .with_context(|| format!("writing {}", cfg_file.display()))?;
         debug!("Saved config to {}", cfg_file.display());
         Ok(())
+    }
+
+    /// Get the RAG config for the given KB name, falling back to the legacy `rag` field.
+    pub fn get_rag_kb(&self, name: &str) -> Option<&RagConfig> {
+        if let Some(kb) = self.rag_kbs.get(name) {
+            return Some(kb);
+        }
+        // Legacy compat: single-KB config before named KBs were introduced.
+        if name == "default" {
+            return self.rag.as_ref();
+        }
+        None
+    }
+
+    /// Set (insert or replace) the RAG config for a named KB.
+    pub fn set_rag_kb(&mut self, name: &str, cfg: RagConfig) {
+        // Ensure legacy field is cleared — everything lives in rag_kbs now.
+        if name == "default" {
+            self.rag = None;
+        }
+        self.rag_kbs.insert(name.to_string(), cfg);
+    }
+
+    /// Remove a KB by name. Returns the removed config if it existed.
+    pub fn remove_rag_kb(&mut self, name: &str) -> Option<RagConfig> {
+        let from_map = self.rag_kbs.remove(name);
+        if name == "default" && from_map.is_none() {
+            return self.rag.take();
+        }
+        from_map
+    }
+
+    /// List all KB names, including the legacy "default" entry if present.
+    pub fn rag_kb_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.rag_kbs.keys().cloned().collect();
+        if self.rag.is_some() && !names.contains(&"default".to_string()) {
+            names.insert(0, "default".to_string());
+        }
+        names.sort();
+        names
     }
 
     /// Return the effective DHT prefix for this node's model.
