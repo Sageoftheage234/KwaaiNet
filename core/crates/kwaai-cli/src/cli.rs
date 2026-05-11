@@ -1108,6 +1108,18 @@ pub enum RagAction {
         /// Retrieval mode: "vector" (default hybrid), "graph" (entity-anchored), "auto" (router)
         #[arg(long, default_value = "vector", value_name = "MODE")]
         mode: String,
+
+        /// Model name for query understanding / HyDE LLM call (e.g. "llama3.2:3b"; default: "default")
+        #[arg(long, default_value = "default")]
+        model: String,
+
+        /// Use HyDE: generate a hypothetical answer and embed that instead of the raw query
+        #[arg(long)]
+        hyde: bool,
+
+        /// Rerank candidates with a single LLM call before selecting top-k
+        #[arg(long)]
+        rerank: bool,
     },
 
     /// Interactive RAG chat REPL (streams from shard API)
@@ -1131,6 +1143,14 @@ pub enum RagAction {
         /// Model name for the chat completions call (e.g. "llama3.2:3b"; default: "default")
         #[arg(long, default_value = "default")]
         model: String,
+
+        /// Use HyDE: generate a hypothetical answer and embed that instead of the raw query
+        #[arg(long)]
+        hyde: bool,
+
+        /// Rerank candidates with a single LLM call before selecting top-k
+        #[arg(long)]
+        rerank: bool,
     },
 
     /// List ingested documents

@@ -7,6 +7,7 @@ use anyhow::Result;
 use crate::bm25::{rrf_merge, BM25Index};
 use crate::embedder::EmbedClient;
 use crate::graph::GraphStore;
+use crate::hyde::embed_with_hyde;
 use crate::meta_store::{ChunkMeta, MetaStore};
 
 #[derive(Debug, Clone)]
@@ -22,6 +23,9 @@ pub struct RetrieveConfig {
     pub top_k: usize,
     pub min_score: f64,
     pub use_sentence_window: bool,
+    /// When set, uses HyDE: embeds a LLM-generated hypothetical answer instead of the raw query.
+    pub hyde_inference_url: Option<String>,
+    pub hyde_model: Option<String>,
 }
 
 impl Default for RetrieveConfig {
@@ -30,6 +34,8 @@ impl Default for RetrieveConfig {
             top_k: 5,
             min_score: 0.0,
             use_sentence_window: false,
+            hyde_inference_url: None,
+            hyde_model: None,
         }
     }
 }
@@ -66,9 +72,14 @@ pub async fn retrieve_hybrid(
         .collect();
     let bm25 = BM25Index::build_in_ram(&triples)?;
 
-    // Run both searches concurrently (semantic + keyword).
     let candidate_k = cfg.top_k * 4;
-    let embedding = embed.embed_one(query).await?;
+
+    // Dense embedding — use HyDE if configured, else plain query embedding.
+    let embedding = match (&cfg.hyde_inference_url, &cfg.hyde_model) {
+        (Some(url), Some(model)) => embed_with_hyde(query, embed, url, model).await,
+        _ => embed.embed_one(query).await?,
+    };
+
     let semantic_raw = search_fn(embedding, candidate_k).await?;
     let keyword_raw = bm25.search(query, candidate_k);
 
@@ -90,7 +101,12 @@ pub async fn retrieve_graph_anchored(
     search_fn: impl Fn(Vec<f32>, usize) -> Pin<Box<dyn Future<Output = Result<Vec<(i64, f64)>>> + Send>>,
 ) -> Result<Vec<RetrievedChunk>> {
     let candidate_k = cfg.top_k * 4;
-    let embedding = embed.embed_one(query).await?;
+
+    // Dense embedding — use HyDE if configured, else plain query embedding.
+    let embedding = match (&cfg.hyde_inference_url, &cfg.hyde_model) {
+        (Some(url), Some(model)) => embed_with_hyde(query, embed, url, model).await,
+        _ => embed.embed_one(query).await?,
+    };
 
     // 1. Find seed entities by embedding similarity.
     let seed_hits = graph.search_entities(&embedding, 3);

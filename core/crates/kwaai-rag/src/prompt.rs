@@ -13,9 +13,12 @@ pub fn build_rag_prompt(
     max_context_chars: usize,
 ) -> String {
     let context = build_context_block(chunks, max_context_chars);
+    let n = chunks.len();
     format!(
-        "Use the following context to answer the question.\n\n\
-         Context:\n{context}\n\n\
+        "You are a research assistant. Use only the {n} source excerpt(s) below to answer.\n\
+         Cite each fact with its source number in brackets, e.g. [1]. \
+         If the answer is not in the sources, say so — do not fabricate.\n\n\
+         Sources:\n{context}\n\n\
          Question: {user_query}\n\n\
          Answer:"
     )
@@ -30,12 +33,22 @@ pub fn build_chat_messages(
 ) -> Vec<ChatMessage> {
     let context = build_context_block(chunks, max_context_chars);
 
+    let n = chunks.len();
     let system = ChatMessage {
         role: "system".to_string(),
         content: format!(
-            "You are a helpful assistant. Use the provided context to answer the user's question. \
-             If the answer is not in the context, say so honestly.\n\n\
-             Context:\n{context}"
+            "You are a research assistant with access to the following {n} source excerpt(s), \
+             numbered [1]–[{n}].\n\n\
+             Rules you must follow:\n\
+             1. Every factual claim must be followed by its source number in brackets, \
+                e.g. \"District Six was declared a White Group Area in 1966 [2].\"\n\
+             2. If the answer requires information not present in the excerpts, say: \
+                \"I don't have enough information in the provided sources to answer that.\"\n\
+             3. Never fabricate facts, names, dates, or quotes.\n\
+             4. If sources partially address the question, synthesise what they do say \
+                and note the gap.\n\
+             5. Write in clear, complete sentences suitable for a researcher.\n\n\
+             Sources:\n{context}"
         ),
     };
 

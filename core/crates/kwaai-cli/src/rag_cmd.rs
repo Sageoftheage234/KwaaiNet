@@ -62,7 +62,10 @@ pub async fn run(args: RagArgs) -> Result<()> {
             understand,
             inference_url,
             mode,
-        } => cmd_query(text, top_k, min_score, json, kb, understand, inference_url, mode).await,
+            model,
+            hyde,
+            rerank,
+        } => cmd_query(text, top_k, min_score, json, kb, understand, inference_url, mode, model, hyde, rerank).await,
 
         RagAction::Chat {
             top_k,
@@ -70,7 +73,9 @@ pub async fn run(args: RagArgs) -> Result<()> {
             kb,
             understand,
             model,
-        } => cmd_chat(top_k, inference_url, kb, understand, model).await,
+            hyde,
+            rerank,
+        } => cmd_chat(top_k, inference_url, kb, understand, model, hyde, rerank).await,
 
         RagAction::Docs { kb } => cmd_docs(kb).await,
 
@@ -459,6 +464,9 @@ async fn cmd_query(
     understand: bool,
     inference_url: Option<String>,
     mode: String,
+    model: String,
+    hyde: bool,
+    rerank: bool,
 ) -> Result<()> {
     #[cfg(not(feature = "storage"))]
     bail!("RAG requires the 'storage' feature.");
@@ -488,7 +496,15 @@ async fn cmd_query(
             }
         }
 
-        let retrieve_cfg = RetrieveConfig { top_k, min_score, use_sentence_window: false };
+        let hyde_url = if hyde { inference_url.clone() } else { None };
+        let hyde_mdl = if hyde { Some(model.clone()) } else { None };
+        let retrieve_cfg = RetrieveConfig {
+            top_k,
+            min_score,
+            use_sentence_window: false,
+            hyde_inference_url: hyde_url,
+            hyde_model: hyde_mdl,
+        };
         let spinner = if json_out { None } else { Some(crate::progress::Spinner::start("Retrieving…")) };
 
         let mut all_results: Vec<kwaai_rag::retriever::RetrievedChunk> = vec![];
@@ -526,7 +542,7 @@ async fn cmd_query(
                         }).await?
                     } else if understand {
                         kwaai_rag::query_understanding::retrieve_with_understanding(
-                            &query, &retrieve_cfg, &embed, &meta, &infer_url,
+                            &query, &retrieve_cfg, &embed, &meta, &infer_url, &model,
                             move |emb, k| {
                                 let vs = vs.clone();
                                 Box::pin(async move {
@@ -577,7 +593,19 @@ async fn cmd_query(
         }
 
         all_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
-        all_results.truncate(top_k);
+
+        // LLM listwise reranker — retrieve extra candidates then rerank to top_k.
+        let all_results = if rerank {
+            if let Some(ref url) = inference_url {
+                kwaai_rag::reranker::rerank_chunks(&query, all_results, url, &model, top_k).await
+            } else {
+                all_results.truncate(top_k);
+                all_results
+            }
+        } else {
+            all_results.truncate(top_k);
+            all_results
+        };
 
         if let Some(s) = spinner { s.finish("").await; }
 
@@ -628,7 +656,7 @@ fn render_query_results(query: &str, results: &[serde_json::Value], json_out: bo
 
 // ── chat ──────────────────────────────────────────────────────────────────────
 
-async fn cmd_chat(top_k: usize, inference_url: String, kb: String, understand: bool, model: String) -> Result<()> {
+async fn cmd_chat(top_k: usize, inference_url: String, kb: String, understand: bool, model: String, hyde: bool, rerank: bool) -> Result<()> {
     #[cfg(not(feature = "storage"))]
     bail!("RAG requires the 'storage' feature.");
 
@@ -643,6 +671,8 @@ async fn cmd_chat(top_k: usize, inference_url: String, kb: String, understand: b
             top_k,
             min_score: 0.0,
             use_sentence_window: false,
+            hyde_inference_url: if hyde { Some(inference_url.clone()) } else { None },
+            hyde_model: if hyde { Some(model.clone()) } else { None },
         };
 
         let http = reqwest::Client::new();
@@ -714,7 +744,7 @@ async fn cmd_chat(top_k: usize, inference_url: String, kb: String, understand: b
                 };
                 if understand {
                     kwaai_rag::query_understanding::retrieve_with_understanding(
-                        &query, &retrieve_cfg, &embed, &meta, &inference_url, search_fn,
+                        &query, &retrieve_cfg, &embed, &meta, &inference_url, &model, search_fn,
                     ).await?
                 } else {
                     retrieve_hybrid(&query, &retrieve_cfg, &embed, &meta, search_fn).await?
@@ -742,6 +772,13 @@ async fn cmd_chat(top_k: usize, inference_url: String, kb: String, understand: b
                         Ok(raw.into_iter().map(|r| (r.id, r.score)).collect())
                     }) as Pin<Box<dyn std::future::Future<Output = Result<Vec<(i64, f64)>>> + Send>>
                 }).await?
+            };
+
+            // LLM listwise reranker (optional).
+            let chunks = if rerank {
+                kwaai_rag::reranker::rerank_chunks(&query, chunks, &inference_url, &model, top_k).await
+            } else {
+                chunks
             };
 
             let messages = build_chat_messages(&query, &chunks, &history, 8192);

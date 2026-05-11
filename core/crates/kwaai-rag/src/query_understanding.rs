@@ -25,8 +25,9 @@ pub async fn decompose_query(
     query: &str,
     n_variants: usize,
     inference_url: &str,
+    model: &str,
 ) -> Vec<String> {
-    match decompose_inner(query, n_variants, inference_url).await {
+    match decompose_inner(query, n_variants, inference_url, model).await {
         Ok(mut qs) => {
             // Always include the original in case decomposition is lossy.
             if !qs.contains(&query.to_string()) {
@@ -45,6 +46,7 @@ async fn decompose_inner(
     query: &str,
     n_variants: usize,
     inference_url: &str,
+    model: &str,
 ) -> Result<Vec<String>> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
@@ -61,7 +63,7 @@ async fn decompose_inner(
 
     let url = format!("{}/v1/chat/completions", inference_url.trim_end_matches('/'));
     let body = json!({
-        "model": "default",
+        "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.3,
         "max_tokens": 512,
@@ -114,6 +116,7 @@ pub async fn retrieve_with_understanding<F>(
     embed: &EmbedClient,
     meta: &MetaStore,
     inference_url: &str,
+    model: &str,
     search_fn: F,
 ) -> Result<Vec<RetrievedChunk>>
 where
@@ -121,7 +124,7 @@ where
         + Clone
         + Send,
 {
-    let sub_queries = decompose_query(query, 3, inference_url).await;
+    let sub_queries = decompose_query(query, 3, inference_url, model).await;
 
     tracing::debug!(
         "query understanding: {} sub-queries for {:?}",
