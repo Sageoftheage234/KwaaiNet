@@ -75,6 +75,14 @@ pub struct KwaaiNetConfig {
     #[serde(default)]
     pub announce_addr: Option<String>,
 
+    /// Override path to the persistent identity key file. When set, this
+    /// libp2p-protobuf-encoded key is used instead of the default one at
+    /// `~/.kwaainet/identity.key` (which is auto-generated as Ed25519).
+    /// Used by bootstrap deployments to keep their existing RSA peer IDs.
+    /// CLI: `--identity-key <path>`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_key: Option<std::path::PathBuf>,
+
     #[serde(default)]
     pub no_relay: bool,
 
@@ -540,6 +548,7 @@ impl Default for KwaaiNetConfig {
             )),
             public_ip: None,
             announce_addr: None,
+            identity_key: None,
             no_relay: false,
             initial_peers: default_peers(),
             trusted_relays: Vec::new(),

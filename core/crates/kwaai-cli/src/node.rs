@@ -274,10 +274,19 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
     info!("KwaaiNet node starting (PID {})", std::process::id());
 
     // -----------------------------------------------------------------------
-    // Persistent identity — load or generate the Ed25519 keypair so the
-    // PeerId is stable across restarts. Credentials are bound to this DID.
+    // Persistent identity — load or generate the keypair so the PeerId is
+    // stable across restarts. Credentials are bound to this DID.
+    // `config.identity_key` (CLI: `--identity-key`) overrides the default
+    // path, which lets bootstrap deployments mount a pre-existing key
+    // (e.g. an RSA `bootstrap_keyN.bin`) without it living under
+    // `~/.kwaainet/`.
     // -----------------------------------------------------------------------
-    let node_identity = NodeIdentity::load_or_create().context("loading node identity")?;
+    let node_identity = if let Some(ref key_path) = config.identity_key {
+        NodeIdentity::load_from(key_path)
+            .with_context(|| format!("loading node identity from {}", key_path.display()))?
+    } else {
+        NodeIdentity::load_or_create().context("loading node identity")?
+    };
     let node_did = node_identity.did();
     info!("Node DID: {}", node_did);
 
@@ -359,7 +368,10 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
             .map(|ip| format!("/ip4/{}/tcp/{}", ip, config.port))
     });
 
-    let identity_key_path = NodeIdentity::key_file_path();
+    let identity_key_path = config
+        .identity_key
+        .clone()
+        .unwrap_or_else(NodeIdentity::key_file_path);
 
     // Trusted relays: empty means "let AutoRelay discover via DHT". When the
     // user configures explicit trusted_relays we pass them through; otherwise
@@ -1602,7 +1614,10 @@ async fn restart_p2pd(
     let _ = daemon.shutdown().await;
 
     let host_addr = format!("/ip4/0.0.0.0/tcp/{}", config.port);
-    let identity_key_path = crate::identity::NodeIdentity::key_file_path();
+    let identity_key_path = config
+        .identity_key
+        .clone()
+        .unwrap_or_else(crate::identity::NodeIdentity::key_file_path);
 
     let builder = P2PDaemon::builder()
         .dht(true)
