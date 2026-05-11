@@ -315,9 +315,13 @@ pub struct RagConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub eve_peer_id: Option<String>,
 
-    /// Ollama embedding model (must produce 768-dim vectors).
+    /// Ollama embedding model.
     #[serde(default = "default_embed_model")]
     pub embed_model: String,
+
+    /// Dimensionality of the embedding vectors (determined at `rag init` time).
+    #[serde(default = "default_embed_dim")]
+    pub embed_dim: usize,
 
     /// Base URL of the shard inference API.
     #[serde(default = "default_inference_url")]
@@ -340,6 +344,10 @@ pub struct RagConfig {
 
 fn default_embed_model() -> String {
     "nomic-embed-text".to_string()
+}
+
+fn default_embed_dim() -> usize {
+    768
 }
 
 fn default_inference_url() -> String {
@@ -376,6 +384,7 @@ impl Default for RagConfig {
             tenant_id: None,
             eve_peer_id: None,
             embed_model: default_embed_model(),
+            embed_dim: default_embed_dim(),
             inference_url: default_inference_url(),
             top_k: default_top_k(),
             storage_url: None,

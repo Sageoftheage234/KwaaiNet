@@ -69,7 +69,7 @@ pub async fn run(port: u16, inference_url: String, top_k: usize, kb: String) -> 
 
         let embed = EmbedClient::new(None, Some(rag.embed_model.clone()));
         print_info("Probing embedding model…");
-        embed.check_dim().await?;
+        embed.check_dim_matches(rag.embed_dim).await?;
 
         let local_vs = if is_local {
             let db = kwaai_storage::StorageDb::open(&rag.data_dir())

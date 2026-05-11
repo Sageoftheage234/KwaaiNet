@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 const DEFAULT_BASE_URL: &str = "http://localhost:11434";
 const DEFAULT_MODEL: &str = "nomic-embed-text";
-pub const EXPECTED_DIM: usize = 768;
+pub const DEFAULT_DIM: usize = 768;
 
 /// nomic-embed-text requires asymmetric instruction prefixes for accurate retrieval.
 /// Without them all texts land in general-purpose space and score in a tight 0.62-0.66
@@ -97,18 +97,21 @@ impl EmbedClient {
         Ok(parsed.embeddings)
     }
 
-    /// Probe Ollama and verify the embedding dimension. Call at startup.
-    pub async fn check_dim(&self) -> Result<()> {
+    /// Probe Ollama and return the embedding dimension.
+    pub async fn probe_dim(&self) -> Result<usize> {
         let emb = self.embed_raw(&["probe"]).await?;
         let emb = emb.into_iter().next().context("empty probe response")?;
-        if emb.len() != EXPECTED_DIM {
+        Ok(emb.len())
+    }
+
+    /// Probe Ollama and verify the dimension matches `expected`. Call at startup.
+    pub async fn check_dim_matches(&self, expected: usize) -> Result<()> {
+        let actual = self.probe_dim().await?;
+        if actual != expected {
             bail!(
-                "Embedding model '{}' returns {} dimensions; expected {}. \
-                 Run: ollama pull {}",
-                self.model,
-                emb.len(),
-                EXPECTED_DIM,
-                DEFAULT_MODEL,
+                "Embedding model '{}' returns {} dimensions but KB was initialised with {}. \
+                 Destroy and re-init the KB with the correct model.",
+                self.model, actual, expected,
             );
         }
         Ok(())

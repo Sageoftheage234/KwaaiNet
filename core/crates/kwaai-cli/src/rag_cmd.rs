@@ -156,11 +156,11 @@ async fn cmd_init(
             Some(data_dir.to_string_lossy().into_owned())
         };
 
-        // Probe embedding model before touching storage.
+        // Probe embedding model before touching storage — auto-detect dimension.
         let embed = EmbedClient::new(None, Some(embed_model.clone()));
         print_info(&format!("Probing Ollama ({embed_model})…"));
-        embed.check_dim().await?;
-        print_success("Embedding model OK (768 dimensions)");
+        let embed_dim = embed.probe_dim().await?;
+        print_success(&format!("Embedding model OK ({embed_dim} dimensions)"));
 
         // If already initialised, verify the tenant exists in the DB (idempotent).
         // If the DB was wiped or rebuilt from an old format, fall through to recreate.
@@ -201,7 +201,7 @@ async fn cmd_init(
         let tm = kwaai_storage::TenantManager::new(db);
         let local_peer_id = crate::identity::NodeIdentity::load_or_create()?.peer_id;
         let info = tm
-            .create(&local_peer_id.to_base58(), 0, Some(&format!("kwaai-rag/{name}")), 768)
+            .create(&local_peer_id.to_base58(), 0, Some(&format!("kwaai-rag/{name}")), embed_dim)
             .await
             .context("creating local tenant")?;
         let tenant_id = info.tenant_id;
@@ -216,6 +216,7 @@ async fn cmd_init(
                 tenant_id: Some(tenant_id.to_string()),
                 eve_peer_id: None,
                 embed_model,
+                embed_dim,
                 inference_url: "http://localhost:8080".to_string(),
                 top_k: 5,
                 storage_url: Some("local".to_string()),
