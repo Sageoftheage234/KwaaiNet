@@ -50,7 +50,7 @@ pub(crate) struct TenantRecord {
 const BRUTE_FORCE_THRESHOLD: usize = 2_000;
 
 /// In-memory HNSW index for one tenant, with a tombstone layer for deletes.
-pub(crate) struct TenantIndex {
+pub struct TenantIndex {
     pub hnsw: Hnsw<'static, f32, DistCosine>,
     /// hnsw_internal_id → external doc id. `None` = tombstoned.
     pub id_map: Vec<Option<i64>>,
@@ -64,8 +64,17 @@ pub(crate) struct TenantIndex {
 
 impl TenantIndex {
     pub fn new(dimension: usize) -> Self {
-        // m=16, initial_capacity=65536, ef_construction=64, max_layer=16
-        let hnsw: Hnsw<'static, f32, DistCosine> = Hnsw::new(16, 65_536, 16, 64, DistCosine);
+        Self::new_with_params(dimension, 16, 200)
+    }
+
+    /// Build with explicit HNSW graph parameters.
+    /// m: bidirectional links per node (16 = sweet spot for dim=768).
+    /// ef_construction: beam width during graph build; minimum 40, recommended ≥200.
+    /// Higher ef_construction improves recall quality at index-build time (paid once);
+    /// it cannot be compensated at query time by raising ef_search.
+    pub fn new_with_params(dimension: usize, m: usize, ef_construction: usize) -> Self {
+        let hnsw: Hnsw<'static, f32, DistCosine> =
+            Hnsw::new(m, 65_536, 16, ef_construction, DistCosine);
         Self {
             hnsw,
             id_map: Vec::new(),
@@ -125,7 +134,7 @@ impl TenantIndex {
     }
 
     /// Exact cosine search over all live vectors — O(n) but precise.
-    fn search_exact(&self, query: &[f32], top_k: usize) -> Vec<(i64, f64)> {
+    pub fn search_exact(&self, query: &[f32], top_k: usize) -> Vec<(i64, f64)> {
         let qnorm: f64 = query
             .iter()
             .map(|&x| (x as f64) * (x as f64))
@@ -161,10 +170,14 @@ impl TenantIndex {
         scored
     }
 
-    fn search_hnsw(&self, query: &[f32], top_k: usize) -> Vec<(i64, f64)> {
+    pub fn search_hnsw(&self, query: &[f32], top_k: usize) -> Vec<(i64, f64)> {
+        self.search_hnsw_ef(query, top_k, 64)
+    }
+
+    pub fn search_hnsw_ef(&self, query: &[f32], top_k: usize, ef: usize) -> Vec<(i64, f64)> {
         // Fetch extra candidates to compensate for tombstoned slots.
         let fetch_k = (top_k * 4).max(top_k + 16);
-        let neighbours = self.hnsw.search(query, fetch_k, 64);
+        let neighbours = self.hnsw.search(query, fetch_k, ef);
         let mut results = Vec::with_capacity(top_k);
         for nb in neighbours {
             if let Some(Some(doc_id)) = self.id_map.get(nb.d_id) {

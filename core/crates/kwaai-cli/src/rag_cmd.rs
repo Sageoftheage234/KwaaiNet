@@ -43,8 +43,9 @@ pub async fn run(args: RagArgs) -> Result<()> {
             doc_name,
             chunk_size,
             chunk_overlap,
+            min_chunk_len,
             kb,
-        } => cmd_ingest(file, doc_name, chunk_size, chunk_overlap, kb).await,
+        } => cmd_ingest(file, doc_name, chunk_size, chunk_overlap, min_chunk_len, kb).await,
 
         RagAction::Query {
             text,
@@ -82,8 +83,11 @@ pub async fn run(args: RagArgs) -> Result<()> {
             delete,
             watch,
             interval,
+            chunk_size,
+            chunk_overlap,
+            min_chunk_len,
             kb,
-        } => cmd_sync(folder, extensions, delete, watch, interval, kb).await,
+        } => cmd_sync(folder, extensions, delete, watch, interval, chunk_size, chunk_overlap, min_chunk_len, kb).await,
     }
 }
 
@@ -257,6 +261,7 @@ async fn cmd_ingest(
     doc_name: Option<String>,
     chunk_size: usize,
     chunk_overlap: usize,
+    min_chunk_len: usize,
     kb: String,
 ) -> Result<()> {
     #[cfg(not(feature = "storage"))]
@@ -287,6 +292,7 @@ async fn cmd_ingest(
         let mut cfg = IngestConfig::new(embed);
         cfg.chunk_cfg.chunk_size = chunk_size;
         cfg.chunk_cfg.chunk_overlap = chunk_overlap;
+        cfg.chunk_cfg.min_chunk_len = min_chunk_len;
 
         let spinner = crate::progress::Spinner::start("Ingesting…");
 
@@ -890,6 +896,9 @@ async fn cmd_sync(
     delete: bool,
     watch: bool,
     interval: u64,
+    chunk_size: usize,
+    chunk_overlap: usize,
+    min_chunk_len: usize,
     kb: String,
 ) -> Result<()> {
     #[cfg(not(feature = "storage"))]
@@ -913,8 +922,10 @@ async fn cmd_sync(
         }
         print_separator();
 
+        let chunk_cfg = kwaai_rag::chunker::ChunkConfig { chunk_size, chunk_overlap, min_chunk_len };
+
         loop {
-            let result = run_sync_pass(&folder, &exts, delete, &kb).await?;
+            let result = run_sync_pass(&folder, &exts, delete, &kb, &chunk_cfg).await?;
 
             let SyncResult {
                 ingested,
@@ -953,6 +964,7 @@ async fn run_sync_pass(
     exts: &[String],
     delete: bool,
     kb: &str,
+    chunk_cfg: &kwaai_rag::chunker::ChunkConfig,
 ) -> Result<SyncResult> {
     use std::time::UNIX_EPOCH;
 
@@ -1015,7 +1027,8 @@ async fn run_sync_pass(
         };
 
         let embed = EmbedClient::new(None, Some(rag_cfg.embed_model.clone()));
-        let ingest_cfg = IngestConfig::new(embed);
+        let mut ingest_cfg = IngestConfig::new(embed);
+        ingest_cfg.chunk_cfg = chunk_cfg.clone();
 
         let ingest_result = match rag_cfg.storage_url.as_deref() {
             Some("local") => {

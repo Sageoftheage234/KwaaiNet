@@ -14,6 +14,6 @@ pub mod tenant;
 pub mod vectors;
 
 pub use api::run_storage_api;
-pub use db::StorageDb;
+pub use db::{StorageDb, TenantIndex};
 pub use tenant::{TenantInfo, TenantManager, TenantStats};
 pub use vectors::{SearchResult, VectorStore};

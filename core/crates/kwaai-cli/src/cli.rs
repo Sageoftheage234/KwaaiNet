@@ -1051,6 +1051,10 @@ pub enum RagAction {
         #[arg(long, default_value = "200")]
         chunk_overlap: usize,
 
+        /// Minimum chunk length in characters (shorter chunks are dropped)
+        #[arg(long, default_value = "100")]
+        min_chunk_len: usize,
+
         /// Knowledge base name (default: "default")
         #[arg(long, default_value = "default", value_name = "NAME")]
         kb: String,
@@ -1176,6 +1180,18 @@ pub enum RagAction {
         /// Polling interval in seconds (watch mode only)
         #[arg(long, default_value = "60")]
         interval: u64,
+
+        /// Chunk size in characters
+        #[arg(long, default_value = "800")]
+        chunk_size: usize,
+
+        /// Chunk overlap in characters
+        #[arg(long, default_value = "200")]
+        chunk_overlap: usize,
+
+        /// Minimum chunk length in characters (shorter chunks are dropped)
+        #[arg(long, default_value = "100")]
+        min_chunk_len: usize,
 
         /// Knowledge base name (default: "default")
         #[arg(long, default_value = "default", value_name = "NAME")]
