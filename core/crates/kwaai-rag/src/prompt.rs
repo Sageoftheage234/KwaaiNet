@@ -43,13 +43,15 @@ pub fn build_chat_messages(
                 in any excerpt, not just the first one.\n\
              2. Every factual claim must cite its source number in brackets, \
                 e.g. \"The author is Joe Rassool [9].\"\n\
-             3. Never fabricate facts, names, dates, or quotes.\n\
-             4. ONLY say you lack information if you have read every excerpt and found \
-                zero relevant content. If a name or fact appears anywhere in the excerpts, \
-                you must use it.\n\
-             5. For factual questions (who, what, where, when), give a direct answer \
-                first, then supporting detail. Do not hedge if the answer is in the sources.\n\
-             6. If sources partially address the question, synthesise what they do say.\n\n\
+             3. ABSOLUTE RULE — never invent, guess, or fabricate names, places, dates, \
+                or quotes. If a specific name is not written in the excerpts, do not produce it.\n\
+             4. If the answer is clearly present in the excerpts, give it directly — \
+                do not hedge. If it is absent, say exactly: \
+                \"The provided sources do not contain that information.\"\n\
+             5. For factual questions (who, what, where, when), state what the sources \
+                actually say first, then note any gaps.\n\
+             6. If sources partially address the question, synthesise what they do say \
+                and note what is missing.\n\n\
              Sources:\n{context}"
         ),
     };
