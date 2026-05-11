@@ -50,8 +50,9 @@ pub async fn run(args: RagArgs) -> Result<()> {
             extract_entities,
             inference_url,
             extraction_model,
+            chunk_strategy,
             kb,
-        } => cmd_ingest(file, doc_name, chunk_size, chunk_overlap, min_chunk_len, extract_entities, inference_url, extraction_model, kb).await,
+        } => cmd_ingest(file, doc_name, chunk_size, chunk_overlap, min_chunk_len, extract_entities, inference_url, extraction_model, chunk_strategy, kb).await,
 
         RagAction::Query {
             text,
@@ -102,8 +103,9 @@ pub async fn run(args: RagArgs) -> Result<()> {
             extract_entities,
             inference_url,
             extraction_model,
+            chunk_strategy,
             kb,
-        } => cmd_sync(folder, extensions, delete, watch, interval, chunk_size, chunk_overlap, min_chunk_len, extract_entities, inference_url, extraction_model, kb).await,
+        } => cmd_sync(folder, extensions, delete, watch, interval, chunk_size, chunk_overlap, min_chunk_len, extract_entities, inference_url, extraction_model, chunk_strategy, kb).await,
 
         RagAction::Graph { action, kb } => cmd_graph(action, kb).await,
 
@@ -289,6 +291,7 @@ async fn cmd_ingest(
     extract_entities: bool,
     inference_url: Option<String>,
     extraction_model: String,
+    chunk_strategy: String,
     kb: String,
 ) -> Result<()> {
     #[cfg(not(feature = "storage"))]
@@ -320,6 +323,7 @@ async fn cmd_ingest(
         cfg.chunk_cfg.chunk_size = chunk_size;
         cfg.chunk_cfg.chunk_overlap = chunk_overlap;
         cfg.chunk_cfg.min_chunk_len = min_chunk_len;
+        cfg.chunk_cfg.strategy = parse_chunk_strategy(&chunk_strategy);
 
         if extract_entities {
             let infer_url = inference_url
@@ -958,6 +962,13 @@ async fn sync_delete_vectors(rag_cfg: &RagConfig, tenant_id: uuid::Uuid, ids: Ve
     };
 }
 
+fn parse_chunk_strategy(s: &str) -> kwaai_rag::chunker::ChunkStrategy {
+    match s.to_lowercase().as_str() {
+        "paragraph" => kwaai_rag::chunker::ChunkStrategy::Paragraph,
+        _ => kwaai_rag::chunker::ChunkStrategy::Character,
+    }
+}
+
 fn truncate(s: &str, max: usize) -> &str {
     let mut end = s.len().min(max);
     while !s.is_char_boundary(end) {
@@ -1023,6 +1034,7 @@ async fn cmd_sync(
     extract_entities: bool,
     inference_url: Option<String>,
     extraction_model: String,
+    chunk_strategy: String,
     kb: String,
 ) -> Result<()> {
     #[cfg(not(feature = "storage"))]
@@ -1049,7 +1061,12 @@ async fn cmd_sync(
         }
         print_separator();
 
-        let chunk_cfg = kwaai_rag::chunker::ChunkConfig { chunk_size, chunk_overlap, min_chunk_len };
+        let chunk_cfg = kwaai_rag::chunker::ChunkConfig {
+            chunk_size,
+            chunk_overlap,
+            min_chunk_len,
+            strategy: parse_chunk_strategy(&chunk_strategy),
+        };
 
         loop {
             let result = run_sync_pass(&folder, &exts, delete, &kb, &chunk_cfg, extract_entities, inference_url.clone(), extraction_model.clone()).await?;
