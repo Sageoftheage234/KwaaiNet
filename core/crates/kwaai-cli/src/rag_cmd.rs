@@ -119,6 +119,7 @@ pub async fn run(args: RagArgs) -> Result<()> {
             inference_url,
             model,
             top_k,
+            mode,
             hyde,
             hyde_alpha,
             rerank,
@@ -126,7 +127,7 @@ pub async fn run(args: RagArgs) -> Result<()> {
             llm_judge,
             judge_model,
             output,
-        } => cmd_eval(questions, kb, inference_url, model, top_k, hyde, hyde_alpha, rerank, understand, llm_judge, judge_model, output).await,
+        } => cmd_eval(questions, kb, inference_url, model, top_k, mode, hyde, hyde_alpha, rerank, understand, llm_judge, judge_model, output).await,
     }
 }
 
@@ -1509,6 +1510,7 @@ async fn cmd_eval(
     inference_url: String,
     model: String,
     top_k: usize,
+    mode: String,
     hyde: bool,
     hyde_alpha: Option<f32>,
     rerank: bool,
@@ -1554,11 +1556,18 @@ async fn cmd_eval(
             hyde_alpha: if hyde { Some(hyde_alpha.unwrap_or(0.5)) } else { None },
         };
 
+        // Resolve "auto" mode: use graph if the KB has entities, else vector.
+        let effective_mode = if mode == "auto" {
+            if let Ok(g) = GraphStore::open(&rag_cfg.data_dir(), tenant_id) {
+                if g.node_count() > 0 { "graph" } else { "vector" }
+            } else { "vector" }
+        } else { mode.as_str() };
+
         print_box_header(&format!("RAG Eval  ({} questions, kb={})", questions.len(), kb));
         println!("  Model:     {model}");
         println!("  Inference: {inference_url}");
         let judge_mdl = judge_model.as_deref().unwrap_or(&model);
-        println!("  top_k={top_k}  hyde={hyde}  rerank={rerank}  understand={understand}  llm_judge={llm_judge}");
+        println!("  top_k={top_k}  mode={effective_mode}  hyde={hyde}  rerank={rerank}  understand={understand}  llm_judge={llm_judge}");
         if llm_judge { println!("  Judge model: {judge_mdl}"); }
         print_separator();
 
@@ -1591,7 +1600,12 @@ async fn cmd_eval(
                 }) as Pin<Box<dyn std::future::Future<Output = Result<Vec<(i64, f64)>>> + Send>>
             };
 
-            let mut chunks = if understand {
+            let mut chunks = if effective_mode == "graph" {
+                let graph = GraphStore::open(&rag_cfg.data_dir(), tenant_id)
+                    .context("opening graph store")?;
+                retrieve_graph_anchored(&q.question, &retrieve_cfg, &embed, &meta, &graph, search_fn)
+                    .await.unwrap_or_default()
+            } else if understand {
                 kwaai_rag::query_understanding::retrieve_with_understanding(
                     &q.question, &retrieve_cfg, &embed, &meta,
                     &inference_url, &model, search_fn,
@@ -1615,7 +1629,7 @@ async fn cmd_eval(
                 .collect();
 
             // Generate answer.
-            let messages = build_chat_messages(&q.question, &chunks, &[], 8192);
+            let messages = build_chat_messages(&q.question, &chunks, &[], 24000);
             let payload = serde_json::json!({
                 "model": model,
                 "messages": messages,

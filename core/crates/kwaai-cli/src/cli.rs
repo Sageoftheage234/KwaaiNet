@@ -1312,6 +1312,10 @@ pub enum RagAction {
         #[arg(long, short = 'k', default_value = "5")]
         top_k: usize,
 
+        /// Retrieval mode: "vector" (default hybrid), "graph" (entity-anchored), "auto" (router)
+        #[arg(long, default_value = "vector", value_name = "MODE")]
+        mode: String,
+
         /// Use HyDE: embed a hypothetical answer instead of the raw query
         #[arg(long)]
         hyde: bool,
