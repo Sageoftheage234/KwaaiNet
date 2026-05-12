@@ -52,6 +52,7 @@ pub async fn run(args: RagArgs) -> Result<()> {
             inference_url,
             extraction_model,
             chunk_strategy,
+            surr_mode,
             doc_meta,
             kb,
         } => {
@@ -65,6 +66,7 @@ pub async fn run(args: RagArgs) -> Result<()> {
                 inference_url,
                 extraction_model,
                 chunk_strategy,
+                surr_mode,
                 doc_meta,
                 kb,
             )
@@ -151,6 +153,7 @@ pub async fn run(args: RagArgs) -> Result<()> {
             inference_url,
             extraction_model,
             chunk_strategy,
+            surr_mode,
             doc_meta,
             kb,
         } => {
@@ -167,6 +170,7 @@ pub async fn run(args: RagArgs) -> Result<()> {
                 inference_url,
                 extraction_model,
                 chunk_strategy,
+                surr_mode,
                 doc_meta,
                 kb,
             )
@@ -420,6 +424,7 @@ async fn cmd_ingest(
     inference_url: Option<String>,
     extraction_model: String,
     chunk_strategy: String,
+    surr_mode: String,
     doc_meta_path: Option<std::path::PathBuf>,
     kb: String,
 ) -> Result<()> {
@@ -453,6 +458,7 @@ async fn cmd_ingest(
         cfg.chunk_cfg.chunk_overlap = chunk_overlap;
         cfg.chunk_cfg.min_chunk_len = min_chunk_len;
         cfg.chunk_cfg.strategy = parse_chunk_strategy(&chunk_strategy);
+        cfg.chunk_cfg.surr_mode = parse_surr_mode(&surr_mode);
 
         if let Some(path) = doc_meta_path {
             cfg.doc_meta = load_doc_meta(&path)?;
@@ -1232,6 +1238,13 @@ async fn sync_delete_vectors(rag_cfg: &RagConfig, tenant_id: uuid::Uuid, ids: Ve
     };
 }
 
+fn parse_surr_mode(s: &str) -> kwaai_rag::chunker::SurrMode {
+    match s.to_lowercase().as_str() {
+        "full" => kwaai_rag::chunker::SurrMode::Full,
+        _ => kwaai_rag::chunker::SurrMode::Truncated,
+    }
+}
+
 fn parse_chunk_strategy(s: &str) -> kwaai_rag::chunker::ChunkStrategy {
     match s.to_lowercase().as_str() {
         "paragraph" => kwaai_rag::chunker::ChunkStrategy::Paragraph,
@@ -1313,6 +1326,7 @@ async fn cmd_sync(
     inference_url: Option<String>,
     extraction_model: String,
     chunk_strategy: String,
+    surr_mode: String,
     doc_meta_path: Option<std::path::PathBuf>,
     kb: String,
 ) -> Result<()> {
@@ -1353,6 +1367,7 @@ async fn cmd_sync(
             chunk_overlap,
             min_chunk_len,
             strategy: parse_chunk_strategy(&chunk_strategy),
+            surr_mode: parse_surr_mode(&surr_mode),
         };
 
         loop {

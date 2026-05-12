@@ -1081,6 +1081,11 @@ pub enum RagAction {
         #[arg(long, default_value = "character", value_name = "STRATEGY")]
         chunk_strategy: String,
 
+        /// Surrounding context mode: "truncated" (±chunk_size/4 chars, default) or
+        /// "full" (complete adjacent paragraphs passed to LLM; paragraph strategy only)
+        #[arg(long, default_value = "truncated", value_name = "MODE")]
+        surr_mode: String,
+
         /// YAML file mapping doc-name substrings to metadata prefixes prepended to each chunk.
         /// Example: intro.docx: "Author: Y.S. Rassool."
         #[arg(long, value_name = "YAML_FILE")]
@@ -1275,6 +1280,11 @@ pub enum RagAction {
         /// Chunking strategy: "character" (default sliding-window) or "paragraph" (semantic)
         #[arg(long, default_value = "character", value_name = "STRATEGY")]
         chunk_strategy: String,
+
+        /// Surrounding context mode: "truncated" (±chunk_size/4 chars, default) or
+        /// "full" (complete adjacent paragraphs passed to LLM; paragraph strategy only)
+        #[arg(long, default_value = "truncated", value_name = "MODE")]
+        surr_mode: String,
 
         /// YAML file mapping doc-name substrings to metadata prefixes prepended to each chunk.
         /// Example: intro.docx: "Author: Y.S. Rassool."

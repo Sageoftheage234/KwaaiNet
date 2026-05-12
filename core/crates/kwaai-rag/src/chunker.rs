@@ -7,6 +7,19 @@ pub enum ChunkStrategy {
     Paragraph, // paragraph → sentence → character cascade (semantic)
 }
 
+/// Controls how much surrounding context is stored alongside each chunk.
+///
+/// `Truncated` (default): ±(chunk_size/4) chars from adjacent chunks.
+/// `Full`: for paragraph strategy, the complete adjacent chunks are included,
+///   giving the LLM full enclosing paragraphs without altering the retrieval
+///   embedding (which is always computed on the narrow chunk text only).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum SurrMode {
+    #[default]
+    Truncated,
+    Full,
+}
+
 #[derive(Debug, Clone)]
 pub struct ChunkConfig {
     pub chunk_size: usize,
@@ -14,6 +27,7 @@ pub struct ChunkConfig {
     /// Chunks shorter than this (in chars) are dropped.
     pub min_chunk_len: usize,
     pub strategy: ChunkStrategy,
+    pub surr_mode: SurrMode,
 }
 
 impl Default for ChunkConfig {
@@ -23,6 +37,7 @@ impl Default for ChunkConfig {
             chunk_overlap: 200,
             min_chunk_len: 20,
             strategy: ChunkStrategy::Character,
+            surr_mode: SurrMode::Truncated,
         }
     }
 }
@@ -113,20 +128,36 @@ fn split_paragraph(text: &str, doc_name: &str, cfg: &ChunkConfig) -> Vec<Chunk> 
             continue;
         }
 
-        // Surrounding: tail of prev chunk + this chunk + head of next chunk.
         let mut surrounding = String::new();
-        if i > 0 {
-            let prev: Vec<char> = chunk_texts[i - 1].chars().collect();
-            let tail_start = prev.len().saturating_sub(surr_half);
-            surrounding.push_str(&prev[tail_start..].iter().collect::<String>());
-            surrounding.push(' ');
-        }
-        surrounding.push_str(text_str);
-        if i + 1 < chunk_texts.len() {
-            let next: Vec<char> = chunk_texts[i + 1].chars().collect();
-            let head_end = next.len().min(surr_half);
-            surrounding.push(' ');
-            surrounding.push_str(&next[..head_end].iter().collect::<String>());
+        match cfg.surr_mode {
+            SurrMode::Full => {
+                // Complete adjacent chunks — no truncation.
+                if i > 0 {
+                    surrounding.push_str(&chunk_texts[i - 1]);
+                    surrounding.push(' ');
+                }
+                surrounding.push_str(text_str);
+                if i + 1 < chunk_texts.len() {
+                    surrounding.push(' ');
+                    surrounding.push_str(&chunk_texts[i + 1]);
+                }
+            }
+            SurrMode::Truncated => {
+                // ±(chunk_size/4) chars from adjacent chunks.
+                if i > 0 {
+                    let prev: Vec<char> = chunk_texts[i - 1].chars().collect();
+                    let tail_start = prev.len().saturating_sub(surr_half);
+                    surrounding.push_str(&prev[tail_start..].iter().collect::<String>());
+                    surrounding.push(' ');
+                }
+                surrounding.push_str(text_str);
+                if i + 1 < chunk_texts.len() {
+                    let next: Vec<char> = chunk_texts[i + 1].chars().collect();
+                    let head_end = next.len().min(surr_half);
+                    surrounding.push(' ');
+                    surrounding.push_str(&next[..head_end].iter().collect::<String>());
+                }
+            }
         }
 
         result.push(Chunk {
