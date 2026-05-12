@@ -1410,6 +1410,11 @@ pub enum GraphAction {
         /// Process at most this many chunks (default: all)
         #[arg(long, value_name = "N")]
         limit: Option<usize>,
+
+        /// Only process chunks from documents whose name contains one of these substrings
+        /// (comma-separated, case-insensitive). Example: --docs "Part_1,intro"
+        #[arg(long, value_name = "PATTERNS")]
+        docs: Option<String>,
     },
 
     /// Seed the graph from a ground-truth YAML family tree — merges aliases and plants family relations

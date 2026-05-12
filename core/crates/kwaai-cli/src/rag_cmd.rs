@@ -1638,22 +1638,42 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                 inference_url,
                 model,
                 limit,
+                docs,
             } => {
                 let infer_url = inference_url.unwrap_or_else(|| rag_cfg.inference_url.clone());
 
                 let meta = MetaStore::open(&rag_cfg.data_dir(), tenant_id)?;
                 let mut all_chunks = meta.all_chunks()?;
+
+                // Filter by document name patterns if --docs is set
+                if let Some(ref patterns) = docs {
+                    let pats: Vec<String> = patterns
+                        .split(',')
+                        .map(|s| s.trim().to_lowercase())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                    if !pats.is_empty() {
+                        all_chunks.retain(|(_, cm)| {
+                            let name = cm.doc_name.to_lowercase();
+                            pats.iter().any(|p| name.contains(p.as_str()))
+                        });
+                    }
+                }
+
                 if let Some(n) = limit {
                     all_chunks.truncate(n);
                 }
                 let total = all_chunks.len();
 
                 if total == 0 {
-                    print_warning("No chunks found — ingest documents first.");
+                    print_warning("No chunks found — ingest documents first (or check --docs filter).");
                     return Ok(());
                 }
 
                 print_box_header(&format!("Graph Build ({})", kb));
+                if let Some(ref p) = docs {
+                    println!("  Doc filter:        {p}");
+                }
                 println!("  Chunks to process: {total}");
                 println!("  Inference URL:     {infer_url}");
                 println!("  This may take a while — one LLM call per chunk.\n");
