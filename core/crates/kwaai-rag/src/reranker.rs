@@ -59,7 +59,7 @@ pub async fn rerank_chunks(
             reranked
         }
         Err(e) => {
-            tracing::warn!("reranker failed, using original order: {e}");
+            tracing::debug!("reranker failed, using original order: {e}");
             candidates.truncate(top_k);
             candidates
         }
@@ -99,11 +99,13 @@ async fn rerank_inner(
         "{}/v1/chat/completions",
         inference_url.trim_end_matches('/')
     );
+    // Each index needs ~4 chars + separators; give a comfortable margin.
+    let max_tokens = (n * 6).max(256).min(512) as u64;
     let body = json!({
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.0,
-        "max_tokens": 128,
+        "max_tokens": max_tokens,
     });
 
     let resp = client.post(&url).json(&body).send().await?;
@@ -113,16 +115,23 @@ async fn rerank_inner(
     }
 
     let v: serde_json::Value = resp.json().await?;
-    let content = v["choices"][0]["message"]["content"]
+    let raw = v["choices"][0]["message"]["content"]
         .as_str()
         .unwrap_or("")
         .trim()
-        .trim_start_matches("```json")
-        .trim_start_matches("```")
-        .trim_end_matches("```")
-        .trim()
         .to_string();
 
-    let indices: Vec<usize> = serde_json::from_str(&content)?;
+    // Extract the JSON array even if the model wraps it in fences or adds preamble.
+    let content = if let (Some(start), Some(end)) = (raw.find('['), raw.rfind(']')) {
+        &raw[start..=end]
+    } else {
+        raw.trim_start_matches("```json")
+            .trim_start_matches("```")
+            .trim_end_matches("```")
+            .trim()
+    };
+
+    let indices: Vec<usize> = serde_json::from_str(content)
+        .map_err(|e| anyhow::anyhow!("could not parse reranker response as index array: {e}\nraw: {raw:?}"))?;
     Ok(indices)
 }

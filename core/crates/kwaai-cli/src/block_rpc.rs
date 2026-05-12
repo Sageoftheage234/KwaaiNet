@@ -26,7 +26,7 @@ use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 // ── Lazy-load cell ─────────────────────────────────────────────────────────────
 
@@ -155,6 +155,8 @@ pub fn bytes_to_token_ids(bytes: &[u8]) -> Result<Vec<u32>> {
 /// Call a block server's inference handler and return the decoded response.
 ///
 /// `peer_id_bytes` should be obtained via `peer.to_bytes()` from a `libp2p::PeerId`.
+/// Transient stream errors ("stream reset", "early eof", "connection closed") are
+/// retried up to 2 times with 200 ms / 400 ms back-off before returning failure.
 pub async fn call_block_forward(
     client: &P2PClient,
     peer_id: &PeerId,
@@ -170,19 +172,47 @@ pub async fn call_block_forward(
         peer_id
     );
 
-    let resp_bytes = client
-        .call_unary_handler(&peer_bytes, INFERENCE_PROTO, &req_bytes)
-        .await
-        .context("call_unary_handler")?;
+    const MAX_RETRIES: usize = 2;
+    let mut last_err = anyhow::anyhow!("no attempts made");
 
-    let response: InferenceResponse =
-        rmp_serde::from_slice(&resp_bytes).context("deserialise InferenceResponse")?;
+    for attempt in 0..=MAX_RETRIES {
+        if attempt > 0 {
+            let delay_ms = 200u64 * attempt as u64;
+            debug!("Retrying inference call to {} after {}ms (attempt {})", peer_id, delay_ms, attempt + 1);
+            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+        }
 
-    if let Some(ref err) = response.error {
-        bail!("Remote inference error: {err}");
+        let resp_bytes = match client
+            .call_unary_handler(&peer_bytes, INFERENCE_PROTO, &req_bytes)
+            .await
+        {
+            Ok(b) => b,
+            Err(e) => {
+                let e_str = format!("{e:#}");
+                let is_transient = e_str.contains("stream reset")
+                    || e_str.contains("early eof")
+                    || e_str.contains("connection closed")
+                    || e_str.contains("Response channel closed");
+                last_err = anyhow::anyhow!("{e:#}").context("call_unary_handler");
+                if is_transient && attempt < MAX_RETRIES {
+                    warn!("Transient error calling peer {} (will retry): {}", peer_id, e_str);
+                    continue;
+                }
+                return Err(last_err);
+            }
+        };
+
+        let response: InferenceResponse =
+            rmp_serde::from_slice(&resp_bytes).context("deserialise InferenceResponse")?;
+
+        if let Some(ref err) = response.error {
+            bail!("Remote inference error: {err}");
+        }
+
+        return Ok(response);
     }
 
-    Ok(response)
+    Err(last_err)
 }
 
 // ── Server handler factory ────────────────────────────────────────────────────

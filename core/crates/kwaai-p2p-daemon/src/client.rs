@@ -596,12 +596,19 @@ impl P2PClient {
 
     // ===== Persistent Connection / Unary Handler Support =====
 
-    /// Get or create a persistent connection for unary RPC calls
+    /// Get or create a persistent connection for unary RPC calls.
+    /// If the cached connection's reader task has exited (stream reset / early eof),
+    /// it is evicted and a fresh connection is established automatically.
     async fn get_persistent_connection(&self) -> Result<Arc<PersistentConnection>> {
         let mut guard = self.persistent.lock().await;
 
         if let Some(conn) = guard.as_ref() {
-            return Ok(conn.clone());
+            if conn.is_alive() {
+                return Ok(conn.clone());
+            }
+            // Reader task has exited — evict and reconnect.
+            debug!("Persistent connection is dead, reconnecting");
+            *guard = None;
         }
 
         // Need to create persistent connection

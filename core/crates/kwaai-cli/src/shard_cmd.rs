@@ -2298,9 +2298,12 @@ pub async fn forward_through_chain(
                         }
                     }
                     let err_str = format!("{e:#}");
+                    let is_transient = err_str.contains("stream reset")
+                        || err_str.contains("early eof")
+                        || err_str.contains("connection closed");
                     // Protocol negotiation failures mean the peer has no inference
-                    // handler registered (running `kwaainet start` but not
-                    // `kwaainet shard serve`).  Blacklist for this session.
+                    // handler registered — blacklist for the session.
+                    // Transient stream errors are NOT blacklisted: the peer may recover.
                     if err_str.contains("protocols not supported") {
                         failed_peers.insert(candidate.peer_id.clone());
                         print_warning(&format!(
@@ -2313,7 +2316,20 @@ pub async fn forward_through_chain(
                                 .collect::<String>(),
                             candidate.public_name,
                         ));
+                    } else if is_transient {
+                        // Transient: warn but keep peer eligible for future tokens.
+                        print_warning(&format!(
+                            "Peer {} ({}) transient error (not blacklisted): {e:#}",
+                            candidate
+                                .peer_id
+                                .to_base58()
+                                .chars()
+                                .take(12)
+                                .collect::<String>(),
+                            candidate.public_name,
+                        ));
                     } else {
+                        failed_peers.insert(candidate.peer_id.clone());
                         print_warning(&format!(
                             "Peer {} ({}) failed: {e:#}",
                             candidate

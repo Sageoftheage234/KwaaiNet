@@ -91,7 +91,20 @@ impl PersistentConnection {
                 let msg_bytes = match Self::read_varint_message(&mut reader).await {
                     Ok(bytes) => bytes,
                     Err(e) => {
-                        error!("Failed to read persistent connection message: {}", e);
+                        // EOF and stream-reset are normal when the remote peer closes the
+                        // connection.  Log at warn so they're visible but not alarming.
+                        let e_str = e.to_string();
+                        if e_str.contains("early eof") || e_str.contains("unexpected eof") || e_str.contains("stream reset") {
+                            warn!("Persistent connection closed by remote: {}", e);
+                        } else {
+                            error!("Failed to read persistent connection message: {}", e);
+                        }
+                        // Drain all pending calls so their awaiters unblock immediately
+                        // rather than hanging until the oneshot sender is dropped.
+                        let mut calls = pending_calls.lock().await;
+                        for (_, tx) in calls.drain() {
+                            let _ = tx.send(Err(Error::Protocol(format!("connection closed: {e}"))));
+                        }
                         break;
                     }
                 };
@@ -293,7 +306,12 @@ impl PersistentConnection {
             }
             Some(persistent_connection_response::Message::DaemonError(err)) => {
                 let err_msg = err.message.unwrap_or_else(|| "Unknown error".to_string());
-                error!("Daemon error for call {}: {}", call_id, err_msg);
+                // "stream reset" is a transient network event, not a bug — log at debug.
+                if err_msg.contains("stream reset") || err_msg.contains("early eof") {
+                    debug!("Daemon transient error for call {}: {}", call_id, err_msg);
+                } else {
+                    warn!("Daemon error for call {}: {}", call_id, err_msg);
+                }
                 Err(Error::Protocol(format!("Daemon error: {}", err_msg)))
             }
             _ => Err(Error::Protocol("Unexpected response type".to_string())),
@@ -473,6 +491,14 @@ impl PersistentConnection {
         writer.flush().await.map_err(Error::Io)?;
 
         Ok(())
+    }
+
+    /// Returns false if the background reader task has exited (connection is dead).
+    pub fn is_alive(&self) -> bool {
+        self.reader_task
+            .as_ref()
+            .map(|t| !t.is_finished())
+            .unwrap_or(false)
     }
 }
 
