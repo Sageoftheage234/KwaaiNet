@@ -1,0 +1,158 @@
+//! Seed a knowledge graph from a ground-truth family tree YAML file.
+//!
+//! This module is used by `kwaainet rag graph seed` to:
+//!   1. Upsert canonical Person entities (with authoritative descriptions + embeddings).
+//!   2. Merge known alias entities into each canonical (re-pointing all their relations).
+//!   3. Upsert ground-truth family relations (parent_of, spouse_of, sibling_of, etc.).
+//!
+//! The YAML format is documented in `tests/d6_family_tree.yaml`.
+
+use anyhow::Result;
+use serde::Deserialize;
+use std::path::Path;
+
+use crate::embedder::EmbedClient;
+use crate::graph::{entity_id, normalize_name, EntityNode, GraphStore};
+
+// ── YAML types ────────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct FamilyTree {
+    pub persons: Vec<PersonSeed>,
+    #[serde(default)]
+    pub relations: Vec<RelationSeed>,
+}
+
+#[derive(Deserialize)]
+pub struct PersonSeed {
+    pub canonical: String,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    #[serde(default)]
+    pub description: String,
+}
+
+#[derive(Deserialize)]
+pub struct RelationSeed {
+    pub from: String,
+    pub to: String,
+    #[serde(rename = "type")]
+    pub relation_type: String,
+}
+
+// ── Stats ─────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Default)]
+pub struct SeedStats {
+    pub entities_upserted: usize,
+    pub aliases_merged: usize,
+    pub relations_merged: usize,
+    pub relations_upserted: usize,
+    pub aliases_not_found: usize,
+}
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+pub fn load_family_tree(path: &Path) -> Result<FamilyTree> {
+    let raw = std::fs::read_to_string(path)?;
+    Ok(serde_yaml::from_str(&raw)?)
+}
+
+/// Seed the graph with canonical Person entities, merge aliases, and plant family relations.
+///
+/// The progress callback receives short status strings suitable for printing to a terminal.
+pub async fn seed_family_tree(
+    graph: &mut GraphStore,
+    tree: &FamilyTree,
+    embed: &EmbedClient,
+    mut progress: impl FnMut(&str),
+) -> Result<SeedStats> {
+    let mut stats = SeedStats::default();
+
+    // ── Pass 1: upsert canonical entities and merge aliases ───────────────────
+    for person in &tree.persons {
+        progress(&format!("seeding {}", person.canonical));
+
+        let embedding = if !person.description.is_empty() {
+            embed.embed_one(&person.description).await.unwrap_or_default()
+        } else {
+            vec![]
+        };
+
+        let eid = entity_id(&person.canonical, "Person");
+        let existing = graph.get_entity(eid).cloned();
+
+        let node = EntityNode {
+            id: eid,
+            name: person.canonical.clone(),
+            entity_type: "Person".to_string(),
+            description: if !person.description.is_empty() {
+                person.description.trim().to_string()
+            } else {
+                existing.as_ref().map(|e| e.description.clone()).unwrap_or_default()
+            },
+            embedding: if !embedding.is_empty() {
+                embedding
+            } else {
+                existing.as_ref().map(|e| e.embedding.clone()).unwrap_or_default()
+            },
+            mention_count: existing.as_ref().map(|e| e.mention_count).unwrap_or(1).max(1),
+            first_chunk_id: existing.as_ref().map(|e| e.first_chunk_id).unwrap_or(0),
+        };
+
+        graph.upsert_entity(node)?;
+        stats.entities_upserted += 1;
+
+        // Merge each alias into the canonical entity
+        for alias in &person.aliases {
+            let alias_node = find_alias(graph, alias);
+            match alias_node {
+                Some(alias_id) if alias_id != eid => {
+                    progress(&format!("  merged '{}' → '{}'", alias, person.canonical));
+                    let moved = graph.merge_entity_into(alias_id, eid)?;
+                    stats.aliases_merged += 1;
+                    stats.relations_merged += moved;
+                }
+                None => {
+                    tracing::debug!("alias '{}' not found in graph — skipping", alias);
+                    stats.aliases_not_found += 1;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // Rebuild adjacency after all merges before upsetting relations
+    graph.rebuild_in_memory()?;
+
+    // ── Pass 2: upsert ground-truth family relations ──────────────────────────
+    for rel in &tree.relations {
+        let from_id = find_alias(graph, &rel.from);
+        let to_id = find_alias(graph, &rel.to);
+
+        match (from_id, to_id) {
+            (Some(fid), Some(tid)) => {
+                graph.upsert_relation(fid, tid, &rel.relation_type, 0)?;
+                stats.relations_upserted += 1;
+            }
+            _ => {
+                tracing::warn!(
+                    "relation '{}' → '{}' [{}]: one or both endpoints not in graph",
+                    rel.from, rel.to, rel.relation_type
+                );
+            }
+        }
+    }
+
+    Ok(stats)
+}
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+/// Try exact name match first, then normalized (strips punctuation).
+fn find_alias(graph: &GraphStore, name: &str) -> Option<i64> {
+    graph
+        .find_by_name(name)
+        .or_else(|| graph.find_by_name_normalized(name))
+        .map(|n| n.id)
+}

@@ -1,5 +1,6 @@
 pub mod bm25;
 pub mod cache;
+pub mod family;
 pub mod chunker;
 pub mod document;
 pub mod embedder;

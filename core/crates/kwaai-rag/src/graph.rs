@@ -50,6 +50,21 @@ pub const ENTITY_TYPES: &[&str] = &[
 
 /// Supported relation types for LLM extraction prompts.
 pub const RELATION_TYPES: &[&str] = &[
+    // Family — explicit so LLM uses precise terms instead of "related_to"
+    "parent_of",
+    "child_of",
+    "spouse_of",
+    "sibling_of",
+    "half_sibling_of",
+    "grandparent_of",
+    "grandchild_of",
+    "uncle_of",
+    "aunt_of",
+    "niece_of",
+    "nephew_of",
+    "cousin_of",
+    "foster_parent_of",
+    "foster_child_of",
     // Agent
     "works_at",
     "founded",
@@ -141,6 +156,19 @@ pub fn entity_id(name: &str, entity_type: &str) -> i64 {
     h.update(entity_type.as_bytes());
     let d = h.finalize();
     i64::from_le_bytes(d[..8].try_into().unwrap())
+}
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+/// Strip punctuation, collapse whitespace, lowercase — used for fuzzy name matching.
+pub fn normalize_name(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_alphanumeric() { c } else { ' ' })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 // ── GraphStore ────────────────────────────────────────────────────────────────
@@ -519,6 +547,123 @@ impl GraphStore {
             .get(&entity_id)
             .map(|v| v.as_slice())
             .unwrap_or(&[])
+    }
+
+    /// Case-insensitive name match after stripping non-alphanumeric chars.
+    /// Matches "J.M.H. Gool" == "JMH Gool", "Abdul Hamid (BG)" == "Abdul Hamid BG", etc.
+    pub fn find_by_name_normalized(&self, name: &str) -> Option<&EntityNode> {
+        let norm = normalize_name(name);
+        self.nodes.values().find(|n| normalize_name(&n.name) == norm)
+    }
+
+    /// Merge all relations from `alias_id` into `canonical_id` and delete the alias entity.
+    ///
+    /// After this call `alias_id` no longer exists in the graph. The in-memory `nodes`
+    /// map is updated immediately (alias removed, canonical mention_count bumped) so
+    /// subsequent `find_by_name` calls within the same session work correctly. Call
+    /// `rebuild_in_memory()` once after a batch of merges to fully resync the adjacency list.
+    pub fn merge_entity_into(&mut self, alias_id: i64, canonical_id: i64) -> Result<usize> {
+        if alias_id == canonical_id {
+            return Ok(0);
+        }
+
+        let alias_mention_count = self.nodes.get(&alias_id).map(|n| n.mention_count).unwrap_or(0);
+
+        // ── 1. Collect relations involving alias_id ─────────────────────────
+        let mut to_rewrite: Vec<RelationRecord> = vec![];
+        {
+            let rtxn = self.db.begin_read()?;
+            let table = rtxn.open_table(RELATIONS_TABLE)?;
+            for entry in table.iter()? {
+                let (_, v) = entry?;
+                let rel: RelationRecord = serde_json::from_slice(v.value())?;
+                if rel.src_id == alias_id || rel.dst_id == alias_id {
+                    to_rewrite.push(rel);
+                }
+            }
+        }
+        let n_moved = to_rewrite.len();
+
+        // ── 2. Rewrite relations in one transaction ─────────────────────────
+        {
+            let wtxn = self.db.begin_write()?;
+            {
+                let mut t = wtxn.open_table(RELATIONS_TABLE)?;
+                for rel in &to_rewrite {
+                    let old_key = relation_key(rel.src_id, rel.dst_id, &rel.relation_type);
+                    t.remove(old_key.as_slice())?;
+
+                    let new_src = if rel.src_id == alias_id { canonical_id } else { rel.src_id };
+                    let new_dst = if rel.dst_id == alias_id { canonical_id } else { rel.dst_id };
+                    if new_src == new_dst {
+                        continue; // skip self-loops
+                    }
+                    let new_key = relation_key(new_src, new_dst, &rel.relation_type);
+                    let merged = match t.get(new_key.as_slice())? {
+                        Some(v) => {
+                            let mut e: RelationRecord = serde_json::from_slice(v.value())?;
+                            for cid in &rel.evidence_chunk_ids {
+                                if !e.evidence_chunk_ids.contains(cid) {
+                                    e.evidence_chunk_ids.push(*cid);
+                                }
+                            }
+                            e.strength =
+                                (e.evidence_chunk_ids.len() as f32 / 10.0).min(1.0);
+                            e
+                        }
+                        None => RelationRecord {
+                            src_id: new_src,
+                            dst_id: new_dst,
+                            relation_type: rel.relation_type.clone(),
+                            strength: rel.strength,
+                            evidence_chunk_ids: rel.evidence_chunk_ids.clone(),
+                        },
+                    };
+                    t.insert(new_key.as_slice(), serde_json::to_vec(&merged)?.as_slice())?;
+                }
+            }
+            wtxn.commit()?;
+        }
+
+        // ── 3. Delete alias entity + boost canonical mention_count ──────────
+        {
+            let wtxn = self.db.begin_write()?;
+            {
+                let mut et = wtxn.open_table(ENTITIES_TABLE)?;
+                et.remove(&alias_id.to_le_bytes()[..])?;
+
+                if let Some(canonical) = self.nodes.get(&canonical_id).cloned() {
+                    let updated = EntityNode {
+                        mention_count: canonical.mention_count + alias_mention_count,
+                        ..canonical
+                    };
+                    et.insert(
+                        &canonical_id.to_le_bytes()[..],
+                        serde_json::to_vec(&updated)?.as_slice(),
+                    )?;
+                }
+            }
+            wtxn.commit()?;
+        }
+
+        // ── 4. Update in-memory state immediately ───────────────────────────
+        self.nodes.remove(&alias_id);
+        if let Some(node) = self.nodes.get_mut(&canonical_id) {
+            node.mention_count += alias_mention_count;
+        }
+        // Leave adj stale — caller should call rebuild_in_memory() after a batch.
+
+        Ok(n_moved)
+    }
+
+    /// Fully reload in-memory state from the database.
+    /// Call once after a batch of `merge_entity_into` calls.
+    pub fn rebuild_in_memory(&mut self) -> Result<()> {
+        self.nodes.clear();
+        self.adj.clear();
+        self.chunk_to_entities.clear();
+        self.entity_to_chunks.clear();
+        self.rebuild()
     }
 }
 

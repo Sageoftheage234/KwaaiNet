@@ -10,6 +10,7 @@ use kwaai_rag::{
     cache::QueryCache,
     document,
     embedder::EmbedClient,
+    family,
     graph::GraphStore,
     ingestion::{ingest_text, GraphIngestConfig, IngestConfig},
     meta_store::{MetaStore, SyncMeta},
@@ -1700,6 +1701,55 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                     final_store.node_count(),
                     final_store.relation_count()
                 ));
+            }
+
+            GraphAction::Seed { file, kb: _ } => {
+                print_box_header(&format!("Graph Seed ({})", kb));
+
+                let tree = family::load_family_tree(&file)
+                    .with_context(|| format!("loading {}", file.display()))?;
+
+                println!(
+                    "  Loaded {} persons, {} relations from {}",
+                    tree.persons.len(),
+                    tree.relations.len(),
+                    file.display()
+                );
+
+                let embed = EmbedClient::new(None, Some(rag_cfg.embed_model.clone()));
+                let mut store = GraphStore::open(&rag_cfg.data_dir(), tenant_id)
+                    .context("opening graph store")?;
+
+                println!(
+                    "  Graph before: {} entities, {} relations\n",
+                    store.node_count(),
+                    store.relation_count()
+                );
+
+                let stats = family::seed_family_tree(&mut store, &tree, &embed, |msg| {
+                    println!("  {msg}");
+                })
+                .await?;
+
+                println!();
+                print_success(&format!(
+                    "Seed complete — {} canonical entities upserted, {} aliases merged \
+                     ({} relations re-pointed), {} family relations planted, {} aliases \
+                     not found in graph",
+                    stats.entities_upserted,
+                    stats.aliases_merged,
+                    stats.relations_merged,
+                    stats.relations_upserted,
+                    stats.aliases_not_found,
+                ));
+                println!(
+                    "  Graph after:  {} entities, {} relations",
+                    store.node_count(),
+                    store.relation_count()
+                );
+                println!(
+                    "\n  Tip: run `rag export` to view the updated graph in Obsidian."
+                );
             }
         }
         Ok(())

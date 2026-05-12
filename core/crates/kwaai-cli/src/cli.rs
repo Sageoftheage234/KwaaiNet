@@ -1411,6 +1411,17 @@ pub enum GraphAction {
         #[arg(long, value_name = "N")]
         limit: Option<usize>,
     },
+
+    /// Seed the graph from a ground-truth YAML family tree — merges aliases and plants family relations
+    Seed {
+        /// Path to the YAML family tree file (see tests/d6_family_tree.yaml for format)
+        #[arg(long, value_name = "FILE")]
+        file: std::path::PathBuf,
+
+        /// Knowledge base name (default: "default")
+        #[arg(long, default_value = "default", value_name = "NAME")]
+        kb: String,
+    },
 }
 
 #[derive(Subcommand)]
