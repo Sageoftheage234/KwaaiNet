@@ -200,10 +200,8 @@ impl UpdateChecker {
             } else if std::env::var_os("CUDA_HOME").is_some() {
                 println!(" CUDA_HOME set");
                 true
-            } else if std::path::Path::new(
-                r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA",
-            )
-            .exists()
+            } else if std::path::Path::new(r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA")
+                .exists()
             {
                 println!(" CUDA toolkit dir found");
                 true

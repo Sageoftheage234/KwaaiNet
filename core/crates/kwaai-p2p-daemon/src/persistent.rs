@@ -94,7 +94,10 @@ impl PersistentConnection {
                         // EOF and stream-reset are normal when the remote peer closes the
                         // connection.  Log at warn so they're visible but not alarming.
                         let e_str = e.to_string();
-                        if e_str.contains("early eof") || e_str.contains("unexpected eof") || e_str.contains("stream reset") {
+                        if e_str.contains("early eof")
+                            || e_str.contains("unexpected eof")
+                            || e_str.contains("stream reset")
+                        {
                             warn!("Persistent connection closed by remote: {}", e);
                         } else {
                             error!("Failed to read persistent connection message: {}", e);
@@ -103,7 +106,8 @@ impl PersistentConnection {
                         // rather than hanging until the oneshot sender is dropped.
                         let mut calls = pending_calls.lock().await;
                         for (_, tx) in calls.drain() {
-                            let _ = tx.send(Err(Error::Protocol(format!("connection closed: {e}"))));
+                            let _ =
+                                tx.send(Err(Error::Protocol(format!("connection closed: {e}"))));
                         }
                         break;
                     }

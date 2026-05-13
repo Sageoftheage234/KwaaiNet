@@ -131,7 +131,8 @@ async fn rerank_inner(
             .trim()
     };
 
-    let indices: Vec<usize> = serde_json::from_str(content)
-        .map_err(|e| anyhow::anyhow!("could not parse reranker response as index array: {e}\nraw: {raw:?}"))?;
+    let indices: Vec<usize> = serde_json::from_str(content).map_err(|e| {
+        anyhow::anyhow!("could not parse reranker response as index array: {e}\nraw: {raw:?}")
+    })?;
     Ok(indices)
 }

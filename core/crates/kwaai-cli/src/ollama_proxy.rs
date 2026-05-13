@@ -57,8 +57,7 @@ pub fn make_ollama_proxy_handler() -> impl Fn(
     Vec<u8>,
 ) -> Pin<
     Box<dyn std::future::Future<Output = kwaai_p2p_daemon::error::Result<Vec<u8>>> + Send>,
->
-       + Send
+> + Send
        + Sync
        + 'static {
     move |data: Vec<u8>| {
@@ -94,16 +93,14 @@ pub fn make_ollama_proxy_handler() -> impl Fn(
             let (status, body) = match result {
                 Ok(r) => {
                     let status = r.status().as_u16();
-                    let body = match tokio::time::timeout(
-                        std::time::Duration::from_secs(120),
-                        r.bytes(),
-                    )
-                    .await
-                    {
-                        Ok(Ok(b)) => b.to_vec(),
-                        Ok(Err(e)) => format!("body error: {e}").into_bytes(),
-                        Err(_) => b"body timeout".to_vec(),
-                    };
+                    let body =
+                        match tokio::time::timeout(std::time::Duration::from_secs(120), r.bytes())
+                            .await
+                        {
+                            Ok(Ok(b)) => b.to_vec(),
+                            Ok(Err(e)) => format!("body error: {e}").into_bytes(),
+                            Err(_) => b"body timeout".to_vec(),
+                        };
                     (status, body)
                 }
                 Err(e) => (503u16, format!("upstream: {e}").into_bytes()),
@@ -115,10 +112,7 @@ pub fn make_ollama_proxy_handler() -> impl Fn(
     }
 }
 
-fn encode_err(
-    status: u16,
-    msg: &str,
-) -> kwaai_p2p_daemon::error::Result<Vec<u8>> {
+fn encode_err(status: u16, msg: &str) -> kwaai_p2p_daemon::error::Result<Vec<u8>> {
     rmp_serde::to_vec_named(&ProxyResponse {
         status,
         body: msg.as_bytes().to_vec(),
@@ -165,11 +159,8 @@ async fn handle_connection(
 ) {
     // Read the full HTTP request (Ollama payloads are typically < 4 KB).
     let mut buf = vec![0u8; 4 * 1024 * 1024];
-    let n = match tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        stream.read(&mut buf),
-    )
-    .await
+    let n = match tokio::time::timeout(std::time::Duration::from_secs(10), stream.read(&mut buf))
+        .await
     {
         Ok(Ok(n)) if n > 0 => n,
         _ => return,
@@ -203,8 +194,11 @@ async fn handle_connection(
             let msg = b"Bad Gateway";
             let _ = stream
                 .write_all(
-                    format!("HTTP/1.1 502 Bad Gateway\r\nContent-Length: {}\r\n\r\n", msg.len())
-                        .as_bytes(),
+                    format!(
+                        "HTTP/1.1 502 Bad Gateway\r\nContent-Length: {}\r\n\r\n",
+                        msg.len()
+                    )
+                    .as_bytes(),
                 )
                 .await;
             let _ = stream.write_all(msg).await;
