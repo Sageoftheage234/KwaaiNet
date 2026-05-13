@@ -126,13 +126,15 @@ pub async fn retrieve_graph_anchored(
     //    significant query word as a whole token.
     let mut seed_hits = graph.search_entities(&embedding, 5);
     let name_stop: &[&str] = &[
-        "who", "what", "was", "were", "the", "tell", "about", "and", "for",
-        "did", "how", "where", "when", "describe", "more", "kind", "place",
+        "who", "what", "was", "were", "the", "tell", "about", "and", "for", "did", "how", "where",
+        "when", "describe", "more", "kind", "place",
     ];
     let name_seed_ids: std::collections::HashSet<i64> =
         seed_hits.iter().map(|(id, _)| *id).collect();
     for word in query.split_whitespace() {
-        let w = word.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase();
+        let w = word
+            .trim_matches(|c: char| !c.is_alphanumeric())
+            .to_lowercase();
         if w.len() >= 3 && !name_stop.contains(&w.as_str()) {
             for id in graph.find_ids_by_name_token(&w) {
                 if !name_seed_ids.contains(&id) {

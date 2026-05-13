@@ -558,7 +558,9 @@ impl GraphStore {
     /// Matches "J.M.H. Gool" == "JMH Gool", "Abdul Hamid (BG)" == "Abdul Hamid BG", etc.
     pub fn find_by_name_normalized(&self, name: &str) -> Option<&EntityNode> {
         let norm = normalize_name(name);
-        self.nodes.values().find(|n| normalize_name(&n.name) == norm)
+        self.nodes
+            .values()
+            .find(|n| normalize_name(&n.name) == norm)
     }
 
     /// Return all entity IDs whose normalized name (or any alias) contains `token` as a whole word.
@@ -574,9 +576,10 @@ impl GraphStore {
                 let name_match = normalize_name(&n.name)
                     .split_whitespace()
                     .any(|w| w == token_lc);
-                let alias_match = n.aliases.iter().any(|a| {
-                    normalize_name(a).split_whitespace().any(|w| w == token_lc)
-                });
+                let alias_match = n
+                    .aliases
+                    .iter()
+                    .any(|a| normalize_name(a).split_whitespace().any(|w| w == token_lc));
                 name_match || alias_match
             })
             .map(|n| n.id)
@@ -594,9 +597,17 @@ impl GraphStore {
             return Ok(0);
         }
 
-        let alias_mention_count = self.nodes.get(&alias_id).map(|n| n.mention_count).unwrap_or(0);
+        let alias_mention_count = self
+            .nodes
+            .get(&alias_id)
+            .map(|n| n.mention_count)
+            .unwrap_or(0);
         let alias_name = self.nodes.get(&alias_id).map(|n| n.name.clone());
-        let alias_aliases = self.nodes.get(&alias_id).map(|n| n.aliases.clone()).unwrap_or_default();
+        let alias_aliases = self
+            .nodes
+            .get(&alias_id)
+            .map(|n| n.aliases.clone())
+            .unwrap_or_default();
 
         // ── 1. Collect relations involving alias_id ─────────────────────────
         let mut to_rewrite: Vec<RelationRecord> = vec![];
@@ -622,8 +633,16 @@ impl GraphStore {
                     let old_key = relation_key(rel.src_id, rel.dst_id, &rel.relation_type);
                     t.remove(old_key.as_slice())?;
 
-                    let new_src = if rel.src_id == alias_id { canonical_id } else { rel.src_id };
-                    let new_dst = if rel.dst_id == alias_id { canonical_id } else { rel.dst_id };
+                    let new_src = if rel.src_id == alias_id {
+                        canonical_id
+                    } else {
+                        rel.src_id
+                    };
+                    let new_dst = if rel.dst_id == alias_id {
+                        canonical_id
+                    } else {
+                        rel.dst_id
+                    };
                     if new_src == new_dst {
                         continue; // skip self-loops
                     }
@@ -636,8 +655,7 @@ impl GraphStore {
                                     e.evidence_chunk_ids.push(*cid);
                                 }
                             }
-                            e.strength =
-                                (e.evidence_chunk_ids.len() as f32 / 10.0).min(1.0);
+                            e.strength = (e.evidence_chunk_ids.len() as f32 / 10.0).min(1.0);
                             e
                         }
                         None => RelationRecord {
@@ -703,7 +721,10 @@ impl GraphStore {
     pub fn find_dedup_candidates_exact(&self) -> Vec<(i64, i64)> {
         let mut by_norm: HashMap<String, Vec<i64>> = HashMap::new();
         for (&id, node) in &self.nodes {
-            by_norm.entry(normalize_name(&node.name)).or_default().push(id);
+            by_norm
+                .entry(normalize_name(&node.name))
+                .or_default()
+                .push(id);
         }
         let mut pairs = Vec::new();
         for ids in by_norm.values() {
@@ -727,8 +748,8 @@ impl GraphStore {
     /// Canonical = longer name; tie-break by higher mention_count.
     pub fn find_dedup_candidates(&self, threshold: f32) -> Vec<(i64, i64, f32)> {
         let stop: &[&str] = &[
-            "the", "and", "of", "in", "a", "an", "for", "at", "by", "to",
-            "dr", "mr", "mrs", "ms", "prof", "sir",
+            "the", "and", "of", "in", "a", "an", "for", "at", "by", "to", "dr", "mr", "mrs", "ms",
+            "prof", "sir",
         ];
 
         let mut token_to_ids: HashMap<String, Vec<i64>> = HashMap::new();
@@ -764,15 +785,13 @@ impl GraphStore {
                         continue;
                     }
                     // Canonical = longer name; tie-break by mention_count
-                    let (alias_id, canonical_id) =
-                        if na.name.len() > nb.name.len()
-                            || (na.name.len() == nb.name.len()
-                                && na.mention_count >= nb.mention_count)
-                        {
-                            (b, a)
-                        } else {
-                            (a, b)
-                        };
+                    let (alias_id, canonical_id) = if na.name.len() > nb.name.len()
+                        || (na.name.len() == nb.name.len() && na.mention_count >= nb.mention_count)
+                    {
+                        (b, a)
+                    } else {
+                        (a, b)
+                    };
                     candidates.push((alias_id, canonical_id, sim));
                 }
             }
@@ -901,22 +920,18 @@ pub async fn extract_from_text(
         return Ok((vec![], vec![]));
     }
 
-    let v: serde_json::Value = match tokio::time::timeout(
-        std::time::Duration::from_secs(120),
-        resp.json(),
-    )
-    .await
-    {
-        Ok(Ok(v)) => v,
-        Ok(Err(e)) => {
-            tracing::warn!("entity extraction parse error: {e}");
-            return Ok((vec![], vec![]));
-        }
-        Err(_) => {
-            tracing::warn!("entity extraction body read timed out after 120s");
-            return Ok((vec![], vec![]));
-        }
-    };
+    let v: serde_json::Value =
+        match tokio::time::timeout(std::time::Duration::from_secs(120), resp.json()).await {
+            Ok(Ok(v)) => v,
+            Ok(Err(e)) => {
+                tracing::warn!("entity extraction parse error: {e}");
+                return Ok((vec![], vec![]));
+            }
+            Err(_) => {
+                tracing::warn!("entity extraction body read timed out after 120s");
+                return Ok((vec![], vec![]));
+            }
+        };
 
     let content = v["choices"][0]["message"]["content"]
         .as_str()
@@ -951,7 +966,11 @@ fn cosine_sim_f32(a: &[f32], b: &[f32]) -> f32 {
     if a.is_empty() || b.is_empty() || a.len() != b.len() {
         return 0.0;
     }
-    let dot: f64 = a.iter().zip(b.iter()).map(|(&x, &y)| x as f64 * y as f64).sum();
+    let dot: f64 = a
+        .iter()
+        .zip(b.iter())
+        .map(|(&x, &y)| x as f64 * y as f64)
+        .sum();
     let na: f64 = a.iter().map(|&x| x as f64 * x as f64).sum::<f64>().sqrt();
     let nb: f64 = b.iter().map(|&x| x as f64 * x as f64).sum::<f64>().sqrt();
     if na == 0.0 || nb == 0.0 {

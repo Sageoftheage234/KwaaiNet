@@ -352,6 +352,7 @@ mod tests {
             chunk_overlap: 20,
             min_chunk_len: 10,
             strategy: ChunkStrategy::Paragraph,
+            ..Default::default()
         };
         let chunks = split_text(text, "test.txt", &cfg);
         // All three short paragraphs fit in one 200-char chunk.
@@ -370,6 +371,7 @@ mod tests {
             chunk_overlap: 30,
             min_chunk_len: 20,
             strategy: ChunkStrategy::Paragraph,
+            ..Default::default()
         };
         let chunks = split_text(&text, "test.txt", &cfg);
         assert!(!chunks.is_empty());
@@ -387,6 +389,7 @@ mod tests {
             chunk_overlap: 5,
             min_chunk_len: 5,
             strategy: ChunkStrategy::Paragraph,
+            ..Default::default()
         };
         let chunks = split_text(text, "test.txt", &cfg);
         // Middle chunks should have surrounding that's longer than just the text

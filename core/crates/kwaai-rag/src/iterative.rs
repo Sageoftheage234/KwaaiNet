@@ -14,10 +14,10 @@ const COVERAGE_R2: f32 = 0.70;
 const COVERAGE_R3: f32 = 0.75;
 
 static STOP_WORDS: &[&str] = &[
-    "the", "and", "was", "were", "had", "has", "have", "been", "what", "who",
-    "which", "when", "where", "tell", "about", "describe", "explain", "from",
-    "with", "that", "this", "they", "their", "his", "her", "its", "our", "your",
-    "for", "how", "did", "does", "also", "book", "author", "kind", "more",
+    "the", "and", "was", "were", "had", "has", "have", "been", "what", "who", "which", "when",
+    "where", "tell", "about", "describe", "explain", "from", "with", "that", "this", "they",
+    "their", "his", "her", "its", "our", "your", "for", "how", "did", "does", "also", "book",
+    "author", "kind", "more",
 ];
 
 fn coverage_terms(query: &str) -> Vec<String> {
@@ -26,8 +26,14 @@ fn coverage_terms(query: &str) -> Vec<String> {
         .split_whitespace()
         .filter_map(|w| {
             // Strip non-alphanumeric edges, then drop possessive 's.
-            let w = w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase();
-            let w = w.strip_suffix("'s").or_else(|| w.strip_suffix("s'")).unwrap_or(&w).to_string();
+            let w = w
+                .trim_matches(|c: char| !c.is_alphanumeric())
+                .to_lowercase();
+            let w = w
+                .strip_suffix("'s")
+                .or_else(|| w.strip_suffix("s'"))
+                .unwrap_or(&w)
+                .to_string();
             if w.len() >= 4 && !STOP_WORDS.contains(&w.as_str()) && seen.insert(w.clone()) {
                 Some(w)
             } else {
@@ -133,13 +139,15 @@ where
 
     let mut seed_hits = graph.search_entities(&embedding, 5);
     let name_stop: &[&str] = &[
-        "who", "what", "was", "were", "the", "tell", "about", "and", "for",
-        "did", "how", "where", "when", "describe", "more", "kind", "place",
+        "who", "what", "was", "were", "the", "tell", "about", "and", "for", "did", "how", "where",
+        "when", "describe", "more", "kind", "place",
     ];
     let name_seed_ids: std::collections::HashSet<i64> =
         seed_hits.iter().map(|(id, _)| *id).collect();
     for word in query.split_whitespace() {
-        let w = word.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase();
+        let w = word
+            .trim_matches(|c: char| !c.is_alphanumeric())
+            .to_lowercase();
         if w.len() >= 3 && !name_stop.contains(&w.as_str()) {
             for id in graph.find_ids_by_name_token(&w) {
                 if !name_seed_ids.contains(&id) {
@@ -161,12 +169,24 @@ where
             .collect();
         chunk_ids
             .into_iter()
-            .map(|cid| (cid, if seed_chunk_set.contains(&cid) { 1.0 } else { 0.6 }))
+            .map(|cid| {
+                (
+                    cid,
+                    if seed_chunk_set.contains(&cid) {
+                        1.0
+                    } else {
+                        0.6
+                    },
+                )
+            })
             .collect()
     };
 
     let fused_raw = rrf_merge(&graph_raw, &vector_raw, candidate_k);
-    let over_cfg = RetrieveConfig { top_k: candidate_k, ..cfg.clone() };
+    let over_cfg = RetrieveConfig {
+        top_k: candidate_k,
+        ..cfg.clone()
+    };
     let mut pool = assemble_results(fused_raw, &over_cfg, meta)?;
 
     let doc_count = pool
@@ -267,8 +287,10 @@ where
                         let ref_sem = search_fn(ref_emb, candidate_k / 2).await?;
                         let ref_kw = bm25.search(&ref_query, candidate_k / 2);
                         let ref_raw = rrf_merge(&ref_sem, &ref_kw, candidate_k / 2);
-                        let ref_cfg =
-                            RetrieveConfig { top_k: candidate_k / 2, ..cfg.clone() };
+                        let ref_cfg = RetrieveConfig {
+                            top_k: candidate_k / 2,
+                            ..cfg.clone()
+                        };
                         let ref_chunks = assemble_results(ref_raw, &ref_cfg, meta)?;
 
                         let existing_keys2: HashSet<_> = pool.iter().map(chunk_key).collect();
@@ -294,10 +316,7 @@ where
 
     for chunk in &mut pool {
         let text = chunk.chunk_meta.text.to_lowercase();
-        let hits = terms
-            .iter()
-            .filter(|t| text.contains(t.as_str()))
-            .count();
+        let hits = terms.iter().filter(|t| text.contains(t.as_str())).count();
         chunk.score += hits as f64 * 0.05;
     }
     pool.sort_by(|a, b| {

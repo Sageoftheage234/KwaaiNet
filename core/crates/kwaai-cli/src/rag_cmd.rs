@@ -186,7 +186,11 @@ pub async fn run(args: RagArgs) -> Result<()> {
 
         RagAction::Export { output_dir, kb } => cmd_export(output_dir, kb).await,
 
-        RagAction::Import { input_dir, since, kb } => cmd_import(input_dir, since, kb).await,
+        RagAction::Import {
+            input_dir,
+            since,
+            kb,
+        } => cmd_import(input_dir, since, kb).await,
 
         RagAction::Eval {
             questions,
@@ -260,7 +264,10 @@ async fn cmd_init(
                      Pull it first:  ollama pull {}\n\
                      Other supported models: ollama pull mxbai-embed-large\n\
                      Then re-run:    kwaainet rag init --name {} --embed-model {}",
-                    embed_model, embed_model, name, embed_model
+                    embed_model,
+                    embed_model,
+                    name,
+                    embed_model
                 )
             } else if msg.contains("Connection refused") || msg.contains("connect") {
                 anyhow::anyhow!(
@@ -1043,7 +1050,11 @@ async fn cmd_chat(
             // Resolve effective mode for this turn (auto → graph if KB has entities).
             let effective_mode_chat: &str = if mode == "auto" {
                 if let Ok(g) = GraphStore::open(&rag_cfg.data_dir(), tenant_id) {
-                    if g.node_count() > 0 { "graph" } else { "vector" }
+                    if g.node_count() > 0 {
+                        "graph"
+                    } else {
+                        "vector"
+                    }
                 } else {
                     "vector"
                 }
@@ -1082,15 +1093,8 @@ async fn cmd_chat(
                 } else if effective_mode_chat == "graph" {
                     let graph = GraphStore::open(&rag_cfg.data_dir(), tenant_id)
                         .context("opening graph store for graph-anchored retrieval")?;
-                    retrieve_graph_anchored(
-                        &query,
-                        &retrieve_cfg,
-                        &embed,
-                        &meta,
-                        &graph,
-                        search_fn,
-                    )
-                    .await?
+                    retrieve_graph_anchored(&query, &retrieve_cfg, &embed, &meta, &graph, search_fn)
+                        .await?
                 } else if understand {
                     kwaai_rag::query_understanding::retrieve_with_understanding(
                         &query,
@@ -1782,7 +1786,12 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                 let raw_infer_url = inference_url.unwrap_or_else(|| rag_cfg.inference_url.clone());
                 let raw_extra_urls: Vec<String> = inference_urls
                     .as_deref()
-                    .map(|s| s.split(',').map(|u| u.trim().to_string()).filter(|u| !u.is_empty()).collect())
+                    .map(|s| {
+                        s.split(',')
+                            .map(|u| u.trim().to_string())
+                            .filter(|u| !u.is_empty())
+                            .collect()
+                    })
                     .unwrap_or_default();
                 let effective_workers = workers.max(1);
 
@@ -1799,9 +1808,13 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                     let addr = format!("/unix/{sock}");
                     #[cfg(not(unix))]
                     let addr = "/ip4/127.0.0.1/tcp/5005".to_string();
-                    let p2p = Arc::new(P2PClient::connect(&addr).await
-                        .context("connecting to p2pd for p2p:// URL resolution")?);
-                    let (res, handles) = crate::ollama_proxy::resolve_inference_urls(&all_raw, &p2p).await?;
+                    let p2p = Arc::new(
+                        P2PClient::connect(&addr)
+                            .await
+                            .context("connecting to p2pd for p2p:// URL resolution")?,
+                    );
+                    let (res, handles) =
+                        crate::ollama_proxy::resolve_inference_urls(&all_raw, &p2p).await?;
                     (handles, res)
                 } else {
                     (vec![], all_raw)
@@ -1833,7 +1846,9 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                 let total = all_chunks.len();
 
                 if total == 0 {
-                    print_warning("No chunks found — ingest documents first (or check --docs filter).");
+                    print_warning(
+                        "No chunks found — ingest documents first (or check --docs filter).",
+                    );
                     return Ok(());
                 }
 
@@ -1900,7 +1915,11 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                 ));
             }
 
-            GraphAction::Dedup { threshold, auto, dry_run } => {
+            GraphAction::Dedup {
+                threshold,
+                auto,
+                dry_run,
+            } => {
                 print_box_header(&format!("Graph Dedup ({})", kb));
                 let mut store = GraphStore::open(&rag_cfg.data_dir(), tenant_id)
                     .context("opening graph store")?;
@@ -1921,10 +1940,14 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                     println!("  Tier 1  {} exact-name duplicate(s):", exact.len());
                     if !dry_run {
                         for (alias_id, canonical_id) in &exact {
-                            let aname = store.get_entity(*alias_id)
-                                .map(|n| n.name.clone()).unwrap_or_default();
-                            let cname = store.get_entity(*canonical_id)
-                                .map(|n| n.name.clone()).unwrap_or_default();
+                            let aname = store
+                                .get_entity(*alias_id)
+                                .map(|n| n.name.clone())
+                                .unwrap_or_default();
+                            let cname = store
+                                .get_entity(*canonical_id)
+                                .map(|n| n.name.clone())
+                                .unwrap_or_default();
                             store.merge_entity_into(*alias_id, *canonical_id)?;
                             println!("    merged '{}' → '{}'", aname, cname);
                             total_merged += 1;
@@ -1932,10 +1955,14 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                         }
                     } else {
                         for (alias_id, canonical_id) in &exact {
-                            let aname = store.get_entity(*alias_id)
-                                .map(|n| n.name.clone()).unwrap_or_default();
-                            let cname = store.get_entity(*canonical_id)
-                                .map(|n| n.name.clone()).unwrap_or_default();
+                            let aname = store
+                                .get_entity(*alias_id)
+                                .map(|n| n.name.clone())
+                                .unwrap_or_default();
+                            let cname = store
+                                .get_entity(*canonical_id)
+                                .map(|n| n.name.clone())
+                                .unwrap_or_default();
                             println!("    '{}' → '{}'", aname, cname);
                         }
                     }
@@ -1963,7 +1990,10 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                                 let b_rels = store.neighbors_of(*canonical_id).len();
                                 println!(
                                     "  {:>3}.  \"{}\"  (mentions={}, relations={})",
-                                    i + 1, a.name, a.mention_count, a_rels
+                                    i + 1,
+                                    a.name,
+                                    a.mention_count,
+                                    a_rels
                                 );
                                 println!(
                                     "         ↔  \"{}\"  (mentions={}, relations={})  sim={:.3}",
@@ -1983,10 +2013,14 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                             if store.get_entity(*alias_id).is_none() {
                                 continue;
                             }
-                            let aname = store.get_entity(*alias_id)
-                                .map(|n| n.name.clone()).unwrap_or_default();
-                            let cname = store.get_entity(*canonical_id)
-                                .map(|n| n.name.clone()).unwrap_or_default();
+                            let aname = store
+                                .get_entity(*alias_id)
+                                .map(|n| n.name.clone())
+                                .unwrap_or_default();
+                            let cname = store
+                                .get_entity(*canonical_id)
+                                .map(|n| n.name.clone())
+                                .unwrap_or_default();
                             store.merge_entity_into(*alias_id, *canonical_id)?;
                             println!("    merged '{}' → '{}'  sim={:.3}", aname, cname, sim);
                             tier2 += 1;
@@ -2002,7 +2036,9 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                         println!("  [y=merge, n=skip, q=quit, ?=show relations]\n");
                         let mut quit = false;
                         for (i, (alias_id, canonical_id, sim)) in candidates.iter().enumerate() {
-                            if quit { break; }
+                            if quit {
+                                break;
+                            }
                             let a = match store.get_entity(*alias_id).cloned() {
                                 Some(e) => e,
                                 None => continue,
@@ -2014,10 +2050,7 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                             let a_rels = store.neighbors_of(*alias_id).len();
                             let b_rels = store.neighbors_of(*canonical_id).len();
 
-                            println!(
-                                "  Candidate {}/{}:",
-                                i + 1, total_cands
-                            );
+                            println!("  Candidate {}/{}:", i + 1, total_cands);
                             println!(
                                 "  \"{}\"  (mentions={}, relations={})",
                                 a.name, a.mention_count, a_rels
@@ -2048,13 +2081,17 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                                     }
                                     "?" => {
                                         println!("  Relations — \"{}\":", a.name);
-                                        for (nbr_id, rel, _) in store.neighbors_of(*alias_id).iter().take(6) {
+                                        for (nbr_id, rel, _) in
+                                            store.neighbors_of(*alias_id).iter().take(6)
+                                        {
                                             if let Some(nbr) = store.get_entity(*nbr_id) {
                                                 println!("    → {} [{}]", nbr.name, rel);
                                             }
                                         }
                                         println!("  Relations — \"{}\":", b.name);
-                                        for (nbr_id, rel, _) in store.neighbors_of(*canonical_id).iter().take(6) {
+                                        for (nbr_id, rel, _) in
+                                            store.neighbors_of(*canonical_id).iter().take(6)
+                                        {
                                             if let Some(nbr) = store.get_entity(*nbr_id) {
                                                 println!("    → {} [{}]", nbr.name, rel);
                                             }
@@ -2078,7 +2115,10 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                 if dry_run {
                     print_info("Dry-run — no changes made.");
                 } else {
-                    print_success(&format!("Dedup complete — {} entities merged", total_merged));
+                    print_success(&format!(
+                        "Dedup complete — {} entities merged",
+                        total_merged
+                    ));
                     println!(
                         "  Graph now: {} entities, {} relations",
                         store.node_count(),
@@ -2096,14 +2136,20 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                 print_box_header(&format!("Graph Reembed ({})", kb));
                 let embed_url_str = embed_url.as_deref().unwrap_or("");
                 let embed = EmbedClient::new(
-                    if embed_url_str.is_empty() { None } else { Some(embed_url_str.to_string()) },
+                    if embed_url_str.is_empty() {
+                        None
+                    } else {
+                        Some(embed_url_str.to_string())
+                    },
                     Some(rag_cfg.embed_model.clone()),
                 );
                 let mut store = GraphStore::open(&rag_cfg.data_dir(), tenant_id)
                     .context("opening graph store")?;
                 println!("  Entities to re-embed: {}", store.node_count());
                 let n = store.reembed_all(&embed).await?;
-                print_success(&format!("Re-embedded {n} entities with name+description text."));
+                print_success(&format!(
+                    "Re-embedded {n} entities with name+description text."
+                ));
                 println!("  Graph entity search now includes name tokens in the embedding.\n");
             }
 
@@ -2151,9 +2197,7 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                     store.node_count(),
                     store.relation_count()
                 );
-                println!(
-                    "\n  Tip: run `rag export` to view the updated graph in Obsidian."
-                );
+                println!("\n  Tip: run `rag export` to view the updated graph in Obsidian.");
             }
         }
         Ok(())
@@ -2726,13 +2770,15 @@ async fn cmd_import(input_dir: std::path::PathBuf, since: u64, kb: String) -> Re
     #[cfg(feature = "storage")]
     {
         let (rag_cfg, tenant_id) = load_rag_config_for(&kb)?;
-        let mut graph = GraphStore::open(&rag_cfg.data_dir(), tenant_id)
-            .context("opening graph store")?;
+        let mut graph =
+            GraphStore::open(&rag_cfg.data_dir(), tenant_id).context("opening graph store")?;
         let embed = EmbedClient::new(None, Some(rag_cfg.embed_model.clone()));
 
         print_box_header(&format!("RAG Import ({})", kb));
         if since > 0 {
-            print_info(&format!("Processing files modified after Unix timestamp {since}"));
+            print_info(&format!(
+                "Processing files modified after Unix timestamp {since}"
+            ));
         } else {
             print_info("Processing all entity files (--since 0)");
         }

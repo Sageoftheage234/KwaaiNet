@@ -91,8 +91,10 @@ pub async fn seed_family_tree(
         // Merge existing stored aliases with all YAML-declared aliases so that even
         // previously-merged aliases (no longer in the graph as separate entities) remain
         // queryable via find_ids_by_name_token.
-        let mut merged_aliases: Vec<String> =
-            existing.as_ref().map(|e| e.aliases.clone()).unwrap_or_default();
+        let mut merged_aliases: Vec<String> = existing
+            .as_ref()
+            .map(|e| e.aliases.clone())
+            .unwrap_or_default();
         for a in &person.aliases {
             if !merged_aliases.contains(a) {
                 merged_aliases.push(a.clone());
@@ -106,10 +108,17 @@ pub async fn seed_family_tree(
             description: if !desc.is_empty() {
                 desc
             } else {
-                existing.as_ref().map(|e| e.description.clone()).unwrap_or_default()
+                existing
+                    .as_ref()
+                    .map(|e| e.description.clone())
+                    .unwrap_or_default()
             },
             embedding,
-            mention_count: existing.as_ref().map(|e| e.mention_count).unwrap_or(1).max(1),
+            mention_count: existing
+                .as_ref()
+                .map(|e| e.mention_count)
+                .unwrap_or(1)
+                .max(1),
             first_chunk_id: existing.as_ref().map(|e| e.first_chunk_id).unwrap_or(0),
             aliases: merged_aliases,
         };
@@ -152,7 +161,9 @@ pub async fn seed_family_tree(
             _ => {
                 tracing::warn!(
                     "relation '{}' → '{}' [{}]: one or both endpoints not in graph",
-                    rel.from, rel.to, rel.relation_type
+                    rel.from,
+                    rel.to,
+                    rel.relation_type
                 );
             }
         }

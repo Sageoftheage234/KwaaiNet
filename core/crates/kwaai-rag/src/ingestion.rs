@@ -1,15 +1,17 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use tracing::{debug, info, warn};
 
 use crate::chunker::{split_text, Chunk, ChunkConfig};
 use crate::embedder::EmbedClient;
-use crate::graph::{entity_id, extract_from_text, EntityNode, ExtractedEntity, ExtractedRelation, GraphStore};
+use crate::graph::{
+    entity_id, extract_from_text, EntityNode, ExtractedEntity, ExtractedRelation, GraphStore,
+};
 use crate::meta_store::{ChunkMeta, MetaStore};
 
 /// Optional graph extraction config attached to an ingestion run.
@@ -190,7 +192,10 @@ pub async fn extract_and_store_entities_pub(
             done += 1;
             if res.entities.is_empty() {
                 if let Some(ref prog) = progress {
-                    let (nc, rc) = drain_store.lock().map(|g| (g.node_count(), g.relation_count())).unwrap_or((0, 0));
+                    let (nc, rc) = drain_store
+                        .lock()
+                        .map(|g| (g.node_count(), g.relation_count()))
+                        .unwrap_or((0, 0));
                     prog(done, total, nc, rc);
                 }
                 continue;
@@ -198,7 +203,10 @@ pub async fn extract_and_store_entities_pub(
 
             let mut graph = match drain_store.lock() {
                 Ok(g) => g,
-                Err(_) => { warn!("graph store mutex poisoned"); continue; }
+                Err(_) => {
+                    warn!("graph store mutex poisoned");
+                    continue;
+                }
             };
 
             let mut entity_ids_for_chunk = Vec::new();
@@ -257,7 +265,14 @@ pub async fn extract_and_store_entities_pub(
                 Ok(r) => r,
                 Err(e) => {
                     warn!("entity extraction error for chunk {chunk_id}: {e}");
-                    let _ = tx.send(ChunkResult { chunk_id, entities: vec![], relations: vec![], embeddings: vec![] }).await;
+                    let _ = tx
+                        .send(ChunkResult {
+                            chunk_id,
+                            entities: vec![],
+                            relations: vec![],
+                            embeddings: vec![],
+                        })
+                        .await;
                     return;
                 }
             };
@@ -285,7 +300,14 @@ pub async fn extract_and_store_entities_pub(
                 }
             };
 
-            let _ = tx.send(ChunkResult { chunk_id, entities, relations, embeddings }).await;
+            let _ = tx
+                .send(ChunkResult {
+                    chunk_id,
+                    entities,
+                    relations,
+                    embeddings,
+                })
+                .await;
         });
     }
     drop(tx); // close sender — drain task's rx.recv() will return None once queue empties
@@ -408,7 +430,11 @@ fn resolve_entity_id(name: &str, current_entities: &[ExtractedEntity], graph: &G
 
 /// Prepend doc-level metadata to each chunk's text if the doc_name matches any key.
 /// Keys are matched as case-insensitive substrings of doc_name.
-fn apply_doc_meta(mut chunks: Vec<Chunk>, doc_name: &str, doc_meta: &HashMap<String, String>) -> Vec<Chunk> {
+fn apply_doc_meta(
+    mut chunks: Vec<Chunk>,
+    doc_name: &str,
+    doc_meta: &HashMap<String, String>,
+) -> Vec<Chunk> {
     if doc_meta.is_empty() {
         return chunks;
     }

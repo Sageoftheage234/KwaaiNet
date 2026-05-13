@@ -23,7 +23,13 @@ use crate::graph::{entity_id, EntityNode, GraphStore};
 
 fn slug(name: &str) -> String {
     name.chars()
-        .map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == ' ' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect::<String>()
         .trim()
         .to_string()
@@ -83,7 +89,9 @@ pub fn export_vault(graph: &GraphStore, out_dir: &Path, kb_name: &str) -> Result
             if let Some((dst_name, _)) = name_type.get(dst_id) {
                 rel_lines.push_str(&format!(
                     "- **{}** [[{}]]  *(strength: {:.2})*\n",
-                    rel_type, slug(dst_name), strength
+                    rel_type,
+                    slug(dst_name),
+                    strength
                 ));
             }
         }
@@ -104,7 +112,11 @@ pub fn export_vault(graph: &GraphStore, out_dir: &Path, kb_name: &str) -> Result
             kb = kb_name,
             ts = exported_at,
             desc = node.description,
-            rels = if rel_lines.is_empty() { "*(none)*\n".to_string() } else { rel_lines },
+            rels = if rel_lines.is_empty() {
+                "*(none)*\n".to_string()
+            } else {
+                rel_lines
+            },
         );
 
         std::fs::write(&path, &content)?;
@@ -205,7 +217,10 @@ pub async fn import_vault(
 ) -> Result<ImportStats> {
     let entities_dir = vault_dir.join("entities");
     if !entities_dir.exists() {
-        anyhow::bail!("no `entities/` directory found in vault at {}", vault_dir.display());
+        anyhow::bail!(
+            "no `entities/` directory found in vault at {}",
+            vault_dir.display()
+        );
     }
 
     let mut stats = ImportStats::default();
@@ -233,12 +248,19 @@ pub async fn import_vault(
 
         let parsed = match parse_entity_file(&raw) {
             Some(p) => p,
-            None => { stats.skipped += 1; continue; }
+            None => {
+                stats.skipped += 1;
+                continue;
+            }
         };
 
         // Determine entity name from filename (reverse slug — underscores to spaces is fine
         // since we're matching by content hash, not name)
-        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
         let display_name = stem.replace('_', " ");
 
         let eid = entity_id(&display_name, &parsed.entity_type);
@@ -253,21 +275,33 @@ pub async fn import_vault(
         let embedding = if desc_changed && !parsed.description.is_empty() {
             match embed.embed_one(&parsed.description).await {
                 Ok(v) => v,
-                Err(_) => existing.as_ref().map(|e| e.embedding.clone()).unwrap_or_default(),
+                Err(_) => existing
+                    .as_ref()
+                    .map(|e| e.embedding.clone())
+                    .unwrap_or_default(),
             }
         } else {
-            existing.as_ref().map(|e| e.embedding.clone()).unwrap_or_default()
+            existing
+                .as_ref()
+                .map(|e| e.embedding.clone())
+                .unwrap_or_default()
         };
 
         let node = EntityNode {
             id: eid,
-            name: existing.as_ref().map(|e| e.name.clone()).unwrap_or(display_name.clone()),
+            name: existing
+                .as_ref()
+                .map(|e| e.name.clone())
+                .unwrap_or(display_name.clone()),
             entity_type: parsed.entity_type.clone(),
             description: parsed.description.clone(),
             embedding,
             mention_count: existing.as_ref().map(|e| e.mention_count).unwrap_or(1),
             first_chunk_id: existing.as_ref().map(|e| e.first_chunk_id).unwrap_or(0),
-            aliases: existing.as_ref().map(|e| e.aliases.clone()).unwrap_or_default(),
+            aliases: existing
+                .as_ref()
+                .map(|e| e.aliases.clone())
+                .unwrap_or_default(),
         };
 
         graph.upsert_entity(node)?;
@@ -276,9 +310,7 @@ pub async fn import_vault(
         for (rel_type, target_name) in &parsed.relations {
             let target_id = entity_id(target_name, "Unknown");
             // Only upsert if target exists in graph (avoid polluting with dead links)
-            if graph.get_entity(target_id).is_some()
-                || graph.find_by_name(target_name).is_some()
-            {
+            if graph.get_entity(target_id).is_some() || graph.find_by_name(target_name).is_some() {
                 let resolved_target = graph
                     .find_by_name(target_name)
                     .map(|n| n.id)
@@ -288,7 +320,9 @@ pub async fn import_vault(
             }
         }
 
-        if desc_changed { stats.descriptions_updated += 1; }
+        if desc_changed {
+            stats.descriptions_updated += 1;
+        }
         stats.entities_processed += 1;
     }
 
@@ -335,24 +369,26 @@ fn parse_entity_file(raw: &str) -> Option<ParsedEntity> {
         .join(" ");
 
     // Relations section: lines matching `- **rel_type** [[Target Name]]`
-    let relations_section = after_front
-        .split("\n## Relations")
-        .nth(1)
-        .unwrap_or("");
+    let relations_section = after_front.split("\n## Relations").nth(1).unwrap_or("");
 
     let mut relations = Vec::new();
     for line in relations_section.lines() {
         let line = line.trim();
-        if !line.starts_with("- **") { continue; }
+        if !line.starts_with("- **") {
+            continue;
+        }
         // parse: - **rel_type** [[Target Name]]  *(strength: 0.xx)*
         if let Some(rel_end) = line[4..].find("**") {
             let rel_type = line[4..4 + rel_end].to_string();
-            if let (Some(link_start), Some(link_end)) =
-                (line.find("[["), line.find("]]"))
-            {
+            if let (Some(link_start), Some(link_end)) = (line.find("[["), line.find("]]")) {
                 let target = line[link_start + 2..link_end].to_string();
                 // strip Obsidian display alias: [[File|Display]] → File
-                let target = target.split('|').next().unwrap_or(&target).trim().to_string();
+                let target = target
+                    .split('|')
+                    .next()
+                    .unwrap_or(&target)
+                    .trim()
+                    .to_string();
                 // convert slug back (underscores → spaces)
                 let target = target.replace('_', " ");
                 relations.push((rel_type, target));
@@ -360,7 +396,11 @@ fn parse_entity_file(raw: &str) -> Option<ParsedEntity> {
         }
     }
 
-    Some(ParsedEntity { entity_type, description, relations })
+    Some(ParsedEntity {
+        entity_type,
+        description,
+        relations,
+    })
 }
 
 // ── small helpers ─────────────────────────────────────────────────────────────
@@ -383,15 +423,32 @@ fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
     loop {
         let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
         let dy = if leap { 366 } else { 365 };
-        if days < dy { break; }
+        if days < dy {
+            break;
+        }
         days -= dy;
         y += 1;
     }
     let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
-    let months = [31u64, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let months = [
+        31u64,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut mo = 1u64;
     for &ml in &months {
-        if days < ml { break; }
+        if days < ml {
+            break;
+        }
         days -= ml;
         mo += 1;
     }
@@ -400,7 +457,9 @@ fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
 
 fn walkdir(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut out = Vec::new();
-    if !dir.exists() { return Ok(out); }
+    if !dir.exists() {
+        return Ok(out);
+    }
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let p = entry.path();

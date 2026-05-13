@@ -178,7 +178,12 @@ pub async fn call_block_forward(
     for attempt in 0..=MAX_RETRIES {
         if attempt > 0 {
             let delay_ms = 200u64 * attempt as u64;
-            debug!("Retrying inference call to {} after {}ms (attempt {})", peer_id, delay_ms, attempt + 1);
+            debug!(
+                "Retrying inference call to {} after {}ms (attempt {})",
+                peer_id,
+                delay_ms,
+                attempt + 1
+            );
             tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
         }
 
@@ -195,7 +200,10 @@ pub async fn call_block_forward(
                     || e_str.contains("Response channel closed");
                 last_err = anyhow::anyhow!("{e:#}").context("call_unary_handler");
                 if is_transient && attempt < MAX_RETRIES {
-                    warn!("Transient error calling peer {} (will retry): {}", peer_id, e_str);
+                    warn!(
+                        "Transient error calling peer {} (will retry): {}",
+                        peer_id, e_str
+                    );
                     continue;
                 }
                 return Err(last_err);
