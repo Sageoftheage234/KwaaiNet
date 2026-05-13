@@ -355,6 +355,13 @@ jobs:
           echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
           # GHA cache service is not available inside containers — use local disk cache
           echo "SCCACHE_DIR=/tmp/sccache" >> "$GITHUB_ENV"
+      - name: Restore sccache (Linux container)
+        if: matrix.container
+        uses: actions/cache@v4
+        with:
+          path: /tmp/sccache
+          key: sccache-cuda-linux-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: sccache-cuda-linux-
       - name: Install Rust
         if: ${{ !matrix.container }}
         uses: dtolnay/rust-toolchain@stable
