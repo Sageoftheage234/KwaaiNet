@@ -706,7 +706,8 @@ pub async fn extract_from_text(
         inference_url.trim_end_matches('/')
     );
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
+        .timeout(std::time::Duration::from_secs(120))
+        .connect_timeout(std::time::Duration::from_secs(10))
         .build()?;
 
     let body = serde_json::json!({
@@ -730,10 +731,19 @@ pub async fn extract_from_text(
         return Ok((vec![], vec![]));
     }
 
-    let v: serde_json::Value = match resp.json().await {
-        Ok(v) => v,
-        Err(e) => {
+    let v: serde_json::Value = match tokio::time::timeout(
+        std::time::Duration::from_secs(120),
+        resp.json(),
+    )
+    .await
+    {
+        Ok(Ok(v)) => v,
+        Ok(Err(e)) => {
             tracing::warn!("entity extraction parse error: {e}");
+            return Ok((vec![], vec![]));
+        }
+        Err(_) => {
+            tracing::warn!("entity extraction body read timed out after 120s");
             return Ok((vec![], vec![]));
         }
     };
