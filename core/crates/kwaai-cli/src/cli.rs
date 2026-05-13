@@ -1007,13 +1007,15 @@ pub struct RagArgs {
 
 #[derive(Subcommand)]
 pub enum RagAction {
-    /// Initialise a local RAG knowledge base (no network required)
+    /// Initialise a local RAG knowledge base (requires Ollama running with an embed model)
     Init {
         /// Knowledge base name (default: "default")
         #[arg(long, default_value = "default", value_name = "NAME")]
         kb: String,
 
-        /// Ollama embedding model (must produce 768-dim vectors)
+        /// Ollama embedding model. Dimension is auto-detected at init time.
+        /// Popular choices: nomic-embed-text (768-dim), all-minilm (384-dim),
+        /// mxbai-embed-large (1024-dim, best accuracy). Pull with: ollama pull <model>
         #[arg(long, default_value = "nomic-embed-text")]
         embed_model: String,
 
@@ -1302,7 +1304,7 @@ pub enum RagAction {
         kb: String,
     },
 
-    /// Inspect and query the knowledge graph
+    /// Inspect, build, seed, and maintain the knowledge graph
     Graph {
         #[command(subcommand)]
         action: GraphAction,
@@ -1456,7 +1458,10 @@ pub enum GraphAction {
         inference_urls: Option<String>,
     },
 
-    /// Seed the graph from a ground-truth YAML family tree — merges aliases and plants family relations
+    /// Seed the graph from a ground-truth YAML family tree — upserts canonical entities with
+    /// name+description embeddings, merges alias entities into their canonical, and plants
+    /// family relations. Aliases declared in the YAML are stored on the canonical entity so
+    /// name-token search finds them even after the alias entity is removed.
     Seed {
         /// Path to the YAML family tree file (see tests/d6_family_tree.yaml for format)
         #[arg(long, value_name = "FILE")]
@@ -1468,7 +1473,9 @@ pub enum GraphAction {
     },
 
     /// Re-embed all entities using "{name}: {description}" as the embedded text.
-    /// Run this once after upgrading from an older build that stored description-only embeddings.
+    /// Fixes abbreviation/acronym lookup (e.g. "J.M.H. Gool" finding its canonical entity).
+    /// Run once after upgrading from a build that stored description-only embeddings,
+    /// or after `graph seed` adds new aliases to canonical entities.
     Reembed {
         /// Embedding server URL (defaults to config embed_url)
         #[arg(long, value_name = "URL")]
