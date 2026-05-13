@@ -36,8 +36,17 @@ pub fn supported_extensions() -> &'static [&'static str] {
 
 #[cfg(feature = "pdf")]
 fn extract_pdf(path: &Path) -> Result<String> {
-    pdf_extract::extract_text(path)
-        .with_context(|| format!("extracting PDF text from {}", path.display()))
+    // pdf-extract panics on malformed PDFs (e.g. wrong object types). Catch those
+    // panics and convert them to errors so a single bad file doesn't crash sync.
+    let path_owned = path.to_path_buf();
+    match std::panic::catch_unwind(move || pdf_extract::extract_text(&path_owned)) {
+        Ok(Ok(text)) => Ok(text),
+        Ok(Err(e)) => anyhow::bail!("extracting PDF text from {}: {e}", path.display()),
+        Err(_) => anyhow::bail!(
+            "extracting PDF text from {}: PDF is malformed (internal parser panic)",
+            path.display()
+        ),
+    }
 }
 
 #[cfg(not(feature = "pdf"))]
