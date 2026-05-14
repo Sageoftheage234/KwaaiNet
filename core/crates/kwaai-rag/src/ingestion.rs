@@ -211,7 +211,7 @@ pub async fn extract_and_store_entities_pub(
             };
 
             let mut entity_ids_for_chunk = Vec::new();
-            for (extracted, emb) in res.entities.iter().zip(res.embeddings.into_iter()) {
+            for (extracted, emb) in res.entities.iter().zip(res.embeddings) {
                 let eid = entity_id(&extracted.name, &extracted.entity_type);
                 let node = EntityNode {
                     id: eid,
@@ -372,7 +372,7 @@ async fn extract_and_store_entities(
         };
 
         let mut entity_ids_for_chunk = Vec::new();
-        for (extracted, emb) in entities.iter().zip(embeddings.into_iter()) {
+        for (extracted, emb) in entities.iter().zip(embeddings) {
             let eid = entity_id(&extracted.name, &extracted.entity_type);
             let node = EntityNode {
                 id: eid,

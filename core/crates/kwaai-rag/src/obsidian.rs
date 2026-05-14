@@ -139,7 +139,7 @@ fn write_index(
 ) -> Result<()> {
     // Top 20 by mention count
     let mut nodes: Vec<_> = graph.all_entities().collect();
-    nodes.sort_by(|a, b| b.mention_count.cmp(&a.mention_count));
+    nodes.sort_by_key(|n| std::cmp::Reverse(n.mention_count));
 
     let top_list: String = nodes
         .iter()

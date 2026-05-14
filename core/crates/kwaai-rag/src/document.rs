@@ -88,11 +88,8 @@ fn parse_ooxml_text(xml: &str) -> Result<String> {
                 match e.name().as_ref() {
                     b"w:t" => in_text = true,
                     // Paragraph end — add a newline so sentences don't merge.
-                    b"w:p" => {
-                        if !out.is_empty() && !out.ends_with('\n') {
-                            out.push('\n');
-                        }
-                    }
+                    b"w:p" if !out.is_empty() && !out.ends_with('\n') => out.push('\n'),
+                    b"w:p" => {}
                     // Line / carriage-return break inside a run.
                     b"w:br" | b"w:cr" => out.push('\n'),
                     // Tab character.
@@ -100,11 +97,10 @@ fn parse_ooxml_text(xml: &str) -> Result<String> {
                     _ => {}
                 }
             }
-            Ok(Event::End(ref e)) => {
-                if e.name().as_ref() == b"w:t" {
-                    in_text = false;
-                }
+            Ok(Event::End(ref e)) if e.name().as_ref() == b"w:t" => {
+                in_text = false;
             }
+            Ok(Event::End(_)) => {}
             Ok(Event::Text(e)) if in_text => {
                 out.push_str(e.unescape().as_deref().unwrap_or(""));
             }

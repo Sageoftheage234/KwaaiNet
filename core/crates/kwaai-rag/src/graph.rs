@@ -834,7 +834,7 @@ impl GraphStore {
         let wtxn = self.db.begin_write()?;
         {
             let mut t = wtxn.open_table(ENTITIES_TABLE)?;
-            for (id, emb) in ids.iter().zip(embeddings.into_iter()) {
+            for (id, emb) in ids.iter().zip(embeddings) {
                 if let Some(node) = self.nodes.get_mut(id) {
                     node.embedding = emb;
                     let key = id.to_le_bytes();
