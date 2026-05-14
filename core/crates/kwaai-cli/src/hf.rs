@@ -60,7 +60,7 @@ pub fn resolve_snapshot(model_id: &str) -> Result<PathBuf> {
     }
 
     // Pick the most complete snapshot (most valid shards).
-    candidates.sort_by(|a, b| b.1.cmp(&a.1));
+    candidates.sort_by_key(|b| std::cmp::Reverse(b.1));
     Ok(candidates.into_iter().next().unwrap().0)
 }
 
@@ -627,8 +627,7 @@ async fn download_file(
         downloaded += chunk.len() as u64;
 
         if let Some(total_bytes) = content_length {
-            if total_bytes > 0 {
-                let pct = downloaded * 100 / total_bytes;
+            if let Some(pct) = (downloaded * 100).checked_div(total_bytes) {
                 print!(
                     "\r  [{idx:2}/{total}] {fname}  {pct}%  ({}/{})",
                     fmt_bytes(downloaded),

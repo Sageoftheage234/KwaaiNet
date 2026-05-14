@@ -1388,16 +1388,14 @@ async fn main() -> Result<()> {
                         let mut id = shard_cmd::sample_token(&flat, 1.0, 0, 1.0)? as u32;
 
                         // ── Decode (timed) ───────────────────────────────────
-                        let mut sp = n_prompt;
                         let decode_start = std::time::Instant::now();
-                        for _ in 0..n_steps {
+                        for (sp, _) in (n_prompt..).zip(0..n_steps) {
                             let logits = bench_shard
                                 .forward_full(session, &[id], sp)
                                 .map_err(|e| anyhow::anyhow!("{e}"))?;
                             let logits_cpu = logits.to_device(&candle_core::Device::Cpu)?;
                             let flat = logits_cpu.flatten_all()?;
                             id = shard_cmd::sample_token(&flat, 1.0, 0, 1.0)? as u32;
-                            sp += 1;
                         }
                         let decode_ms = decode_start.elapsed().as_secs_f64() * 1000.0;
 
