@@ -827,17 +827,51 @@ async fn main() -> Result<()> {
                         }
                         println!("  Installing v{}…", info.version);
                         println!();
+                        #[cfg(not(windows))]
+                        let daemon_was_running = {
+                            let dm = DaemonManager::new();
+                            let running = dm.is_running();
+                            if running {
+                                print_info("Stopping daemon before swap…");
+                                let _ = dm.stop_process();
+                                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                            }
+                            running
+                        };
                         checker.install_update(&info.version).await?;
                         println!();
                         #[cfg(windows)]
                         print_success(&format!(
-                            "Installer launched in background — all services will be stopped automatically.\n  Run 'kwaainet start --daemon' once done."
+                            "Installer launched in background — daemon will restart automatically."
                         ));
                         #[cfg(not(windows))]
-                        print_success(&format!(
-                            "Updated to v{}! Restart: kwaainet start --daemon",
-                            info.version
-                        ));
+                        {
+                            if daemon_was_running {
+                                let new_bin = std::env::current_exe()
+                                    .unwrap_or_else(|_| std::path::PathBuf::from("kwaainet"));
+                                match std::process::Command::new(&new_bin)
+                                    .args(["start", "--daemon"])
+                                    .stdin(std::process::Stdio::null())
+                                    .stdout(std::process::Stdio::null())
+                                    .stderr(std::process::Stdio::null())
+                                    .spawn()
+                                {
+                                    Ok(_) => print_success(&format!(
+                                        "Updated to v{} — daemon restarted with new binary.",
+                                        info.version
+                                    )),
+                                    Err(e) => print_warning(&format!(
+                                        "Updated to v{} but daemon restart failed ({e}).\n  Run: kwaainet start --daemon",
+                                        info.version
+                                    )),
+                                }
+                            } else {
+                                print_success(&format!(
+                                    "Updated to v{}. Run 'kwaainet start --daemon' to start the node.",
+                                    info.version
+                                ));
+                            }
+                        }
                     }
                 }
             }

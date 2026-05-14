@@ -263,6 +263,13 @@ impl UpdateChecker {
                 None
             };
 
+            let kwaainet_exe = install_dir.join("kwaainet.exe");
+            let respawn = format!(
+                "ping -n 3 127.0.0.1 > nul\r\n\
+                 start \"\" \"{exe}\" start --daemon\r\n",
+                exe = kwaainet_exe.to_string_lossy()
+            );
+
             let bat_content = if cuda_installed {
                 // Zip is already on disk — write a .ps1 for the swap so paths
                 // are never processed by cmd.exe's character expansion (%, ^, !).
@@ -291,7 +298,8 @@ impl UpdateChecker {
                     "{kill_header}\
                      powershell -ExecutionPolicy Bypass -File \"{ps1_str}\" >> \"{log_path}\" 2>&1\r\n\
                      del /f \"{ps1_str}\"\r\n\
-                     del /f \"%~f0\"\r\n"
+                     del /f \"%~f0\"\r\n\
+                     {respawn}"
                 )
             } else {
                 // Full path: use the cargo-dist PS1 installer (handles first-time
@@ -305,7 +313,8 @@ impl UpdateChecker {
                     "{kill_header}\
                      powershell -ExecutionPolicy Bypass -File \"{ps_path}\" >> \"{log_path}\" 2>&1\r\n\
                      del /f \"{ps_path}\"\r\n\
-                     del /f \"%~f0\"\r\n"
+                     del /f \"%~f0\"\r\n\
+                     {respawn}"
                 )
             };
 
