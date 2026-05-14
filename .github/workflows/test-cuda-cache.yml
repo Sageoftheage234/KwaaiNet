@@ -5,7 +5,7 @@ on:
 jobs:
   build-cuda-linux:
     runs-on: ubuntu-latest
-    container: ghcr.io/rust-cross/manylinux_2_28-cross:x86_64
+    container: quay.io/pypa/manylinux_2_28_x86_64
     env:
       SCCACHE_VERSION: "v0.8.1"
       CUDA_COMPUTE_CAP: "80"
