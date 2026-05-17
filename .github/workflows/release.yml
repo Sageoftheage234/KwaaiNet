@@ -319,6 +319,7 @@ jobs:
             p2pd: p2pd.exe
     name: build-cuda-artifacts (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
+    continue-on-error: true
     container: ${{ matrix.container || null }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
