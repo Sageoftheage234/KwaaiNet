@@ -141,7 +141,7 @@ impl DHTServerInfo {
         peer_id_b58: String,
     ) -> Self {
         Self {
-            state: 2, // ONLINE
+            state: if ShardManager::shard_is_ready() { 2 } else { 0 },
             throughput,
             start_block: start,
             end_block: end,
@@ -897,6 +897,7 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
                 let eb = config.effective_end_block() as i32;
                 server_info.start_block = sb;
                 server_info.end_block = eb;
+                server_info.state = if ShardManager::shard_is_ready() { 2 } else { 0 };
                 if let Err(e) = announce(
                     &mut client, peer_id, &storage, &bootstrap_peers,
                     &prefix, &repository, config.model_total_blocks(),
@@ -1026,6 +1027,7 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
                 let eb = config.effective_end_block() as i32;
                 server_info.start_block = sb;
                 server_info.end_block = eb;
+                server_info.state = if ShardManager::shard_is_ready() { 2 } else { 0 };
                 info!("Re-announcing to DHT (shard_ready={})...", ShardManager::shard_is_ready());
                 if let Err(e) = announce(
                     &mut client, peer_id, &storage, &bootstrap_peers,
