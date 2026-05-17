@@ -311,12 +311,6 @@ jobs:
             ext: tar.xz
             bin: kwaainet
             p2pd: p2pd
-          - os: windows-2022
-            target: x86_64-pc-windows-msvc
-            label: kwaainet-x86_64-pc-windows-msvc-cuda
-            ext: zip
-            bin: kwaainet.exe
-            p2pd: p2pd.exe
     name: build-cuda-artifacts (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     continue-on-error: true
@@ -407,38 +401,6 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q cuda-toolkit-12-6 libssl-dev pkg-config
           echo "/usr/local/cuda-12.6/bin" >> $GITHUB_PATH
-      - name: Cache CUDA toolkit (Windows)
-        if: runner.os == 'Windows'
-        id: cuda-cache
-        uses: actions/cache@v4
-        with:
-          path: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6
-          key: cuda-toolkit-12.6.3-windows
-      - name: Install CUDA toolkit (Windows)
-        if: runner.os == 'Windows' && steps.cuda-cache.outputs.cache-hit != 'true'
-        shell: pwsh
-        run: |
-          $CUDA_URL = "https://developer.download.nvidia.com/compute/cuda/12.6.3/local_installers/cuda_12.6.3_561.17_windows.exe"
-          Invoke-WebRequest -Uri $CUDA_URL -OutFile cuda_installer.exe
-          Start-Process -FilePath .\cuda_installer.exe -ArgumentList '-s','cudart_12.6','nvcc_12.6','nvrtc_12.6','nvrtc_dev_12.6','cublas_12.6','cublas_dev_12.6','cusolver_12.6','cusolver_dev_12.6','curand_12.6','curand_dev_12.6','cufft_12.6','cufft_dev_12.6','cusparse_12.6','cusparse_dev_12.6','visual_studio_integration_12.6' -Wait -NoNewWindow
-      - name: Add CUDA to PATH (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          echo "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          echo "CUDA_PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      - name: Set up MSVC developer environment (Windows)
-        if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
-      - name: Set OpenSSL paths (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $dir = Get-ChildItem "C:\Program Files" -Filter "OpenSSL*" -ErrorAction SilentlyContinue |
-                 Select-Object -First 1 -ExpandProperty FullName
-          if ($dir) {
-            echo "OPENSSL_DIR=$dir" >> $env:GITHUB_ENV
-          }
       - name: Create target/release for p2pd build script
         run: mkdir -p core/target/release
         shell: bash
@@ -451,30 +413,12 @@ jobs:
             core/target/release/.fingerprint/candle-core-*
           key: cuda-kernels-linux-80-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: cuda-kernels-linux-80-
-      - name: Cache candle CUDA kernel build artifacts (Windows)
-        if: runner.os == 'Windows'
-        uses: actions/cache@v4
-        with:
-          path: |
-            core/target/release/build/candle-core-*
-            core/target/release/.fingerprint/candle-core-*
-          key: cuda-kernels-windows-80-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: cuda-kernels-windows-80-
       - name: Build kwaainet with CUDA (Linux)
         if: runner.os == 'Linux'
         working-directory: core
         env:
           CUDA_COMPUTE_CAP: "80"
         shell: bash
-        run: |
-          nvcc --version
-          cargo build --release -p kwaainet --features cuda
-      - name: Build kwaainet with CUDA (Windows)
-        if: runner.os == 'Windows'
-        working-directory: core
-        env:
-          CUDA_COMPUTE_CAP: "80"
-        shell: pwsh
         run: |
           nvcc --version
           cargo build --release -p kwaainet --features cuda
@@ -499,73 +443,28 @@ jobs:
           tar -cJf "${LABEL}.${{ matrix.ext }}" "${LABEL}"
           sha256sum "${LABEL}.${{ matrix.ext }}" | awk '{print $1}' > "${LABEL}.${{ matrix.ext }}.sha256"
           echo "CUDA archive: $(ls -lh ${LABEL}.${{ matrix.ext }})"
-      - name: Package CUDA archive (Windows)
-        if: runner.os == 'Windows'
+      - name: Upload CUDA artifact to GitHub Release
+        shell: bash
         working-directory: core
-        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $LABEL = "${{ matrix.label }}"
-          New-Item -ItemType Directory -Force -Path $LABEL
-          Copy-Item "target\release\${{ matrix.bin }}" "$LABEL\"
-          if (Test-Path "target\release\${{ matrix.p2pd }}") {
-            Copy-Item "target\release\${{ matrix.p2pd }}" "$LABEL\"
-          }
-          # Bundle CUDA runtime DLLs so end users don't need the toolkit
-          $CUDA_BIN = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\bin"
-          $cudaDlls = @(
-            "cudart64_12.dll",
-            "cublas64_12.dll",
-            "cublasLt64_12.dll",
-            "curand64_12.dll",
-            "cusolver64_12.dll",
-            "cusparse64_12.dll",
-            "cufft64_12.dll",
-            "nvrtc64_126_0.dll",
-            "nvrtc-builtins64_126.dll"
-          )
-          $copied = 0
-          foreach ($dll in $cudaDlls) {
-            $src = Join-Path $CUDA_BIN $dll
-            if (Test-Path $src) {
-              Copy-Item $src "$LABEL\"
-              $copied++
-            } else {
-              # Try wildcard match for version variants
-              $match = Get-ChildItem $CUDA_BIN -Filter "$($dll.Split('_')[0])*" -ErrorAction SilentlyContinue | Select-Object -First 1
-              if ($match) {
-                Copy-Item $match.FullName "$LABEL\"
-                $copied++
-              } else {
-                Write-Host "WARNING: $dll not found in $CUDA_BIN"
-              }
-            }
-          }
-          Write-Host "CUDA DLLs bundled: $copied files"
-          Compress-Archive -Path "$LABEL\*" -DestinationPath "$LABEL.${{ matrix.ext }}"
-          $hash = (Get-FileHash "$LABEL.${{ matrix.ext }}" -Algorithm SHA256).Hash.ToLower()
-          Set-Content -Path "$LABEL.${{ matrix.ext }}.sha256" -Value $hash -NoNewline
-          Write-Host "CUDA archive: $LABEL.${{ matrix.ext }}"
-          # Produce a small exe-only archive for fast updates (no DLL re-download).
-          # kwaainet update uses this when CUDA DLLs are already installed.
-          $EXES_LABEL = "$LABEL-exes"
-          New-Item -ItemType Directory -Force -Path $EXES_LABEL
-          Copy-Item "target\release\${{ matrix.bin }}" "$EXES_LABEL\"
-          if (Test-Path "target\release\${{ matrix.p2pd }}") {
-            Copy-Item "target\release\${{ matrix.p2pd }}" "$EXES_LABEL\"
-          }
-          Compress-Archive -Path "$EXES_LABEL\*" -DestinationPath "$EXES_LABEL.${{ matrix.ext }}"
-          $exesHash = (Get-FileHash "$EXES_LABEL.${{ matrix.ext }}" -Algorithm SHA256).Hash.ToLower()
-          Set-Content -Path "$EXES_LABEL.${{ matrix.ext }}.sha256" -Value $exesHash -NoNewline
-          Write-Host "CUDA exe-only archive: $EXES_LABEL.${{ matrix.ext }}"
-      - name: "Upload CUDA artifact"
-        uses: actions/upload-artifact@v6
-        with:
-          name: artifacts-build-cuda-${{ matrix.target }}
-          path: |
-            core/${{ matrix.label }}.${{ matrix.ext }}
-            core/${{ matrix.label }}.${{ matrix.ext }}.sha256
-            core/${{ matrix.label }}-exes.${{ matrix.ext }}
-            core/${{ matrix.label }}-exes.${{ matrix.ext }}.sha256
+          TAG="${{ github.ref_name }}"
+          LABEL="${{ matrix.label }}"
+          EXT="${{ matrix.ext }}"
+          # Poll for release to exist — host takes ~15-20 min; allow 30 min
+          for i in $(seq 1 60); do
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              echo "Release $TAG found after $i attempts"
+              break
+            fi
+            echo "Waiting for release $TAG ... ($i/60)"
+            sleep 30
+          done
+          gh release upload "$TAG" \
+            "${LABEL}.${EXT}" \
+            "${LABEL}.${EXT}.sha256" \
+            --clobber
 
   # Build and package all the platform-agnostic(ish) things
   build-global-artifacts:
@@ -617,8 +516,6 @@ jobs:
           if [ -f "target/distrib/kwaainet-installer.ps1" ]; then
             sed -i 's/"bins" = @("kwaainet.exe")/"bins" = @("kwaainet.exe", "p2pd.exe")/g' target/distrib/kwaainet-installer.ps1
             echo "Patched kwaainet-installer.ps1: p2pd.exe added to bins array"
-            # Add NVIDIA GPU detection — auto-selects CUDA archive when nvidia-smi is present
-            bash ../scripts/patch-installer-cuda-ps1.sh target/distrib/kwaainet-installer.ps1
           else
             echo "WARNING: kwaainet-installer.ps1 not found at target/distrib/"
             find . -name "kwaainet-installer.ps1" 2>/dev/null
@@ -644,9 +541,8 @@ jobs:
       - plan
       - build-local-artifacts
       - build-global-artifacts
-      - build-cuda-artifacts
-    # Only run if we're "publishing", and only if plan, local, global, and cuda didn't fail (skipped is fine)
-    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.publishing == 'true' && (needs.build-global-artifacts.result == 'skipped' || needs.build-global-artifacts.result == 'success') && (needs.build-local-artifacts.result == 'skipped' || needs.build-local-artifacts.result == 'success') && (needs.build-cuda-artifacts.result == 'skipped' || needs.build-cuda-artifacts.result == 'success') }}
+    # Only run if we're "publishing" and the fast-path artifact builds succeeded
+    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.publishing == 'true' && (needs.build-global-artifacts.result == 'skipped' || needs.build-global-artifacts.result == 'success') && (needs.build-local-artifacts.result == 'skipped' || needs.build-local-artifacts.result == 'success') }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     runs-on: "ubuntu-22.04"
