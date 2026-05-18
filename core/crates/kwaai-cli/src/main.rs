@@ -856,8 +856,20 @@ async fn main() -> Result<()> {
                         #[cfg(not(windows))]
                         {
                             if daemon_was_running {
+                                // current_exe() on Linux may return "/path/kwaainet (deleted)"
+                                // when the installer replaced the binary. Strip the suffix so
+                                // the spawned child can actually find the new binary.
                                 let new_bin = std::env::current_exe()
-                                    .unwrap_or_else(|_| std::path::PathBuf::from("kwaainet"));
+                                    .ok()
+                                    .map(|p| {
+                                        let s = p.to_string_lossy().into_owned();
+                                        if let Some(clean) = s.strip_suffix(" (deleted)") {
+                                            std::path::PathBuf::from(clean)
+                                        } else {
+                                            p
+                                        }
+                                    })
+                                    .unwrap_or_else(|| std::path::PathBuf::from("kwaainet"));
                                 match std::process::Command::new(&new_bin)
                                     .args(["start", "--daemon"])
                                     .stdin(std::process::Stdio::null())
