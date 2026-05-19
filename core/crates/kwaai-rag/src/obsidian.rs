@@ -302,6 +302,7 @@ pub async fn import_vault(
                 .as_ref()
                 .map(|e| e.aliases.clone())
                 .unwrap_or_default(),
+            schema_type: existing.as_ref().and_then(|e| e.schema_type.clone()),
         };
 
         graph.upsert_entity(node)?;

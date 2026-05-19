@@ -222,6 +222,7 @@ pub async fn extract_and_store_entities_pub(
                     mention_count: 1,
                     first_chunk_id: res.chunk_id,
                     aliases: vec![],
+                    schema_type: None,
                 };
                 if let Err(e) = graph.upsert_entity(node) {
                     warn!("upsert_entity: {e}");
@@ -383,6 +384,7 @@ async fn extract_and_store_entities(
                 mention_count: 1,
                 first_chunk_id: chunk_id,
                 aliases: vec![],
+                schema_type: None,
             };
             if let Err(e) = graph.upsert_entity(node) {
                 warn!("upsert_entity failed: {e}");

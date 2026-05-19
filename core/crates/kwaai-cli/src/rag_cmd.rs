@@ -2212,10 +2212,69 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                 );
                 println!("\n  Tip: run `rag export` to view the updated graph in Obsidian.");
             }
+
+            GraphAction::Score { top, json } => {
+                let store = GraphStore::open(&rag_cfg.data_dir(), tenant_id)
+                    .context("opening graph store")?;
+                if store.node_count() == 0 {
+                    print_warning("Graph is empty. Run `kwaainet rag graph build` first.");
+                    return Ok(());
+                }
+                let report = kwaai_rag::scorer::score_graph(&store);
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    print_box_header(&format!("Graph Health Score ({})", kb));
+                    println!(
+                        "  Overall:      {:.1}%   ({} entities, {} relations)",
+                        report.overall * 100.0,
+                        report.entity_count,
+                        report.relation_count,
+                    );
+                    println!("  Unknown type: {} entities need reclassification", report.unknown_count);
+                    println!();
+
+                    // Schema type distribution
+                    let mut types: Vec<_> = report.by_schema_type.iter().collect();
+                    types.sort_by(|a, b| b.1.cmp(a.1));
+                    println!("  Type distribution:");
+                    for (t, n) in &types {
+                        println!("    {:<32} {}", t, n);
+                    }
+                    println!();
+
+                    // Worst-scoring entities table
+                    println!("  Lowest-scoring entities (top {}):", top);
+                    println!("  {:<32} {:<22} {:>5}  {:>7}  {:>8}  {:>8}",
+                        "Name", "Schema type", "Type%", "Summary%", "Relatio%", "Overall%");
+                    println!("  {}", "-".repeat(90));
+                    for s in report.entity_scores.iter().take(top) {
+                        let schema = s.schema_type.as_deref().unwrap_or("Unknown");
+                        println!(
+                            "  {:<32} {:<22} {:>5.0}  {:>7.0}  {:>8.0}  {:>8.0}",
+                            truncate(&s.name, 32),
+                            truncate(schema, 22),
+                            s.type_score * 100.0,
+                            s.summary_score * 100.0,
+                            s.relation_score * 100.0,
+                            s.overall * 100.0,
+                        );
+                    }
+                    println!();
+
+                    if !report.top_issues.is_empty() {
+                        println!("  Issues:");
+                        for issue in &report.top_issues {
+                            print_warning(&format!("  {issue}"));
+                        }
+                    }
+                }
+            }
         }
         Ok(())
     }
 }
+
 
 // ── cache ─────────────────────────────────────────────────────────────────────
 

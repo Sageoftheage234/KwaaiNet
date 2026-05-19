@@ -115,6 +115,11 @@ pub struct EntityNode {
     /// Names of entities that were merged into this one (alias names preserved for lookup).
     #[serde(default)]
     pub aliases: Vec<String>,
+    /// Canonical schema.org type resolved by the dream completion step.
+    /// Falls back to SCHEMA_TYPE_MAP[entity_type] in the scorer when None.
+    /// Never changes entity_id — that remains hash(name + entity_type).
+    #[serde(default)]
+    pub schema_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -303,6 +308,7 @@ impl GraphStore {
                 mention_count: existing.mention_count + 1,
                 first_chunk_id: existing.first_chunk_id,
                 aliases: existing.aliases.clone(),
+                schema_type: existing.schema_type.clone().or(node.schema_type.clone()),
             },
             None => node,
         };

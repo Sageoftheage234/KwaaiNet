@@ -1501,6 +1501,18 @@ pub enum GraphAction {
         #[arg(long, value_name = "URL")]
         embed_url: Option<String>,
     },
+
+    /// Score every entity across three pillars: type (schema.org), summary, and relationships.
+    /// Reports overall graph health and surfaces the worst-scoring entities.
+    Score {
+        /// Show only the N lowest-scoring entities (default: 20)
+        #[arg(long, default_value = "20", value_name = "N")]
+        top: usize,
+
+        /// Output full results as JSON instead of the human-readable table
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
