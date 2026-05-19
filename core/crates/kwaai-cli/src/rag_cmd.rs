@@ -2220,7 +2220,15 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                 dry_run,
                 min_hits,
             } => {
-                cmd_alias_scan(&rag_cfg.data_dir(), tenant_id, auto, dry_run, min_hits).await?;
+                cmd_alias_scan(
+                    &rag_cfg.data_dir(),
+                    tenant_id,
+                    &rag_cfg.embed_model,
+                    auto,
+                    dry_run,
+                    min_hits,
+                )
+                .await?;
             }
 
             GraphAction::Score { top, json } => {
@@ -2475,6 +2483,7 @@ fn strip_article(s: &str) -> &str {
 async fn cmd_alias_scan(
     data_dir: &std::path::Path,
     tenant_id: uuid::Uuid,
+    embed_model: &str,
     auto: bool,
     dry_run: bool,
     min_hits: usize,
@@ -2598,6 +2607,7 @@ async fn cmd_alias_scan(
     let mut store = kwaai_rag::graph::GraphStore::open(data_dir, tenant_id)
         .context("opening graph store for writes")?;
     let mut merged = 0usize;
+    let mut merged_canonical_ids: Vec<i64> = Vec::new();
     let stdin = std::io::stdin();
 
     for c in &candidates {
@@ -2623,6 +2633,7 @@ async fn cmd_alias_scan(
                 "  merged '{}' → '{}'  ({} hits)",
                 abbr_name, full_name, c.hits
             );
+            merged_canonical_ids.push(c.full_id);
             merged += 1;
         } else {
             print!(
@@ -2636,6 +2647,7 @@ async fn cmd_alias_scan(
                 "y" | "Y" => {
                     store.merge_entity_into(c.abbr_id, c.full_id)?;
                     println!("    merged.");
+                    merged_canonical_ids.push(c.full_id);
                     merged += 1;
                 }
                 "q" | "Q" => break,
@@ -2646,7 +2658,17 @@ async fn cmd_alias_scan(
 
     if merged > 0 {
         store.rebuild_in_memory()?;
-        print_success(&format!("Alias scan complete — {} entities merged", merged));
+        // Re-embed only the merged canonical entities so their aliases (e.g. "TLSA")
+        // are baked into the embedding — without this, abbreviation queries miss the
+        // merged entity because the embedded text only contains the canonical name.
+        let embed = EmbedClient::new(None, Some(embed_model.to_string()));
+        let reembedded = store
+            .reembed_entities(&merged_canonical_ids, &embed)
+            .await?;
+        print_success(&format!(
+            "Alias scan complete — {} entities merged, {} re-embedded",
+            merged, reembedded
+        ));
     } else {
         print_info("No merges performed.");
     }

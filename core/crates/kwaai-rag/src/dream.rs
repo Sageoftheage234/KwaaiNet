@@ -430,7 +430,11 @@ pub async fn run_dream_cycle(
             // Summary completion — upsert with longer description + re-embed
             if let Some(ref new_desc) = completion.description {
                 if let Some(node) = store.get_entity(eid).cloned() {
-                    let embed_text = format!("{}: {}", node.name, new_desc);
+                    let embed_text = crate::graph::GraphStore::entity_embed_text(
+                        &node.name,
+                        &node.aliases,
+                        new_desc,
+                    );
                     match embed.embed_batch(&[embed_text.as_str()]).await {
                         Ok(embs) if !embs.is_empty() => {
                             let updated = crate::graph::EntityNode {

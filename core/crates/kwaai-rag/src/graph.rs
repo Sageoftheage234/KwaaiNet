@@ -856,20 +856,55 @@ impl GraphStore {
         self.rebuild()
     }
 
-    /// Re-embed all entities using "{name}: {description}" as the embedded text.
-    /// Returns the number of entities updated.
-    /// Run this once after upgrading from description-only embeddings.
+    /// Build the text string that gets embedded for an entity.
+    /// Includes aliases so that abbreviation queries find the canonical entity after a merge.
+    pub fn entity_embed_text(name: &str, aliases: &[String], description: &str) -> String {
+        let alias_str = aliases
+            .iter()
+            .filter(|a| !a.is_empty())
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        match (alias_str.is_empty(), description.is_empty()) {
+            (true, true) => name.to_string(),
+            (true, false) => format!("{}: {}", name, description),
+            (false, true) => format!("{} ({})", name, alias_str),
+            (false, false) => format!("{} ({}): {}", name, alias_str, description),
+        }
+    }
+
+    /// Re-embed all entities. Includes aliases in the embedded text so abbreviation
+    /// queries resolve to canonical entities after a merge.
     pub async fn reembed_all(&mut self, embed: &crate::embedder::EmbedClient) -> Result<usize> {
         let ids: Vec<i64> = self.nodes.keys().copied().collect();
+        self.reembed_by_ids(&ids, embed).await
+    }
+
+    /// Re-embed a specific subset of entities by ID. Used after alias merges to
+    /// refresh only the affected canonical entities without re-embedding the full graph.
+    pub async fn reembed_entities(
+        &mut self,
+        ids: &[i64],
+        embed: &crate::embedder::EmbedClient,
+    ) -> Result<usize> {
+        let ids: Vec<i64> = ids
+            .iter()
+            .filter(|id| self.nodes.contains_key(id))
+            .copied()
+            .collect();
+        self.reembed_by_ids(&ids, embed).await
+    }
+
+    async fn reembed_by_ids(
+        &mut self,
+        ids: &[i64],
+        embed: &crate::embedder::EmbedClient,
+    ) -> Result<usize> {
         let texts: Vec<String> = ids
             .iter()
             .map(|id| {
                 let n = &self.nodes[id];
-                if n.description.is_empty() {
-                    n.name.clone()
-                } else {
-                    format!("{}: {}", n.name, n.description)
-                }
+                Self::entity_embed_text(&n.name, &n.aliases, &n.description)
             })
             .collect();
 
