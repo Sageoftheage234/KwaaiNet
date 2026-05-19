@@ -2215,6 +2215,14 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                 println!("\n  Tip: run `rag export` to view the updated graph in Obsidian.");
             }
 
+            GraphAction::AliasScan {
+                auto,
+                dry_run,
+                min_hits,
+            } => {
+                cmd_alias_scan(&rag_cfg.data_dir(), tenant_id, auto, dry_run, min_hits).await?;
+            }
+
             GraphAction::Score { top, json } => {
                 let store = GraphStore::open(&rag_cfg.data_dir(), tenant_id)
                     .context("opening graph store")?;
@@ -2280,6 +2288,370 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
         }
         Ok(())
     }
+}
+
+// ── alias-scan ────────────────────────────────────────────────────────────────
+
+/// Stop-words that can appear inside a proper noun phrase (e.g. "League *of* South Africa").
+const PROPER_NOUN_STOP_WORDS: &[&str] = &[
+    "of", "the", "and", "in", "for", "a", "an", "at", "to", "de", "van", "du", "by", "on", "la",
+    "le", "los", "las",
+];
+
+/// Walk backwards through `words` from the end collecting a proper-noun phrase.
+/// Rules:
+///   - Capitalised words (ignoring leading/trailing punctuation) are always included.
+///   - Stop-words are included only when sandwiched between capitalised words.
+///   - Stop at the first lowercase non-stop-word.
+/// Returns `Some(phrase)` (≥2 words, leading/trailing punctuation stripped) or `None`.
+fn extract_proper_noun_phrase(words: &[&str]) -> Option<String> {
+    if words.is_empty() {
+        return None;
+    }
+    let n = words.len();
+    let mut start = n;
+
+    loop {
+        if start == 0 {
+            break;
+        }
+        let w = words[start - 1];
+        let alpha: String = w.chars().filter(|c| c.is_alphabetic()).collect();
+        if alpha.is_empty() {
+            break;
+        }
+        let first = alpha.chars().next().unwrap();
+        let lower = alpha.to_lowercase();
+
+        if first.is_uppercase() {
+            start -= 1;
+        } else if PROPER_NOUN_STOP_WORDS.contains(&lower.as_str()) && start < n {
+            start -= 1;
+        } else {
+            break;
+        }
+    }
+
+    if n - start < 2 {
+        return None;
+    }
+
+    // Strip leading stop-words ("the National Union" → "National Union").
+    let mut phrase_start = start;
+    while phrase_start < n {
+        let alpha: String = words[phrase_start]
+            .chars()
+            .filter(|c| c.is_alphabetic())
+            .collect();
+        if PROPER_NOUN_STOP_WORDS.contains(&alpha.to_lowercase().as_str()) {
+            phrase_start += 1;
+        } else {
+            break;
+        }
+    }
+    if n - phrase_start < 2 {
+        return None;
+    }
+
+    // Join words and trim trailing punctuation from the phrase.
+    let joined = words[phrase_start..n].join(" ");
+    let trimmed = joined
+        .trim_end_matches(|c: char| !c.is_alphanumeric())
+        .to_string();
+    Some(trimmed)
+}
+
+/// Check whether the leading initials of `phrase` (skipping stop-words) spell `abbr`.
+fn initials_match_abbr(phrase: &str, abbr: &str) -> bool {
+    let initials: String = phrase
+        .split_whitespace()
+        .filter(|w| {
+            let alpha: String = w.chars().filter(|c| c.is_alphabetic()).collect();
+            !PROPER_NOUN_STOP_WORDS.contains(&alpha.to_lowercase().as_str())
+        })
+        .filter_map(|w| w.chars().find(|c| c.is_alphabetic()))
+        .map(|c| c.to_uppercase().next().unwrap_or(c))
+        .collect();
+    initials == abbr.to_uppercase()
+}
+
+/// Scan a chunk of text for abbreviation definitions using two patterns:
+///
+/// Pattern 1 — parenthetical: "Proper Name (ABBR)"
+///   e.g. "New Era Fellowship (NEF)"
+///
+/// Pattern 2 — prose: "Proper Name, the ABBR" / "Proper Name, the ABBR for short"
+///   e.g. "the Teachers' League of South Africa, the TLSA for short"
+///
+/// In both cases the abbreviation's initials must match the extracted proper noun —
+/// this is the validation that eliminates false positives like "Jane Gool (NEUM)".
+fn extract_alias_pairs(text: &str) -> Vec<(String, String)> {
+    let mut pairs = Vec::new();
+
+    // ── Pattern 1: Full Name (ABBR) ──────────────────────────────────────────
+    let mut search_from = 0;
+    while let Some(open_rel) = text[search_from..].find('(') {
+        let open = search_from + open_rel;
+        let after_open = open + 1;
+
+        let Some(close_rel) = text[after_open..].find(')') else {
+            break;
+        };
+        let close = after_open + close_rel;
+        let inside = text[after_open..close].trim();
+
+        // ABBR must be 2–8 uppercase ASCII letters only.
+        let is_abbr =
+            (2..=8).contains(&inside.len()) && inside.chars().all(|c| c.is_ascii_uppercase());
+
+        if is_abbr {
+            if let Some(phrase) = extract_preceding_phrase(text, open) {
+                if phrase.len() >= 5 && initials_match_abbr(&phrase, inside) {
+                    pairs.push((inside.to_string(), phrase));
+                }
+            }
+        }
+
+        search_from = close + 1;
+    }
+
+    // ── Pattern 2: "Full Name, the ABBR [for short]" ─────────────────────────
+    // Tokenise on whitespace and look for a standalone ABBR token preceded by
+    // "the" or "or" (and optionally a comma before that).
+    let words: Vec<&str> = text.split_whitespace().collect();
+    for (idx, &word) in words.iter().enumerate() {
+        // Strip trailing punctuation (comma, period, etc.) to get the bare token.
+        let bare: String = word.chars().filter(|c| c.is_ascii_alphabetic()).collect();
+        let is_abbr = (2..=8).contains(&bare.len()) && bare.chars().all(|c| c.is_ascii_uppercase());
+        if !is_abbr || idx == 0 {
+            continue;
+        }
+        // Preceding word must be "the" or "or" (case-insensitive).
+        let prev = words[idx - 1]
+            .trim_matches(|c: char| !c.is_alphabetic())
+            .to_lowercase();
+        if prev != "the" && prev != "or" {
+            continue;
+        }
+        // Extract the proper-noun phrase from words before the "the"/"or" trigger.
+        let before_words = if idx >= 2 {
+            &words[..idx - 1]
+        } else {
+            continue;
+        };
+        if let Some(phrase) = extract_proper_noun_phrase(before_words) {
+            let phrase = strip_article(&phrase).to_string();
+            if phrase.len() >= 5 && initials_match_abbr(&phrase, &bare) {
+                pairs.push((bare, phrase));
+            }
+        }
+    }
+
+    pairs
+}
+
+/// Extract the proper-noun phrase immediately preceding byte offset `before_pos` in `text`.
+/// Resets at sentence-ending punctuation so we don't grab cross-sentence fragments.
+fn extract_preceding_phrase(text: &str, before_pos: usize) -> Option<String> {
+    let before = text[..before_pos].trim_end();
+    let frag_start = before
+        .rfind(|c| matches!(c, '.' | '!' | '?' | ':' | ';' | '\n' | '\r'))
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    let fragment = before[frag_start..].trim_start();
+    let words: Vec<&str> = fragment.split_whitespace().collect();
+    extract_proper_noun_phrase(&words).map(|p| strip_article(&p).to_string())
+}
+
+fn strip_article(s: &str) -> &str {
+    for prefix in &["The ", "the ", "A ", "An ", "an "] {
+        if let Some(rest) = s.strip_prefix(prefix) {
+            return rest.trim();
+        }
+    }
+    s.trim()
+}
+
+async fn cmd_alias_scan(
+    data_dir: &std::path::Path,
+    tenant_id: uuid::Uuid,
+    auto: bool,
+    dry_run: bool,
+    min_hits: usize,
+) -> Result<()> {
+    use kwaai_rag::graph::normalize_name;
+    use std::collections::HashMap;
+    use std::io::Write;
+
+    print_box_header("Graph Alias Scan");
+
+    let meta = kwaai_rag::meta_store::MetaStore::open(data_dir, tenant_id)
+        .context("opening meta store")?;
+    let store =
+        kwaai_rag::graph::GraphStore::open(data_dir, tenant_id).context("opening graph store")?;
+
+    println!(
+        "  Scanning {} chunks across {} entities…",
+        meta.all_chunks()?.len(),
+        store.node_count()
+    );
+
+    // ── Step 1: extract (abbr, full_name) pairs from all chunk texts ──────────
+    // Map: normalized_abbr -> (canonical_full_name, hit_count)
+    let mut pair_hits: HashMap<String, (String, usize)> = HashMap::new();
+
+    for (_id, chunk) in meta.all_chunks()? {
+        for (abbr, full) in extract_alias_pairs(&chunk.text) {
+            let key = format!("{}|||{}", normalize_name(&abbr), normalize_name(&full));
+            pair_hits
+                .entry(key)
+                .and_modify(|(_, count)| *count += 1)
+                .or_insert((format!("{abbr}|||{full}"), 1));
+        }
+    }
+
+    // Collect and sort by hit count descending.
+    let mut pairs: Vec<(String, String, usize)> = pair_hits
+        .into_values()
+        .filter_map(|(raw, hits)| {
+            if hits < min_hits {
+                return None;
+            }
+            let mut parts = raw.splitn(2, "|||");
+            let abbr = parts.next()?.to_string();
+            let full = parts.next()?.to_string();
+            Some((abbr, full, hits))
+        })
+        .collect();
+    pairs.sort_by(|a, b| b.2.cmp(&a.2));
+
+    println!(
+        "  Found {} unique abbreviation definitions in source text\n",
+        pairs.len()
+    );
+
+    // ── Step 2: match pairs against graph entities ────────────────────────────
+    struct Candidate {
+        abbr: String,
+        full: String,
+        abbr_id: i64,
+        full_id: i64,
+        hits: usize,
+    }
+
+    let mut candidates: Vec<Candidate> = Vec::new();
+
+    for (abbr, full, hits) in &pairs {
+        // Find the abbreviated entity.
+        let abbr_entity = store
+            .find_by_name_normalized(abbr)
+            .or_else(|| store.find_by_name_normalized(&abbr.to_uppercase()));
+        // Find the full-name entity (try normalized, then strip trailing punctuation variants).
+        let full_entity = store.find_by_name_normalized(full).or_else(|| {
+            // Try without trailing possessive / punctuation noise.
+            let trimmed = full.trim_end_matches(|c: char| !c.is_alphanumeric());
+            store.find_by_name_normalized(trimmed)
+        });
+
+        if let (Some(ae), Some(fe)) = (abbr_entity, full_entity) {
+            if ae.id != fe.id {
+                candidates.push(Candidate {
+                    abbr: abbr.clone(),
+                    full: full.clone(),
+                    abbr_id: ae.id,
+                    full_id: fe.id,
+                    hits: *hits,
+                });
+            }
+        }
+    }
+
+    if candidates.is_empty() {
+        print_info("No alias pairs found that match graph entities.");
+        return Ok(());
+    }
+
+    println!(
+        "  {} candidate pairs match graph entities:\n",
+        candidates.len()
+    );
+    println!("  {:<12} {:<40} {:>5}", "Abbr", "Full name", "Hits");
+    println!("  {}", "-".repeat(60));
+    for c in &candidates {
+        println!(
+            "  {:<12} {:<40} {:>5}",
+            c.abbr,
+            truncate(&c.full, 40),
+            c.hits
+        );
+    }
+    println!();
+
+    if dry_run {
+        print_info("Dry run — no merges performed.");
+        return Ok(());
+    }
+
+    // ── Step 3: merge ─────────────────────────────────────────────────────────
+    // Drop the read handle before acquiring the write handle — redb allows only one open handle.
+    drop(store);
+    let mut store = kwaai_rag::graph::GraphStore::open(data_dir, tenant_id)
+        .context("opening graph store for writes")?;
+    let mut merged = 0usize;
+    let stdin = std::io::stdin();
+
+    for c in &candidates {
+        // Refresh entity names in case earlier merges changed things.
+        let abbr_still_exists = store.get_entity(c.abbr_id).is_some();
+        let full_still_exists = store.get_entity(c.full_id).is_some();
+        if !abbr_still_exists || !full_still_exists {
+            continue;
+        }
+
+        let abbr_name = store
+            .get_entity(c.abbr_id)
+            .map(|n| n.name.clone())
+            .unwrap_or_default();
+        let full_name = store
+            .get_entity(c.full_id)
+            .map(|n| n.name.clone())
+            .unwrap_or_default();
+
+        if auto {
+            store.merge_entity_into(c.abbr_id, c.full_id)?;
+            println!(
+                "  merged '{}' → '{}'  ({} hits)",
+                abbr_name, full_name, c.hits
+            );
+            merged += 1;
+        } else {
+            print!(
+                "  Merge '{}' → '{}' ({} hits)?  [y/n/q] ",
+                abbr_name, full_name, c.hits
+            );
+            let _ = std::io::stdout().flush();
+            let mut line = String::new();
+            stdin.read_line(&mut line)?;
+            match line.trim() {
+                "y" | "Y" => {
+                    store.merge_entity_into(c.abbr_id, c.full_id)?;
+                    println!("    merged.");
+                    merged += 1;
+                }
+                "q" | "Q" => break,
+                _ => println!("    skipped."),
+            }
+        }
+    }
+
+    if merged > 0 {
+        store.rebuild_in_memory()?;
+        print_success(&format!("Alias scan complete — {} entities merged", merged));
+    } else {
+        print_info("No merges performed.");
+    }
+
+    Ok(())
 }
 
 // ── dream ─────────────────────────────────────────────────────────────────────

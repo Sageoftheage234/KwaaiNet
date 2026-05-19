@@ -1560,6 +1560,24 @@ pub enum GraphAction {
         #[arg(long)]
         json: bool,
     },
+
+    /// Scan ingested chunk text for inline abbreviation definitions ("Full Name (ABBR)")
+    /// and merge the abbreviated entity into the full-name entity.
+    /// This is more accurate than algorithmic acronym expansion because the source text
+    /// itself defines the abbreviation — no false positives.
+    AliasScan {
+        /// Auto-merge all unambiguous pairs (single full-name match) without prompting
+        #[arg(long)]
+        auto: bool,
+
+        /// Print candidates without merging anything
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Minimum number of chunks a pair must appear in to be considered (default: 1)
+        #[arg(long, default_value = "1", value_name = "N")]
+        min_hits: usize,
+    },
 }
 
 #[derive(Subcommand)]
