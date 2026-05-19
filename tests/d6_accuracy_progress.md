@@ -160,15 +160,33 @@ With k=30 chunks at ~300 chars each, 8192 chars only showed ~16/30 chunks. Raisi
 
 | Priority | Approach | Expected gain |
 |----------|----------|---------------|
-| High | 3-run average of M17 (iterative k=20) — confirm 56.9% is real vs prior 50% | Diagnostic |
+| High | Run full eval (M18) after Dream RAG cycles accumulate — confirm graph quality improvement translates to retrieval gain | Diagnostic |
 | High | Investigate q13 (All Africa Convention) — right chapter retrieved but model hedges, stuck at 1/2 | +1pp judge |
 | Medium | Investigate q03/q08/q11 judge regressions from M14 — were they sampling flukes? | Stability |
-| Low | Fan-out entity extraction to metro nodes (v0.4.53 P2P Ollama proxy) | Faster graph rebuild |
+| Medium | Dream RAG Phase 3: quality gate — snapshot + rollback if score drops >5% after a cycle | Stability |
+| Low | Dream RAG Phase 4: embed model evaluation (`dream embed-eval`) | Graph quality |
+| Low | Dream RAG Phase 5: gamified curation GUI (Flutter, after PR #56 merge) | UX |
+| Done ✓ | **Dream RAG Phase 1+2**: graph health scorer + autonomous completion cycle (v0.4.72) | Graph quality |
 | Done ✓ | Best config found: **iterative k=20** — 56.9% kw / 1.80/2 judge (new best both metrics) | |
 | Done ✓ | k-sweep: k=5 (35%), k=8 (33%), k=10 (41%), k=20 (**56.9%**), k=30 (41%) — k=20 is sweet spot | |
 | Done ✓ | Rerank at k=20: −3.4pp (auto), −8.6pp (iterative) — rerank hurts, do not use | |
 | Done ✓ | `graph dedup --auto` + interactive pass (v0.4.56) | Graph cleaned |
 | Done ✓ | `graph reembed` — entities now embed `"{name}: {description}"` | Abbreviation lookup fixed |
+
+---
+
+## Graph Health (Dream RAG baseline — v0.4.72)
+
+| Metric | Value |
+|--------|-------|
+| Entities | 2,291 |
+| Relations | 7,942 |
+| Overall health score | 59.6% |
+| Unknown-type entities | 81 (88 before first cycle) |
+| Type distribution | Person 1056, Org 460, Place 360, DefinedTerm 177, Unknown 81, Event 59 |
+
+**Dream RAG cycle 1 (20 completions):** 7 type assignments, 4 summary enrichments, 5 relations added, score 59.5% → 59.6%, Unknown 88 → 81.  
+Next: run eval after several more cycles to measure retrieval impact.
 
 ---
 
@@ -283,6 +301,35 @@ Two clear findings:
 **Rerank hurts at k=20.** The reranker dropped scores by 3.4pp (auto) and 8.6pp (iterative). Auto mode's RRF fusion already balances vector, BM25, and graph signals well at k=20; the reranker disrupts this balance by re-scoring purely on query–chunk similarity, ignoring the multi-signal fusion.
 
 The 51.7% keyword score is the new project best, beating the previous 50.0% (M12). Notably, q04 (book dedication) hit 4/4 for the first time — it was stuck at 0/4 across all prior configs because the dedication chunk was consistently ranked just outside k=10. At k=20 it lands in the context window. This is a pure retrieval depth fix, not a content fix.
+
+---
+
+### Phase 9 — Dream RAG: continuous graph refinement (v0.4.72)
+
+Inspecting the D6 knowledge graph in Obsidian made the problem concrete: 88 entities typed "Unknown", hundreds with one-line descriptions, many missing the relations that should be obvious given their type. The graph's entity extraction happened during ingestion — one pass, no iteration. A human reading the same memoir would naturally refine their mental model over time. Dream RAG brings that loop to the graph.
+
+The system adds two new layers:
+
+**Graph health scorer** (`scorer.rs`): a 3-pillar completeness score for every entity, using the schema.org ontology as the type standard.
+
+- **Type score**: Unknown=0.0, schema:Thing=0.4 (catch-all), specific type (schema:Person, schema:Place, etc.)=1.0
+- **Summary score**: empty=0.0, <50 chars=0.3, <150 chars=0.6, ≥150 chars + 2 sentences=1.0
+- **Relation score**: expected relation groups for each schema.org type (e.g. Person expects `bornIn`, `memberOf`, `knownAs`); matched groups / total groups; 0.5 if no expectations defined
+
+Overall score is the mean of the three pillars. `kwaainet rag graph score --kb D6` prints a live health report per entity and a type distribution table.
+
+**Dream cycle** (`dream.rs`): an autonomous multi-step refinement loop.
+
+1. Score graph → collect entities below the completeness threshold with source chunk text
+2. Fan out LLM completion calls (configurable workers + semaphore) — each call asks the LLM for schema_type, a 2–3 sentence description from the source text, and relations present in that text
+3. Write back: set schema_type, upsert richer description (only if >20 chars longer than current), add relations (target must already exist in graph)
+4. Auto-merge near-duplicates (embedding cosine ≥ 0.92)
+5. Prune zombies: mention_count ≤ 1, no neighbors, no chunks, score < prune_threshold
+6. Re-score → write `dream-report-{tenant_id}.json`
+
+Cycle 1 on D6 (20 completions, 4 workers): 35s, 7 type assignments, 4 summary enrichments, 5 relations added, Unknown count 88 → 81, overall health 59.5% → 59.6%.
+
+The health score improvement per cycle is small but cumulative. The hypothesis — that a cleaner, more complete graph will lift entity-heavy question performance — will be measured at M18.
 
 ---
 

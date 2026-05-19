@@ -61,7 +61,8 @@ Today, a KwaaiNet node can:
 - **IDENTIFY-based public-IP detection** — when no `announce_addr` or `public_ip` is configured, the node polls bootstrap peers for their observed-address reports and restarts p2pd with the confirmed public address automatically. Configurable via `identify_min_confirmations` and `identify_timeout_secs`. `public_port` lets port-forwarded nodes announce a different external port than their listen port.
 - **Stable bootstrap identities** — `kwaainet start --identity-key <path>` loads a libp2p-protobuf-encoded key file (RSA or Ed25519) so bootstrap nodes keep the same `PeerId` across restarts; the watchdog restart path honours the override too.
 - **RAG knowledge base** — ingest local documents (`txt`, `md`, `pdf`, `docx`, `doc`) into a fully local private vector knowledge base (no network required) with `kwaainet rag ingest`. Hybrid BM25 + dense retrieval, grounded citations, HyDE query expansion with blend control, LLM reranker, semantic paragraph chunking, and an eval harness for accuracy measurement. Supports external drives for large corpora.
-- **GraphRAG** — `kwaainet rag graph build` extracts entities and relations from ingested chunks via LLM, storing a persistent property graph (2300+ entities, 2800+ relations on a typical memoir-length corpus). Use `--mode graph` or `--mode auto` on any query/chat/eval command to route through the graph for entity-centric questions. Auto mode hit **46.6% keyword recall** on the D6 eval set (up from 24.6% baseline).
+- **GraphRAG** — `kwaainet rag graph build` extracts entities and relations from ingested chunks via LLM, storing a persistent property graph (2300+ entities, 7900+ relations on a typical memoir-length corpus). Use `--mode graph` or `--mode auto` on any query/chat/eval command to route through the graph for entity-centric questions. Iterative mode (multi-round gap-fill) reached **56.9% keyword recall / 1.80 judge score** on the D6 eval set (up from 24.6% baseline).
+- **Dream RAG** — `kwaainet rag dream run` runs an autonomous knowledge graph refinement cycle inspired by memory consolidation: scores every entity on a 3-pillar schema.org completeness model (type, summary, relation coverage), fans out LLM completion calls for incomplete entities, auto-merges near-duplicates, and prunes zombie nodes. `kwaainet rag graph score` prints a live health report. First cycle on D6: 7 type assignments, 4 summary enrichments, 5 new relations, Unknown-type count 88 → 81 in 35 seconds.
 - **Pluggable embedding models** — `kwaainet rag init --embed-model <model>` auto-probes dimension (supports 384-dim all-minilm, 768-dim nomic-embed-text, 1024-dim mxbai-embed-large, etc.). The KB stores the dimension; mismatched models are rejected at query time.
 - **Folder sync** — `kwaainet rag sync <folder>` continuously mirrors a directory into the knowledge base, detecting new, changed, and deleted files. Pass `--watch` for continuous mode.
 - **OpenAI-compatible RAG server** — `kwaainet rag serve` exposes an OpenAI-compatible HTTP API on port 9090 with RAG baked in. Point OpenWebUI or any OpenAI-compatible client at it as a custom base URL.
@@ -475,6 +476,7 @@ Eve returns only `{id, score}` pairs — vectors never travel back over the wire
 | Tuned HNSW build params: ef_construction 64→200, adaptive ef_search; exact search below 2K vectors | ✅ Shipped |
 | Knowledge graph extraction (`rag graph build`) — entity/relation graph from corpus via LLM | ✅ Shipped |
 | Graph-anchored retrieval (`rag query --mode graph`) — BFS entity traversal + RRF fusion with vector results | ✅ Shipped |
+| **Dream RAG** — autonomous graph refinement: schema.org 3-pillar health scorer, fan-out LLM completion, dedup, prune (`rag graph score`, `rag dream run/status`) | ✅ Shipped |
 | Semantic query cache (`rag cache stats/clear`) — 24h TTL, cosine similarity dedup, redb-backed | ✅ Shipped |
 | Obsidian vault & MediaWiki ingestion (`rag ingest` with markdown/wiki format detection) | ✅ Shipped |
 | Obsidian vault export/import (`rag export/import`) — human-in-the-loop knowledge graph curation via Obsidian Graph View | ✅ Shipped |
@@ -612,6 +614,9 @@ kwaainet rag sync ~/Documents/ --delete
 | `rag delete-doc <name>` | Remove a document's vectors and metadata |
 | `rag serve [--port 9090]` | OpenAI-compatible RAG HTTP server with embedded web UI |
 | `rag destroy` | Permanently wipe the knowledge base and all its data |
+| `rag graph score [--kb <name>]` | Print a schema.org 3-pillar health report (type / summary / relation completeness) |
+| `rag dream run [--kb <name>]` | Run one autonomous refinement cycle: complete, merge, prune |
+| `rag dream status [--kb <name>]` | Show the last dream cycle report |
 
 ### External drive support
 
