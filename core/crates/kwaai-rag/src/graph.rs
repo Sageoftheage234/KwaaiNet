@@ -120,6 +120,11 @@ pub struct EntityNode {
     /// Never changes entity_id — that remains hash(name + entity_type).
     #[serde(default)]
     pub schema_type: Option<String>,
+    /// All chunk IDs that mention this entity. Populated at load time from the
+    /// chunk index — not persisted in the entity record itself. Always current
+    /// after rebuild(). Use this in dream tasks instead of a separate lookup.
+    #[serde(default, skip_serializing)]
+    pub evidence: Vec<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -278,6 +283,13 @@ impl GraphStore {
             }
         }
 
+        // Populate entity.evidence from the index (only for live entities).
+        for (&eid, cids) in &self.entity_to_chunks {
+            if let Some(node) = self.nodes.get_mut(&eid) {
+                node.evidence = cids.clone();
+            }
+        }
+
         tracing::info!(
             entities = self.nodes.len(),
             relations = self.adj.values().map(|v| v.len()).sum::<usize>() / 2,
@@ -309,6 +321,7 @@ impl GraphStore {
                 first_chunk_id: existing.first_chunk_id,
                 aliases: existing.aliases.clone(),
                 schema_type: existing.schema_type.clone().or(node.schema_type.clone()),
+                evidence: existing.evidence.clone(),
             },
             None => node,
         };
@@ -776,16 +789,24 @@ impl GraphStore {
         }
         // Transfer chunk refs in-memory so callers don't see stale state before rebuild_in_memory()
         let alias_mem_chunks = self.entity_to_chunks.remove(&alias_id).unwrap_or_default();
-        for cid in alias_mem_chunks {
-            if let Some(eids) = self.chunk_to_entities.get_mut(&cid) {
+        for cid in &alias_mem_chunks {
+            if let Some(eids) = self.chunk_to_entities.get_mut(cid) {
                 eids.retain(|&id| id != alias_id);
                 if !eids.contains(&canonical_id) {
                     eids.push(canonical_id);
                 }
             }
             let ec = self.entity_to_chunks.entry(canonical_id).or_default();
-            if !ec.contains(&cid) {
-                ec.push(cid);
+            if !ec.contains(cid) {
+                ec.push(*cid);
+            }
+        }
+        // Keep entity.evidence in sync
+        if let Some(node) = self.nodes.get_mut(&canonical_id) {
+            for cid in alias_mem_chunks {
+                if !node.evidence.contains(&cid) {
+                    node.evidence.push(cid);
+                }
             }
         }
         // Leave adj stale — caller should call rebuild_in_memory() after a batch.

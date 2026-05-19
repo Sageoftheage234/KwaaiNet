@@ -122,6 +122,7 @@ pub async fn seed_family_tree(
             first_chunk_id: existing.as_ref().map(|e| e.first_chunk_id).unwrap_or(0),
             aliases: merged_aliases,
             schema_type: existing.as_ref().and_then(|e| e.schema_type.clone()),
+            evidence: Vec::new(),
         };
 
         graph.upsert_entity(node)?;

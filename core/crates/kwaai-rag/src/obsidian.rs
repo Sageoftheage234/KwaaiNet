@@ -303,6 +303,7 @@ pub async fn import_vault(
                 .map(|e| e.aliases.clone())
                 .unwrap_or_default(),
             schema_type: existing.as_ref().and_then(|e| e.schema_type.clone()),
+            evidence: Vec::new(),
         };
 
         graph.upsert_entity(node)?;
