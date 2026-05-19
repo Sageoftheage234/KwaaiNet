@@ -21,6 +21,8 @@ pub enum DreamTaskKind {
     Geography,    // schema:Place
     OrgProfile,   // schema:Organization
     EventProfile, // schema:Event
+    ConceptDef,   // schema:DefinedTerm — historical/social concepts
+    WorkProfile,  // schema:CreativeWork / schema:Product — books, films, objects
     General,      // Unknown / Thing — falls back to general completion
 }
 
@@ -30,6 +32,8 @@ pub fn task_for_schema_type(schema_type: Option<&str>) -> DreamTaskKind {
         Some("schema:Place") => DreamTaskKind::Geography,
         Some("schema:Organization") => DreamTaskKind::OrgProfile,
         Some("schema:Event") => DreamTaskKind::EventProfile,
+        Some("schema:DefinedTerm") => DreamTaskKind::ConceptDef,
+        Some("schema:CreativeWork") | Some("schema:Product") => DreamTaskKind::WorkProfile,
         _ => DreamTaskKind::General,
     }
 }
@@ -57,6 +61,12 @@ pub async fn run_task(
         }
         DreamTaskKind::EventProfile => {
             run_event_task(eid, name, current_description, evidence_text, url, model).await
+        }
+        DreamTaskKind::ConceptDef => {
+            run_concept_task(eid, name, current_description, evidence_text, url, model).await
+        }
+        DreamTaskKind::WorkProfile => {
+            run_work_task(eid, name, current_description, evidence_text, url, model).await
         }
         DreamTaskKind::General => {
             crate::dream::complete_entity(
@@ -218,14 +228,14 @@ pub async fn run_biography_task(
          JSON schema:\n\
          {{\"description\":\"<2-3 sentence biography derived from the text>\",\
            \"relations\":[\
-             {{\"type\":\"born_in\",\"target\":\"<birth place>\"}},\
-             {{\"type\":\"died_in\",\"target\":\"<death place>\"}},\
-             {{\"type\":\"married_to\",\"target\":\"<spouse name>\"}},\
+             {{\"type\":\"located_in\",\"target\":\"<birth place or home city>\"}},\
+             {{\"type\":\"spouse_of\",\"target\":\"<spouse name>\"}},\
              {{\"type\":\"child_of\",\"target\":\"<parent name>\"}},\
              {{\"type\":\"parent_of\",\"target\":\"<child name>\"}},\
-             {{\"type\":\"member_of\",\"target\":\"<organisation name>\"}},\
-             {{\"type\":\"educated_at\",\"target\":\"<institution name>\"}},\
-             {{\"type\":\"works_at\",\"target\":\"<employer or institution>\"}}\
+             {{\"type\":\"sibling_of\",\"target\":\"<sibling name>\"}},\
+             {{\"type\":\"belongs_to\",\"target\":\"<organisation name>\"}},\
+             {{\"type\":\"works_at\",\"target\":\"<employer or institution>\"}},\
+             {{\"type\":\"associated_with\",\"target\":\"<key person or movement>\"}}\
            ]}}\n\n\
          Rules:\n\
          - Only include a relation if the target entity is explicitly named in the text\n\
@@ -284,11 +294,11 @@ pub async fn run_org_task(
          JSON schema:\n\
          {{\"description\":\"<2-3 sentence profile of this organisation>\",\
            \"relations\":[\
-             {{\"type\":\"founded_by\",\"target\":\"<founder name>\"}},\
+             {{\"type\":\"associated_with\",\"target\":\"<founder name>\"}},\
              {{\"type\":\"located_in\",\"target\":\"<headquarters location>\"}},\
              {{\"type\":\"part_of\",\"target\":\"<parent organisation>\"}},\
              {{\"type\":\"manages\",\"target\":\"<programme or subsidiary>\"}},\
-             {{\"type\":\"member_of\",\"target\":\"<federation or body it belongs to>\"}}\
+             {{\"type\":\"belongs_to\",\"target\":\"<federation or body it belongs to>\"}}\
            ]}}\n\n\
          Only include relations where the target is explicitly named in the text."
     );
@@ -316,8 +326,67 @@ pub async fn run_event_task(
          {{\"description\":\"<2-3 sentence description of this event>\",\
            \"relations\":[\
              {{\"type\":\"located_in\",\"target\":\"<location where event took place>\"}},\
-             {{\"type\":\"participated_in\",\"target\":\"<key participant name>\"}},\
-             {{\"type\":\"related_to\",\"target\":\"<related organisation or event>\"}}\
+             {{\"type\":\"associated_with\",\"target\":\"<key participant name>\"}},\
+             {{\"type\":\"related_to\",\"target\":\"<related organisation or event>\"}},\
+             {{\"type\":\"occurred_on\",\"target\":\"<date or period>\"}}\
+           ]}}\n\n\
+         Only include relations where the target is explicitly named in the text."
+    );
+
+    match call_llm(&prompt, url, model).await {
+        Some(raw) => parse_result(&raw, eid, current_description),
+        None => empty(eid),
+    }
+}
+
+pub async fn run_concept_task(
+    eid: i64,
+    name: &str,
+    current_description: &str,
+    evidence_text: &str,
+    url: &str,
+    model: &str,
+) -> EntityCompletion {
+    let text = trim_evidence(evidence_text);
+    let prompt = format!(
+        "You are describing the historical or social concept \"{name}\" as used in source text.\n\
+         Return ONLY valid JSON — no markdown, no explanation.\n\n\
+         Source text:\n---\n{text}\n---\n\n\
+         JSON schema:\n\
+         {{\"description\":\"<2-3 sentence explanation of what this concept means in the context of the text>\",\
+           \"relations\":[\
+             {{\"type\":\"related_to\",\"target\":\"<related concept, law, or policy>\"}},\
+             {{\"type\":\"defined_by\",\"target\":\"<organisation or document that defines it>\"}},\
+             {{\"type\":\"subtype_of\",\"target\":\"<broader concept>\"}}\
+           ]}}\n\n\
+         Only include relations where the target is explicitly named in the text."
+    );
+
+    match call_llm(&prompt, url, model).await {
+        Some(raw) => parse_result(&raw, eid, current_description),
+        None => empty(eid),
+    }
+}
+
+pub async fn run_work_task(
+    eid: i64,
+    name: &str,
+    current_description: &str,
+    evidence_text: &str,
+    url: &str,
+    model: &str,
+) -> EntityCompletion {
+    let text = trim_evidence(evidence_text);
+    let prompt = format!(
+        "You are describing \"{name}\" — a creative work, publication, or physical object — from source text.\n\
+         Return ONLY valid JSON — no markdown, no explanation.\n\n\
+         Source text:\n---\n{text}\n---\n\n\
+         JSON schema:\n\
+         {{\"description\":\"<2-3 sentence description of what this is and how it appears in the text>\",\
+           \"relations\":[\
+             {{\"type\":\"associated_with\",\"target\":\"<person or organisation associated with it>\"}},\
+             {{\"type\":\"related_to\",\"target\":\"<related item or event>\"}},\
+             {{\"type\":\"located_in\",\"target\":\"<place where it is found or used>\"}}\
            ]}}\n\n\
          Only include relations where the target is explicitly named in the text."
     );

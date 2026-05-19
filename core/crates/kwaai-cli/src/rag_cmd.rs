@@ -3022,16 +3022,44 @@ async fn cmd_dream(action: DreamAction, kb: String) -> Result<()> {
                 max_completions,
                 workers,
             } => {
-                let mut urls: Vec<String> = inference_urls
-                    .as_deref()
-                    .unwrap_or("")
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-                if urls.is_empty() {
-                    urls.push(inference_url.unwrap_or_else(|| rag_cfg.inference_url.clone()));
-                }
+                let raw_urls: Vec<String> = {
+                    let mut v: Vec<String> = inference_urls
+                        .as_deref()
+                        .unwrap_or("")
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                    if v.is_empty() {
+                        v.push(
+                            inference_url.unwrap_or_else(|| rag_cfg.inference_url.clone()),
+                        );
+                    }
+                    v
+                };
+
+                // Resolve p2p:// URLs to local HTTP proxies (same pattern as graph build).
+                let has_p2p = raw_urls.iter().any(|u| u.starts_with("p2p://"));
+                let (_proxy_handles, urls) = if has_p2p {
+                    use kwaai_p2p_daemon::{P2PClient, DEFAULT_SOCKET_NAME};
+                    let sock = std::env::var("KWAAINET_SOCKET")
+                        .unwrap_or_else(|_| DEFAULT_SOCKET_NAME.to_string());
+                    #[cfg(unix)]
+                    let addr = format!("/unix/{sock}");
+                    #[cfg(not(unix))]
+                    let addr = "/ip4/127.0.0.1/tcp/5005".to_string();
+                    let p2p = std::sync::Arc::new(
+                        P2PClient::connect(&addr)
+                            .await
+                            .context("connecting to p2pd for p2p:// URL resolution")?,
+                    );
+                    let (res, handles) =
+                        crate::ollama_proxy::resolve_inference_urls(&raw_urls, &p2p).await?;
+                    (handles, res)
+                } else {
+                    (vec![], raw_urls)
+                };
+
                 let embed = EmbedClient::new(None, Some(rag_cfg.embed_model.clone()));
                 let meta = MetaStore::open(&rag_cfg.data_dir(), tenant_id)
                     .context("opening meta store")?;

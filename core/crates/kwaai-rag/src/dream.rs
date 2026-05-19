@@ -394,9 +394,14 @@ pub async fn run_dream_cycle(
             let _permit = permit;
             let idx = url_counter.fetch_add(1, Ordering::Relaxed) % urls.len().max(1);
             let url = &urls[idx % urls.len()];
-            let kind = crate::dream_tasks::task_for_schema_type(
-                item.schema_type.as_deref(),
-            );
+            // Prefer the stored schema_type; fall back to the static map so
+            // "Person" entities without a schema_type field still get the
+            // Biography task rather than the General task.
+            let resolved_st = item
+                .schema_type
+                .as_deref()
+                .or_else(|| crate::scorer::schema_type_for(&item.entity_type));
+            let kind = crate::dream_tasks::task_for_schema_type(resolved_st);
             let result = crate::dream_tasks::run_task(
                 kind,
                 item.entity_id,
