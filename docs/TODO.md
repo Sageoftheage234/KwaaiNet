@@ -2,6 +2,8 @@
 
 ## Build
 
+- [ ] **Runtime CUDA binding — single binary for all machines** — Currently we ship separate CPU and CUDA binaries, requiring GPU detection in the installer and updater. The fundamental problem: a CUDA-linked binary fails to start on machines without CUDA libs because the dynamic linker resolves symbols at load time, before `main()` runs. Fix: use `libloading` to `dlopen` CUDA libs lazily at first inference call rather than linking at compile time. The binary starts on any machine; if `libcuda.so` / `libcublas.so` are found at runtime, GPU is used — otherwise CPU falls back silently. This is how PyTorch/TensorFlow ship a single binary. Trade-off: every CUDA call must go through dynamically-resolved function pointers rather than direct symbol references; candle's `cuda` feature assumes compile-time linkage so this requires wrapping the CUDA backend. A lighter middle ground: a thin launcher binary that `exec`s `kwaainet-cuda` or `kwaainet-cpu` after GPU detection — still two underlying binaries but the user only ever touches one entry point. Both options eliminate the installer timing gap (CUDA build takes ~90 min in CI, fast path publishes immediately).
+
 - [ ] **Release build takes ~1.5 hours** — `[profile.release]` in `core/Cargo.toml` uses `lto = true` (fat LTO) + `codegen-units = 1`. Switch to `lto = "thin"`: thin LTO is parallel (5–10× faster link) with <5% runtime impact for this workload (I/O-bound: network, Ollama calls, redb). The `[profile.ci]` profile is already fast (`lto = false`, `codegen-units = 16`) and is unaffected.
 
 ## Housekeeping
@@ -445,6 +447,51 @@ primary destruction, with data-loss window bounded to the backup interval.
 - [ ] **`rag_api.rs` federated fan-out** — `RagState` gains `Vec<KbEndpoint>`. `rag_chat_completions` fans out `retrieve()` across all endpoints concurrently via `tokio::join_all`, merge-sort by score, inject global top-K.
 
 - [ ] **CLI additions** — `kwaainet rag kb-share --name <NAME>`, `kwaainet rag kb-list`, `--kb-ids` flag on `rag serve` for federated mode.
+
+### Phase 2.5 — Document-Schema-Aware Ingestion
+
+> Rationale: a flat PDF produces a uniform stream of chunks with no structural signal. A book has a
+> Foreword (context-setting, low entity density), Chapters (primary content), an Index (entity name
+> hints, near-zero prose), Footnotes (high specificity, easy to miss), and a Bibliography (relation
+> hints). Treating them identically wastes LLM tokens on low-signal sections and misses structural
+> metadata that improves entity extraction.
+
+- [ ] **`doc_type.rs` — document type detection** — Detect `schema:Book`, `schema:ScholarlyArticle`,
+  `schema:EmailMessage`, `schema:Report`, `schema:Legislation`, `schema:NewsArticle` from filename
+  patterns, PDF metadata (`/Author`, `/Keywords`, `/Subject`), and structural heuristics (chapter
+  heading density, reference list ratio, From:/To: lines). Return a `DocSchema` enum with known
+  section roles per type (e.g. `Book` has `{Foreword, Preface, TableOfContents, Chapter, Appendix,
+  Footnote, Bibliography, Index}`; `ScholarlyArticle` has `{Abstract, Introduction, Methods,
+  Results, Discussion, References}`). Schema.org vocabulary as the canonical type names.
+
+- [ ] **`section_tagger.rs` — structural section labelling** — Given a detected `DocSchema`, scan
+  chunk text for structural markers (regex/heuristic): heading patterns (`Chapter \d+`, `CONTENTS`,
+  `BIBLIOGRAPHY`, `INDEX`, numbered footnote markers, `Abstract`, `REFERENCES`). Tag each
+  `Chunk` with a `section_type: Option<SectionType>` field and `section_index: Option<u32>` (chapter
+  number, appendix letter, etc.). Store in chunk metadata in `meta_store.rs`.
+
+- [ ] **`ingester.rs` — section-aware pipeline** — Before splitting text into chunks, call
+  `section_tagger::label_sections()` to produce labelled segments. Pass `section_type` down through
+  `split_text()` so each `Chunk` carries the label. Log section breakdown at ingest time:
+  `"Detected schema:Book — 2 frontmatter, 18 chapters, 1 index, 1 bibliography"`.
+
+- [ ] **Graph build section hints** — In `rag graph build`, use `section_type` to select the
+  appropriate extraction prompt template:
+  - `Chapter` → standard entity/relation extraction prompt
+  - `Index` → entity-name-only extraction (no relations needed; each entry is a named entity hint)
+  - `Bibliography` → person+work relation extraction (`{Person} authored {Work}`)
+  - `Footnote` → high-precision extraction (small context, likely a specific fact)
+  - `TableOfContents` / `Foreword` / `Preface` → skip entity extraction (low signal, high noise)
+  Prompt templates live in a new `extract_prompts.rs` module; the build loop selects by
+  `SectionType`.
+
+- [ ] **`kwaainet rag ingest --doc-type <TYPE>`** — optional override flag (`book`, `paper`,
+  `email`, `report`, `legislation`) so the user can force a schema when auto-detection is wrong.
+  Auto-detected type is logged so users know what was inferred.
+
+- [ ] **`kwaainet rag docs` — show section breakdown** — extend `list_docs()` output with a
+  section summary column (e.g. `18 chapters, 1 index, 247 footnotes`) derived from stored
+  `section_type` counts in `meta_store`.
 
 ### Phase 3 — GraphRAG + Reasoning Harnesses
 

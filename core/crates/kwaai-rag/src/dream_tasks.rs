@@ -1,0 +1,329 @@
+//! Task-specific entity enrichment for Dream RAG.
+//!
+//! Each task targets a schema.org type and mines the entity's full evidence
+//! (all chunk IDs stored in EntityNode.evidence) to extract type-appropriate
+//! metadata via LLM, writing back richer descriptions and relations.
+//!
+//! All tasks share the EntityCompletion output so they slot directly into the
+//! existing write-back path in dream.rs.
+
+use serde::Deserialize;
+
+use crate::dream::EntityCompletion;
+use crate::graph::RELATION_TYPES;
+
+// ── Task dispatch ─────────────────────────────────────────────────────────────
+
+/// Which dream task to run for an entity, selected by schema.org type.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DreamTaskKind {
+    Biography,    // schema:Person
+    Geography,    // schema:Place
+    OrgProfile,   // schema:Organization
+    EventProfile, // schema:Event
+    General,      // Unknown / Thing — falls back to general completion
+}
+
+pub fn task_for_schema_type(schema_type: Option<&str>) -> DreamTaskKind {
+    match schema_type {
+        Some("schema:Person") => DreamTaskKind::Biography,
+        Some("schema:Place") => DreamTaskKind::Geography,
+        Some("schema:Organization") => DreamTaskKind::OrgProfile,
+        Some("schema:Event") => DreamTaskKind::EventProfile,
+        _ => DreamTaskKind::General,
+    }
+}
+
+/// Dispatch to the right task. General delegates to dream::complete_entity.
+pub async fn run_task(
+    kind: DreamTaskKind,
+    eid: i64,
+    name: &str,
+    entity_type: &str,
+    current_description: &str,
+    evidence_text: &str,
+    url: &str,
+    model: &str,
+) -> EntityCompletion {
+    match kind {
+        DreamTaskKind::Biography => {
+            run_biography_task(eid, name, current_description, evidence_text, url, model).await
+        }
+        DreamTaskKind::Geography => {
+            run_geography_task(eid, name, current_description, evidence_text, url, model).await
+        }
+        DreamTaskKind::OrgProfile => {
+            run_org_task(eid, name, current_description, evidence_text, url, model).await
+        }
+        DreamTaskKind::EventProfile => {
+            run_event_task(eid, name, current_description, evidence_text, url, model).await
+        }
+        DreamTaskKind::General => {
+            crate::dream::complete_entity(
+                eid,
+                name,
+                entity_type,
+                current_description,
+                evidence_text,
+                url,
+                model,
+            )
+            .await
+        }
+    }
+}
+
+// ── Evidence trimming ─────────────────────────────────────────────────────────
+
+/// Cap evidence at ~8 000 chars (~2 000 tokens), breaking at a sentence boundary.
+pub fn trim_evidence(text: &str) -> &str {
+    const LIMIT: usize = 8_000;
+    if text.len() <= LIMIT {
+        return text;
+    }
+    text[..LIMIT]
+        .rfind(". ")
+        .map(|p| &text[..p + 2])
+        .unwrap_or(&text[..LIMIT])
+}
+
+// ── Shared LLM helpers ────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct TaskPayload {
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    relations: Vec<TaskRelation>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TaskRelation {
+    #[serde(rename = "type")]
+    relation_type: String,
+    target: String,
+}
+
+async fn call_llm(prompt: &str, url: &str, model: &str) -> Option<String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()
+        .ok()?;
+
+    let full_url = format!("{}/v1/chat/completions", url.trim_end_matches('/'));
+    let body = serde_json::json!({
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.1,
+        "max_tokens": 600,
+    });
+
+    let resp = tokio::time::timeout(
+        std::time::Duration::from_secs(90),
+        client.post(&full_url).json(&body).send(),
+    )
+    .await
+    .ok()?
+    .ok()?;
+
+    if !resp.status().is_success() {
+        return None;
+    }
+
+    let v: serde_json::Value =
+        tokio::time::timeout(std::time::Duration::from_secs(120), resp.json())
+            .await
+            .ok()?
+            .ok()?;
+
+    Some(
+        v["choices"][0]["message"]["content"]
+            .as_str()
+            .unwrap_or("{}")
+            .to_string(),
+    )
+}
+
+fn parse_result(raw: &str, eid: i64, current_desc: &str) -> EntityCompletion {
+    let cleaned = raw
+        .trim()
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+
+    let payload: TaskPayload = match serde_json::from_str(cleaned) {
+        Ok(p) => p,
+        Err(_) => {
+            return EntityCompletion {
+                entity_id: eid,
+                schema_type: None,
+                description: None,
+                relations: vec![],
+            }
+        }
+    };
+
+    let description = if payload.description.len() > current_desc.len() + 20 {
+        Some(payload.description)
+    } else {
+        None
+    };
+
+    let relations: Vec<(String, String)> = payload
+        .relations
+        .into_iter()
+        .filter(|r| {
+            !r.target.is_empty()
+                && !r.relation_type.is_empty()
+                && RELATION_TYPES.contains(&r.relation_type.as_str())
+        })
+        .map(|r| (r.relation_type, r.target))
+        .collect();
+
+    EntityCompletion {
+        entity_id: eid,
+        schema_type: None, // type already resolved; don't overwrite
+        description,
+        relations,
+    }
+}
+
+fn empty(eid: i64) -> EntityCompletion {
+    EntityCompletion {
+        entity_id: eid,
+        schema_type: None,
+        description: None,
+        relations: vec![],
+    }
+}
+
+// ── Task implementations ──────────────────────────────────────────────────────
+
+pub async fn run_biography_task(
+    eid: i64,
+    name: &str,
+    current_description: &str,
+    evidence_text: &str,
+    url: &str,
+    model: &str,
+) -> EntityCompletion {
+    let text = trim_evidence(evidence_text);
+    let prompt = format!(
+        "You are building a biography for a person named \"{name}\" from source text.\n\
+         Return ONLY valid JSON — no markdown, no explanation.\n\n\
+         Source text (all passages mentioning this person):\n---\n{text}\n---\n\n\
+         Extract only what is clearly stated in the text. Do not invent facts.\n\n\
+         JSON schema:\n\
+         {{\"description\":\"<2-3 sentence biography derived from the text>\",\
+           \"relations\":[\
+             {{\"type\":\"born_in\",\"target\":\"<birth place>\"}},\
+             {{\"type\":\"died_in\",\"target\":\"<death place>\"}},\
+             {{\"type\":\"married_to\",\"target\":\"<spouse name>\"}},\
+             {{\"type\":\"child_of\",\"target\":\"<parent name>\"}},\
+             {{\"type\":\"parent_of\",\"target\":\"<child name>\"}},\
+             {{\"type\":\"member_of\",\"target\":\"<organisation name>\"}},\
+             {{\"type\":\"educated_at\",\"target\":\"<institution name>\"}},\
+             {{\"type\":\"works_at\",\"target\":\"<employer or institution>\"}}\
+           ]}}\n\n\
+         Rules:\n\
+         - Only include a relation if the target entity is explicitly named in the text\n\
+         - Omit relations where target is empty, vague, or not in the text\n\
+         - description must be derived from the text, not invented"
+    );
+
+    match call_llm(&prompt, url, model).await {
+        Some(raw) => parse_result(&raw, eid, current_description),
+        None => empty(eid),
+    }
+}
+
+pub async fn run_geography_task(
+    eid: i64,
+    name: &str,
+    current_description: &str,
+    evidence_text: &str,
+    url: &str,
+    model: &str,
+) -> EntityCompletion {
+    let text = trim_evidence(evidence_text);
+    let prompt = format!(
+        "You are describing a place named \"{name}\" from source text.\n\
+         Return ONLY valid JSON — no markdown, no explanation.\n\n\
+         Source text:\n---\n{text}\n---\n\n\
+         JSON schema:\n\
+         {{\"description\":\"<2-3 sentence description of this place>\",\
+           \"relations\":[\
+             {{\"type\":\"located_in\",\"target\":\"<city, region, or country>\"}},\
+             {{\"type\":\"part_of\",\"target\":\"<larger area or district>\"}},\
+             {{\"type\":\"contains\",\"target\":\"<named sub-area or landmark>\"}}\
+           ]}}\n\n\
+         Only include relations where the target is explicitly named in the text."
+    );
+
+    match call_llm(&prompt, url, model).await {
+        Some(raw) => parse_result(&raw, eid, current_description),
+        None => empty(eid),
+    }
+}
+
+pub async fn run_org_task(
+    eid: i64,
+    name: &str,
+    current_description: &str,
+    evidence_text: &str,
+    url: &str,
+    model: &str,
+) -> EntityCompletion {
+    let text = trim_evidence(evidence_text);
+    let prompt = format!(
+        "You are profiling an organisation named \"{name}\" from source text.\n\
+         Return ONLY valid JSON — no markdown, no explanation.\n\n\
+         Source text:\n---\n{text}\n---\n\n\
+         JSON schema:\n\
+         {{\"description\":\"<2-3 sentence profile of this organisation>\",\
+           \"relations\":[\
+             {{\"type\":\"founded_by\",\"target\":\"<founder name>\"}},\
+             {{\"type\":\"located_in\",\"target\":\"<headquarters location>\"}},\
+             {{\"type\":\"part_of\",\"target\":\"<parent organisation>\"}},\
+             {{\"type\":\"manages\",\"target\":\"<programme or subsidiary>\"}},\
+             {{\"type\":\"member_of\",\"target\":\"<federation or body it belongs to>\"}}\
+           ]}}\n\n\
+         Only include relations where the target is explicitly named in the text."
+    );
+
+    match call_llm(&prompt, url, model).await {
+        Some(raw) => parse_result(&raw, eid, current_description),
+        None => empty(eid),
+    }
+}
+
+pub async fn run_event_task(
+    eid: i64,
+    name: &str,
+    current_description: &str,
+    evidence_text: &str,
+    url: &str,
+    model: &str,
+) -> EntityCompletion {
+    let text = trim_evidence(evidence_text);
+    let prompt = format!(
+        "You are describing an event named \"{name}\" from source text.\n\
+         Return ONLY valid JSON — no markdown, no explanation.\n\n\
+         Source text:\n---\n{text}\n---\n\n\
+         JSON schema:\n\
+         {{\"description\":\"<2-3 sentence description of this event>\",\
+           \"relations\":[\
+             {{\"type\":\"located_in\",\"target\":\"<location where event took place>\"}},\
+             {{\"type\":\"participated_in\",\"target\":\"<key participant name>\"}},\
+             {{\"type\":\"related_to\",\"target\":\"<related organisation or event>\"}}\
+           ]}}\n\n\
+         Only include relations where the target is explicitly named in the text."
+    );
+
+    match call_llm(&prompt, url, model).await {
+        Some(raw) => parse_result(&raw, eid, current_description),
+        None => empty(eid),
+    }
+}
