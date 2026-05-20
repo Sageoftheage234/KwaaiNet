@@ -270,7 +270,7 @@ pub async fn run_biography_task(
          Return ONLY valid JSON — no markdown, no explanation.\n\n\
          Source text (all passages mentioning this person):\n---\n{text}\n---\n\n\
          JSON schema:\n\
-         {{\"description\":\"<EXACTLY 2-3 sentences, minimum 150 characters>\",\
+         {{\"description\":\"<sentence 1: who this person is — nationality, era, and primary role or profession> <sentence 2: their key contribution, association, or significance in the context of the text>\",\
            \"relations\":[\
              {{\"type\":\"located_in\",\"target\":\"<birth place, home city, or country>\"}},\
              {{\"type\":\"spouse_of\",\"target\":\"<spouse name>\"}},\
@@ -358,7 +358,7 @@ pub async fn run_org_task(
          Return ONLY valid JSON — no markdown, no explanation.\n\n\
          Source text:\n---\n{text}\n---\n\n\
          JSON schema:\n\
-         {{\"description\":\"<EXACTLY 2-3 sentences, minimum 150 characters>\",\
+         {{\"description\":\"<sentence 1: what type of organisation this is and where it operates> <sentence 2: its purpose, key activities, or role in the context of the text>\",\
            \"relations\":[\
              {{\"type\":\"associated_with\",\"target\":\"<key person associated with it>\"}},\
              {{\"type\":\"founded\",\"target\":\"<entity or institution this organisation founded>\"}},\
@@ -392,7 +392,7 @@ pub async fn run_event_task(
          Return ONLY valid JSON — no markdown, no explanation.\n\n\
          Source text:\n---\n{text}\n---\n\n\
          JSON schema:\n\
-         {{\"description\":\"<EXACTLY 2-3 sentences (minimum 150 characters) describing this event>\",\
+         {{\"description\":\"<sentence 1: what happened and when or where this event occurred> <sentence 2: its significance, outcome, or key participants>\",\
            \"relations\":[\
              {{\"type\":\"located_in\",\"target\":\"<location where event took place>\"}},\
              {{\"type\":\"associated_with\",\"target\":\"<key participant name>\"}},\
@@ -432,7 +432,7 @@ pub async fn run_concept_task(
          Return ONLY valid JSON — no markdown, no explanation.\n\n\
          Source text:\n---\n{text}\n---\n\n\
          JSON schema:\n\
-         {{\"description\":\"<EXACTLY 2-3 sentences (minimum 150 characters) explaining what this concept means>\",\
+         {{\"description\":\"<sentence 1: what this concept means or refers to in general terms> <sentence 2: how it is used or significant in the context of the source text>\",\
            \"relations\":[\
              {{\"type\":\"related_to\",\"target\":\"<related concept, law, or policy>\"}},\
              {{\"type\":\"defined_by\",\"target\":\"<organisation or document that defines it>\"}},\
@@ -464,7 +464,7 @@ pub async fn run_work_task(
          Return ONLY valid JSON — no markdown, no explanation.\n\n\
          Source text:\n---\n{text}\n---\n\n\
          JSON schema:\n\
-         {{\"description\":\"<EXACTLY 2-3 sentences (minimum 150 characters) describing what this is>\",\
+         {{\"description\":\"<sentence 1: what this work or object is — its type and creator or origin> <sentence 2: its significance or how it appears in the source text>\",\
            \"relations\":[\
              {{\"type\":\"associated_with\",\"target\":\"<person or organisation associated with it>\"}},\
              {{\"type\":\"related_to\",\"target\":\"<related item or event>\"}},\
