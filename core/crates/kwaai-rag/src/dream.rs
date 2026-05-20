@@ -143,17 +143,16 @@ pub async fn complete_entity(
          Source text:\n---\n{chunk_text}\n---\n\n\
          JSON schema:\n\
          {{\"schema_type\":\"<type>\",\
-           \"description\":\"<2-3 sentence summary from the text>\",\
+           \"description\":\"<EXACTLY 2-3 sentences (minimum 150 characters) from the text>\",\
            \"relations\":[{{\"type\":\"<rel>\",\"target\":\"<entity name>\"}}]}}\n\n\
          Valid schema_type values: {schema_types}\n\
          Valid relation types: {relation_types}\n\n\
          Rules:\n\
          - schema_type must be one of the listed values; use schema:Thing if unsure\n\
+         - description MUST be at least 2 full sentences and at least 150 characters\n\
          - description must be derived from the source text, not invented\n\
          - only include relations clearly stated in the text\n\
-         - only include target entities that appear by name in the text\n\
-         - if description is already good (>150 chars), you may keep it unchanged by \
-           returning the same text"
+         - only include target entities that appear by name in the text"
     );
 
     let url = format!(

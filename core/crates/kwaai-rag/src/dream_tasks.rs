@@ -238,7 +238,7 @@ pub async fn run_biography_task(
          Return ONLY valid JSON — no markdown, no explanation.\n\n\
          Source text (all passages mentioning this person):\n---\n{text}\n---\n\n\
          JSON schema:\n\
-         {{\"description\":\"<2-3 sentence biography>\",\
+         {{\"description\":\"<EXACTLY 2-3 sentences, minimum 150 characters>\",\
            \"relations\":[\
              {{\"type\":\"located_in\",\"target\":\"<birth place, home city, or country>\"}},\
              {{\"type\":\"spouse_of\",\"target\":\"<spouse name>\"}},\
@@ -250,6 +250,7 @@ pub async fn run_biography_task(
              {{\"type\":\"associated_with\",\"target\":\"<key person, event, or movement>\"}}\
            ]}}\n\n\
          Rules:\n\
+         - description MUST be at least 2 full sentences and at least 150 characters\n\
          - Omit any relation whose target is empty or vague\n\
          - {knowledge_rule}"
     );
@@ -269,26 +270,29 @@ pub async fn run_geography_task(
     model: &str,
 ) -> EntityCompletion {
     let text = trim_evidence(evidence_text);
-    let thin = text.len() < 300;
+    // Raise threshold: evidence is concatenated chunks so even well-known places
+    // can have 1000+ chars of text that is all brief mentions ("met in Bloemfontein").
+    let thin = text.len() < 800;
     let knowledge_rule = if thin {
-        "If this is a well-known city, country, region, or landmark you may supplement \
-         sparse text with widely-known geographic facts (country, continent, key feature). \
-         For obscure or fictional places, use only what the text provides."
+        "You MAY supplement sparse source text with widely-known geographic facts \
+         (country, continent, administrative region, key historical or physical feature). \
+         For obscure, fictional, or highly local places, use only what the text provides."
     } else {
-        "Only include relations where the target is explicitly named in the text."
+        "Use the source text as your primary reference for geographic details."
     };
     let prompt = format!(
         "You are describing a place named \"{name}\" from source text.\n\
          Return ONLY valid JSON — no markdown, no explanation.\n\n\
          Source text:\n---\n{text}\n---\n\n\
          JSON schema:\n\
-         {{\"description\":\"<2-3 sentence description of this place>\",\
+         {{\"description\":\"<EXACTLY 2 full sentences (minimum 150 characters total) describing this place>\",\
            \"relations\":[\
              {{\"type\":\"located_in\",\"target\":\"<city, region, or country>\"}},\
              {{\"type\":\"part_of\",\"target\":\"<larger area or district>\"}},\
              {{\"type\":\"contains\",\"target\":\"<named sub-area or landmark>\"}}\
            ]}}\n\n\
          Rules:\n\
+         - description MUST be at least 2 full sentences and at least 150 characters\n\
          - Omit any relation whose target is empty or vague\n\
          - {knowledge_rule}"
     );
@@ -322,7 +326,7 @@ pub async fn run_org_task(
          Return ONLY valid JSON — no markdown, no explanation.\n\n\
          Source text:\n---\n{text}\n---\n\n\
          JSON schema:\n\
-         {{\"description\":\"<2-3 sentence profile of this organisation>\",\
+         {{\"description\":\"<EXACTLY 2-3 sentences, minimum 150 characters>\",\
            \"relations\":[\
              {{\"type\":\"associated_with\",\"target\":\"<key person associated with it>\"}},\
              {{\"type\":\"founded\",\"target\":\"<entity or institution this organisation founded>\"}},\
@@ -356,14 +360,16 @@ pub async fn run_event_task(
          Return ONLY valid JSON — no markdown, no explanation.\n\n\
          Source text:\n---\n{text}\n---\n\n\
          JSON schema:\n\
-         {{\"description\":\"<2-3 sentence description of this event>\",\
+         {{\"description\":\"<EXACTLY 2-3 sentences (minimum 150 characters) describing this event>\",\
            \"relations\":[\
              {{\"type\":\"located_in\",\"target\":\"<location where event took place>\"}},\
              {{\"type\":\"associated_with\",\"target\":\"<key participant name>\"}},\
              {{\"type\":\"related_to\",\"target\":\"<related organisation or event>\"}},\
              {{\"type\":\"occurred_on\",\"target\":\"<date or period>\"}}\
            ]}}\n\n\
-         Only include relations where the target is explicitly named in the text."
+         Rules:\n\
+         - description MUST be at least 2 full sentences and at least 150 characters\n\
+         - Only include relations where the target is explicitly named in the text."
     );
 
     match call_llm(&prompt, url, model).await {
@@ -394,13 +400,14 @@ pub async fn run_concept_task(
          Return ONLY valid JSON — no markdown, no explanation.\n\n\
          Source text:\n---\n{text}\n---\n\n\
          JSON schema:\n\
-         {{\"description\":\"<2-3 sentence explanation of what this concept means in the context of the text>\",\
+         {{\"description\":\"<EXACTLY 2-3 sentences (minimum 150 characters) explaining what this concept means>\",\
            \"relations\":[\
              {{\"type\":\"related_to\",\"target\":\"<related concept, law, or policy>\"}},\
              {{\"type\":\"defined_by\",\"target\":\"<organisation or document that defines it>\"}},\
              {{\"type\":\"subtype_of\",\"target\":\"<broader concept>\"}}\
            ]}}\n\n\
          Rules:\n\
+         - description MUST be at least 2 full sentences and at least 150 characters\n\
          - Omit any relation whose target is empty or vague\n\
          - {knowledge_rule}"
     );
@@ -425,7 +432,7 @@ pub async fn run_work_task(
          Return ONLY valid JSON — no markdown, no explanation.\n\n\
          Source text:\n---\n{text}\n---\n\n\
          JSON schema:\n\
-         {{\"description\":\"<2-3 sentence description of what this is and how it appears in the text>\",\
+         {{\"description\":\"<EXACTLY 2-3 sentences (minimum 150 characters) describing what this is>\",\
            \"relations\":[\
              {{\"type\":\"associated_with\",\"target\":\"<person or organisation associated with it>\"}},\
              {{\"type\":\"related_to\",\"target\":\"<related item or event>\"}},\
@@ -433,7 +440,9 @@ pub async fn run_work_task(
              {{\"type\":\"cites\",\"target\":\"<another work or entity it references>\"}},\
              {{\"type\":\"located_in\",\"target\":\"<place where it is found or used>\"}}\
            ]}}\n\n\
-         Only include relations where the target is explicitly named in the text."
+         Rules:\n\
+         - description MUST be at least 2 full sentences and at least 150 characters\n\
+         - Only include relations where the target is explicitly named in the text."
     );
 
     match call_llm(&prompt, url, model).await {
