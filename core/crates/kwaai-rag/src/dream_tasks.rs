@@ -155,6 +155,27 @@ async fn call_llm(prompt: &str, url: &str, model: &str) -> Option<String> {
     )
 }
 
+/// Quick summary score matching scorer.rs tiers (no import needed).
+pub fn summary_tier(desc: &str) -> u8 {
+    if desc.is_empty() {
+        0
+    } else if desc.len() < 50 {
+        1
+    } else if desc.len() < 150 {
+        2
+    } else {
+        let sentences = desc
+            .chars()
+            .filter(|c| matches!(c, '.' | '?' | '!'))
+            .count();
+        if sentences >= 2 {
+            4 // 1.0
+        } else {
+            3 // 0.8
+        }
+    }
+}
+
 fn parse_result(raw: &str, eid: i64, current_desc: &str) -> EntityCompletion {
     let cleaned = raw
         .trim()
@@ -175,10 +196,21 @@ fn parse_result(raw: &str, eid: i64, current_desc: &str) -> EntityCompletion {
         }
     };
 
-    let description = if payload.description.len() > current_desc.len() + 20 {
-        Some(payload.description)
-    } else {
-        None
+    // Accept the new description if it improves the summary score tier OR is
+    // meaningfully longer (same tier but more content).  The old length+20
+    // gate rejected tier-jumping rewrites where the new text was shorter but
+    // far richer (e.g. a model that writes a 120-char description over an
+    // existing 105-char one would be blocked; now it isn't).
+    let description = {
+        let new_tier = summary_tier(&payload.description);
+        let old_tier = summary_tier(current_desc);
+        if new_tier > old_tier
+            || (new_tier == old_tier && payload.description.len() > current_desc.len() + 20)
+        {
+            Some(payload.description)
+        } else {
+            None
+        }
     };
 
     let relations: Vec<(String, String)> = payload

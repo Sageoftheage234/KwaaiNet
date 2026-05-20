@@ -241,8 +241,13 @@ pub async fn complete_entity(
         None
     };
 
-    // Only improve description if it's substantively longer.
-    let description = if payload.description.len() > current_description.len() + 20 {
+    // Accept if it moves to a better summary-score tier or is meaningfully
+    // longer within the same tier.
+    let new_tier = crate::dream_tasks::summary_tier(&payload.description);
+    let old_tier = crate::dream_tasks::summary_tier(current_description);
+    let description = if new_tier > old_tier
+        || (new_tier == old_tier && payload.description.len() > current_description.len() + 20)
+    {
         Some(payload.description)
     } else {
         None
