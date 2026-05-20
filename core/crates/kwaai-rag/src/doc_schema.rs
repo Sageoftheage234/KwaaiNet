@@ -22,6 +22,38 @@ pub struct DocSchema {
     /// Ordered list of section definitions; first pattern to match wins.
     #[serde(default)]
     pub sections: Vec<SectionDef>,
+    /// Free-form document-level facts persisted into the KB and injected into every query.
+    /// Well-known keys: "author", "subject", "year", "language", "publisher".
+    #[serde(default)]
+    pub metadata: std::collections::HashMap<String, String>,
+}
+
+impl DocSchema {
+    /// Build a human-readable one-line context string from the metadata map, suitable for
+    /// prepending to LLM prompts so the model always knows who wrote the document.
+    pub fn context_line(&self) -> Option<String> {
+        if self.metadata.is_empty() && self.document_title.is_none() {
+            return None;
+        }
+        let mut parts: Vec<String> = Vec::new();
+        let title = self
+            .document_title
+            .as_deref()
+            .or_else(|| self.metadata.get("title").map(|s| s.as_str()))
+            .unwrap_or("(untitled document)");
+        if let Some(author) = self.metadata.get("author") {
+            parts.push(format!("\"{}\" by {}", title, author));
+        } else {
+            parts.push(format!("\"{}\"", title));
+        }
+        if let Some(year) = self.metadata.get("year") {
+            parts.push(format!("({})", year));
+        }
+        if let Some(subject) = self.metadata.get("subject") {
+            parts.push(format!("Subject: {}", subject));
+        }
+        Some(parts.join(" "))
+    }
 }
 
 pub fn load_doc_schema(path: &Path) -> Result<DocSchema> {

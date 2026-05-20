@@ -1657,6 +1657,14 @@ pub enum GraphAction {
     ///      so they can be reviewed.
     Sanitize,
 
+    /// Load a doc-schema YAML and persist its metadata section into the knowledge base.
+    /// Run this after a rebuild if you didn't use --doc-schema during ingest.
+    SetMetadata {
+        /// Path to the doc-schema YAML file
+        #[arg(long, value_name = "FILE")]
+        doc_schema: std::path::PathBuf,
+    },
+
     /// Export the knowledge graph to an Obsidian vault
     Export {
         /// Output directory for the vault (created if absent)

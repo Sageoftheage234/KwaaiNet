@@ -2136,6 +2136,35 @@ impl GraphStore {
         Ok(())
     }
 
+    /// Persist document-level metadata from a DocSchema into the graph store.
+    pub fn set_doc_metadata(
+        &mut self,
+        metadata: &std::collections::HashMap<String, String>,
+    ) -> Result<()> {
+        let json = serde_json::to_string(metadata)?;
+        let wtxn = self.db.begin_write()?;
+        {
+            let mut t = wtxn.open_table(METADATA_TABLE)?;
+            t.insert("doc_metadata", json.as_str())?;
+        }
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    /// Retrieve persisted document metadata. Returns empty map if none stored.
+    pub fn get_doc_metadata(&self) -> std::collections::HashMap<String, String> {
+        let Ok(rtxn) = self.db.begin_read() else {
+            return Default::default();
+        };
+        let Ok(table) = rtxn.open_table(METADATA_TABLE) else {
+            return Default::default();
+        };
+        let Ok(Some(v)) = table.get("doc_metadata") else {
+            return Default::default();
+        };
+        serde_json::from_str(v.value()).unwrap_or_default()
+    }
+
     /// Retrieve the stored document titles. Returns an empty vec if none are stored.
     pub fn get_document_titles(&self) -> Vec<String> {
         let Ok(rtxn) = self.db.begin_read() else {

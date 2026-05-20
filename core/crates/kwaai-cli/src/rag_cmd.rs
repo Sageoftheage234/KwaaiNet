@@ -540,6 +540,16 @@ async fn cmd_ingest(
                 skip_count,
                 note_count
             ));
+            // Persist document metadata into the graph store for use at query/dream time.
+            if !schema.metadata.is_empty() {
+                if let Ok(mut g) = GraphStore::open(&rag_cfg.data_dir(), tenant_id) {
+                    let _ = g.set_doc_metadata(&schema.metadata);
+                    print_info(&format!(
+                        "Doc metadata persisted: {} key(s)",
+                        schema.metadata.len()
+                    ));
+                }
+            }
             cfg.doc_schema = Some(schema);
         }
 
@@ -1110,6 +1120,22 @@ async fn cmd_chat(
                 }
             }
 
+            // Load document context preamble from persisted schema metadata (if any).
+            let doc_context_line: Option<String> = GraphStore::open(&rag_cfg.data_dir(), tenant_id)
+                .ok()
+                .and_then(|g| {
+                    let meta = g.get_doc_metadata();
+                    if meta.is_empty() {
+                        return None;
+                    }
+                    let schema = kwaai_rag::doc_schema::DocSchema {
+                        metadata: meta,
+                        document_title: g.get_document_titles().into_iter().next(),
+                        ..Default::default()
+                    };
+                    schema.context_line()
+                });
+
             // Resolve effective mode for this turn (auto → graph if KB has entities).
             let effective_mode_chat: &str = if mode == "auto" {
                 if let Ok(g) = GraphStore::open(&rag_cfg.data_dir(), tenant_id) {
@@ -1214,7 +1240,7 @@ async fn cmd_chat(
                 chunks
             };
 
-            let messages = build_chat_messages(&query, &chunks, &history, 24000);
+            let messages = build_chat_messages(&query, &chunks, &history, 24000, doc_context_line.as_deref());
             let payload = serde_json::json!({
                 "model": model,
                 "messages": messages,
@@ -2746,6 +2772,25 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                 }
             }
 
+            GraphAction::SetMetadata { doc_schema } => {
+                let schema = kwaai_rag::doc_schema::load_doc_schema(&doc_schema)
+                    .context("loading doc schema")?;
+                if schema.metadata.is_empty() {
+                    print_warning("Doc schema has no metadata section — nothing to persist.");
+                    return Ok(());
+                }
+                let mut store = GraphStore::open(&rag_cfg.data_dir(), tenant_id)
+                    .context("opening graph store")?;
+                store.set_doc_metadata(&schema.metadata)?;
+                print_success(&format!(
+                    "Persisted {} metadata key(s) into KB '{kb}':",
+                    schema.metadata.len()
+                ));
+                for (k, v) in &schema.metadata {
+                    println!("    {k}: {v}");
+                }
+            }
+
             GraphAction::Export { output_dir } => {
                 return cmd_export(output_dir, kb).await;
             }
@@ -3518,6 +3563,22 @@ async fn cmd_eval(
             },
         };
 
+        // Load document context preamble from persisted schema metadata (if any).
+        let eval_doc_context: Option<String> = GraphStore::open(&rag_cfg.data_dir(), tenant_id)
+            .ok()
+            .and_then(|g| {
+                let meta = g.get_doc_metadata();
+                if meta.is_empty() {
+                    return None;
+                }
+                let schema = kwaai_rag::doc_schema::DocSchema {
+                    metadata: meta,
+                    document_title: g.get_document_titles().into_iter().next(),
+                    ..Default::default()
+                };
+                schema.context_line()
+            });
+
         // Resolve "auto" mode: use graph if the KB has entities, else vector.
         let effective_mode = if mode == "auto" {
             if let Ok(g) = GraphStore::open(&rag_cfg.data_dir(), tenant_id) {
@@ -3658,7 +3719,7 @@ async fn cmd_eval(
                 .collect();
 
             // Generate answer.
-            let messages = build_chat_messages(&q.question, &chunks, &[], 24000);
+            let messages = build_chat_messages(&q.question, &chunks, &[], 24000, eval_doc_context.as_deref());
             let payload = serde_json::json!({
                 "model": model,
                 "messages": messages,
