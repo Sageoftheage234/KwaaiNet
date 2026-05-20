@@ -186,7 +186,7 @@ impl UpdateChecker {
                  $tmp     = Join-Path ([System.IO.Path]::GetTempPath()) 'kwaainet-upd-extract'\r\n\
                  if (Test-Path $tmp) {{ Remove-Item $tmp -Recurse -Force }}\r\n\
                  Expand-Archive -LiteralPath $zip -DestinationPath $tmp -Force\r\n\
-                 Get-ChildItem -Path $tmp -Recurse -Include '*.exe','p2pd' | ForEach-Object {{\r\n\
+                 Get-ChildItem -Path $tmp -Recurse -Include '*.exe' | ForEach-Object {{\r\n\
                    $target = Join-Path $dest $_.Name\r\n\
                    Move-Item -Path $_.FullName -Destination $target -Force\r\n\
                    Add-Content -Path '{log_str}' -Value ('Installed ' + $_.Name)\r\n\
@@ -195,7 +195,7 @@ impl UpdateChecker {
                  Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue\r\n\
                  Add-Content -Path '{log_str}' -Value 'Swap complete — restarting daemon'\r\n\
                  Start-Sleep -Seconds 2\r\n\
-                 Start-Process -FilePath '{exe_str}' -ArgumentList 'restart' -WindowStyle Hidden\r\n\
+                 Start-Process -FilePath '{exe_str}' -ArgumentList 'start', '--daemon' -WindowStyle Hidden\r\n\
                  Add-Content -Path '{log_str}' -Value 'Daemon restart triggered'\r\n"
             );
             std::fs::write(&ps1, &ps1_content).context("Failed to write update script")?;

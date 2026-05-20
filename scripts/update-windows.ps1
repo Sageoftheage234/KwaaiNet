@@ -30,7 +30,7 @@ Write-Host "Stopping kwaainet..."
 Stop-Process -Name kwaainet -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
 
-Get-ChildItem -Path $tmp -Recurse -Include '*.exe', 'p2pd' | ForEach-Object {
+Get-ChildItem -Path $tmp -Recurse -Include '*.exe' | ForEach-Object {
     $dest = Join-Path $installDir $_.Name
     Copy-Item -Path $_.FullName -Destination $dest -Force
     Write-Host "  Installed $($_.Name)"
