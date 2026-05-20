@@ -178,8 +178,8 @@ pub async fn complete_entity(
     let body = serde_json::json!({
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.1,
-        "max_tokens": 512,
+        "temperature": 0.25,
+        "max_tokens": 700,
     });
 
     let resp = match tokio::time::timeout(

@@ -125,8 +125,8 @@ async fn call_llm(prompt: &str, url: &str, model: &str) -> Option<String> {
     let body = serde_json::json!({
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.1,
-        "max_tokens": 600,
+        "temperature": 0.25,
+        "max_tokens": 700,
     });
 
     let resp = tokio::time::timeout(
@@ -317,14 +317,14 @@ pub async fn run_geography_task(
          Return ONLY valid JSON — no markdown, no explanation.\n\n\
          Source text:\n---\n{text}\n---\n\n\
          JSON schema:\n\
-         {{\"description\":\"<EXACTLY 2 full sentences (minimum 150 characters total) describing this place>\",\
+         {{\"description\":\"<sentence 1: what type of place it is and where located> <sentence 2: its historical, cultural, or political significance>\",\
            \"relations\":[\
              {{\"type\":\"located_in\",\"target\":\"<city, region, or country>\"}},\
              {{\"type\":\"part_of\",\"target\":\"<larger area or district>\"}},\
              {{\"type\":\"contains\",\"target\":\"<named sub-area or landmark>\"}}\
            ]}}\n\n\
          Rules:\n\
-         - description MUST be at least 2 full sentences and at least 150 characters\n\
+         - Write BOTH sentences; description must be at least 150 characters total\n\
          - Omit any relation whose target is empty or vague\n\
          - {knowledge_rule}"
     );
