@@ -390,6 +390,14 @@ pub async fn run_event_task(
     model: &str,
 ) -> EntityCompletion {
     let text = trim_evidence(evidence_text);
+    let thin = text.len() < 600;
+    let knowledge_rule = if thin {
+        "If this is a well-known historical event (war, political act, battle, legislation) \
+         you may supplement sparse text with widely-known facts about its participants, \
+         location, or broader context. For obscure or local events, use only what the text provides."
+    } else {
+        "Include relations clearly supported by the text — explicit or strongly implied by context."
+    };
     let prompt = format!(
         "You are describing an event named \"{name}\" from source text.\n\
          Return ONLY valid JSON — no markdown, no explanation.\n\n\
@@ -398,13 +406,14 @@ pub async fn run_event_task(
          {{\"description\":\"<sentence 1: what happened and when or where this event occurred> <sentence 2: its significance, outcome, or key participants>\",\
            \"relations\":[\
              {{\"type\":\"located_in\",\"target\":\"<location where event took place>\"}},\
-             {{\"type\":\"associated_with\",\"target\":\"<key participant name>\"}},\
+             {{\"type\":\"associated_with\",\"target\":\"<key participant or related event>\"}},\
              {{\"type\":\"related_to\",\"target\":\"<related organisation or event>\"}},\
              {{\"type\":\"occurred_on\",\"target\":\"<date or period>\"}}\
            ]}}\n\n\
          Rules:\n\
          - description MUST be at least 2 full sentences and at least 150 characters\n\
-         - Only include relations where the target is explicitly named in the text."
+         - Omit any relation whose target is empty or vague\n\
+         - {knowledge_rule}"
     );
 
     match call_llm(&prompt, url, model).await {
