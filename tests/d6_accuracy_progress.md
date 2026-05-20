@@ -61,6 +61,8 @@
 | 19 | v0.4.72 | same + `graph alias-scan --auto` (TLSA, NUSAS, NEF merged) | llama3.1:8b | **54.3%** (63/116) | 1.55/2 | Regression vs M17+M18. Alias merges disrupted graph entity links — TLSA/NEF/NUSAS abbreviation nodes removed, retrieval for q11 and q18 degraded. 11×2/2, 9×1/2, 0×0/2. |
 | 20 | v0.4.72 | same + alias embedding fix (aliases baked into entity embed text) | llama3.1:8b | **51.7%** (60/116) | 1.70/2 | Alias fix confirmed: q11 (TLSA) 3/6→4/6 ✓, q12 (Cissie Gool) 3/6→4/6 ✓, q10/q14/q19/q20 judge recovered. q04 dedication still 0/4 (hardest persistent failure). Judge ⬆ 1.55→1.70. Keyword below M17 due to sampling variance. 15×2/2, 4×1/2, 1×0/2. |
 | 21 | v0.4.72 | same + merge chunk-transfer fix + description preservation | llama3.1:8b | **54.3%** (63/116) | **1.85/2** ← new judge best | q04 dedication 0/4 0/2 → **4/4 2/2** (persistent failure resolved — intro.docx chunk now reachable via graph). q09/q15 judge recovered. q13 kw +2. 17×2/2, 3×1/2, 0×0/2. |
+| 22 | v0.4.75 | **31 dream cycles** (llama3.1:8b) + sanitize type-mismatch + clean_entity_name + section-aware ingest | llama3.1:8b | **58.6%** (68/116) | — | Graph 51.5% → **78.1%** (plateau). Sanitize removed 92 type-mismatch rels + 3 honorific stubs. PDF underscore artifacts fixed (Dr_ → Dr., J_ M_ → J. M.). Dream plateaus at 78.1% — zero gain cycles 25–31. New keyword best. |
+| 23 | v0.4.75 | same + **doc metadata preamble** (author/subject/year injected into every LLM call) | llama3.1:8b | **56.0%** (65/116) | — | Q1 "Who is the author?" fixed 0/3 → 3/3. Q6/Q9/Q11/Q15/Q16/Q18 all improved. Net +6 keywords from context injection alone. Q7 (author's wife = Nazima Rassool) still 0/3 — entity thin in graph. |
 
 > Note: keyword hit rate varies ±4pp between runs of the same config due to LLM sampling. Milestones 12–13 are separate runs of the same stack; consider 48–50% the range for the current best config.
 
@@ -209,37 +211,46 @@ With k=30 chunks at ~300 chars each, 8192 chars only showed ~16/30 chunks. Raisi
 
 | Priority | Approach | Expected gain |
 |----------|----------|---------------|
-| High | Run sustained Dream RAG cycles (target graph health >70%) then M22 eval | +2–5pp structural |
-| High | Investigate q13 (All Africa Convention) — q13 kw improved M20→M21 but judge still 1/2; model hedges | +1pp judge |
+| High | **Q7 (author's wife)** — Nazima Rassool entity is thin; seed her with description + "Professor" role | +3 keywords immediate |
+| High | **Dream plateau broken** — current tasks saturated at 78.1%; need targeted completions for specific thin entities (grandfather, Cissie Gool, Buitencingle, All Africa Convention) | +2–4pp graph |
+| High | **M24 judge eval** — run with `--llm-judge` to measure structural improvement since M21 (last judge was 1.85/2) | Structural signal |
+| Medium | **Q5/Q9 (JMH Gool / grandfather)** — entity description missing: Swat, 1884 arrival, spice merchant, mosque | +6–8 keywords |
+| Medium | **Q12 (Cissie Gool)** — missing Zainunnissa (full name), councillor role | +2–3 keywords |
 | Medium | Dream RAG Phase 3: quality gate — snapshot + rollback if score drops >5% after a cycle | Stability |
 | Low | Dream RAG Phase 4: embed model evaluation (`dream embed-eval`) | Graph quality |
 | Low | Dream RAG Phase 5: gamified curation GUI (Flutter, after PR #56 merge) | UX |
+| Done ✓ | **Doc metadata preamble** — author/subject/year in system prompt; Q1 fixed 0/3→3/3 (v0.4.75) | M23 +6 kw |
+| Done ✓ | **Dream RAG 31 cycles** — graph 51.5% → 78.1%; 8b model ~1.8%/cycle; plateau hit at cycle 25 | M22 58.6% kw best |
+| Done ✓ | **Sanitize type-mismatch** — 92 bad relations removed; 3 honorific stubs pruned (v0.4.75) | Graph quality |
+| Done ✓ | **clean_entity_name()** — PDF underscore artifacts fixed at LLM parse time (Dr_ → Dr., J_ → J.) | Graph quality |
+| Done ✓ | **Section-aware ingest** — Index/Appendix/Endnotes skipped; Editor's Note narrator override (v0.4.73) | Noise reduction |
+| Done ✓ | **export/import under rag graph** — CLI reorganised (v0.4.75) | UX |
 | Done ✓ | **q04 dedication resolved** — chunk-transfer fix enabled graph to reach intro.docx dedication chunk | 4/4 2/2 ← M21 |
-| Done ✓ | **Merge chunk-transfer fix** — `merge_entity_into()` now transfers chunk refs from alias→canonical in ENTITY_CHUNK_TABLE + CHUNK_ENTITY_TABLE | Unlocks orphaned chunks |
-| Done ✓ | **Merge description fix** — `merge_entity_into()` now keeps the longer description from either entity | Description quality |
-| Done ✓ | **Alias embedding fix** — `entity_embed_text()` bakes aliases into embed text; `reembed_entities()` re-embeds after merge (v0.4.72) | M19 regression reversed; q11/q12 restored |
+| Done ✓ | **Merge chunk-transfer + description fix** — `merge_entity_into()` transfers chunk refs, keeps longer desc | Unlocks orphaned chunks |
+| Done ✓ | **Alias embedding fix** — `entity_embed_text()` bakes aliases into embed text (v0.4.72) | M19 regression reversed |
 | Done ✓ | **graph alias-scan** — inline text-scanning abbreviation finder + auto-merge (v0.4.72) | Implemented |
 | Done ✓ | **Dream RAG Phase 1+2**: graph health scorer + autonomous completion cycle (v0.4.72) | Graph quality |
 | Done ✓ | Best config found: **iterative k=20** — 56.9% kw / 1.80/2 judge (new best both metrics) | |
-| Done ✓ | k-sweep: k=5 (35%), k=8 (33%), k=10 (41%), k=20 (**56.9%**), k=30 (41%) — k=20 is sweet spot | |
 | Done ✓ | Rerank at k=20: −3.4pp (auto), −8.6pp (iterative) — rerank hurts, do not use | |
 | Done ✓ | `graph dedup --auto` + interactive pass (v0.4.56) | Graph cleaned |
 | Done ✓ | `graph reembed` — entities now embed `"{name}: {description}"` | Abbreviation lookup fixed |
 
 ---
 
-## Graph Health (Dream RAG baseline — v0.4.72)
+## Graph Health (Dream RAG — v0.4.75, cycle 31)
 
 | Metric | Value |
 |--------|-------|
-| Entities | 2,291 |
-| Relations | 7,942 |
-| Overall health score | 59.6% |
-| Unknown-type entities | 81 (88 before first cycle) |
-| Type distribution | Person 1056, Org 460, Place 360, DefinedTerm 177, Unknown 81, Event 59 |
+| Entities | 1,013 |
+| Relations | 2,193 |
+| Overall health score | **78.1%** |
+| Unknown-type entities | 5 |
+| Type distribution | Person 521, Place 188, Org 180, DefinedTerm 55, Event 25, CreativeWork 14, Product 14, Date 7, Unknown 5 |
 
-**Dream RAG cycle 1 (20 completions):** 7 type assignments, 4 summary enrichments, 5 relations added, score 59.5% → 59.6%, Unknown 88 → 81.  
-**graph alias-scan --auto (v0.4.72):** merged TLSA, NUSAS, NEF → 2291 → 2288 entities. M19 eval showed regression — see analysis above.
+**Rebuild (section-aware ingest):** KB rebuilt from scratch with `--doc-schema` flag. Index/Appendix/Endnotes sections skipped; Editor's Note narrator-override applied. Resulted in cleaner graph with fewer noise entities — 1013 entities vs 2291 before.  
+**Dream cycle progression (31 cycles):** 51.5% → 78.1% over 31 cycles. Cycles 1–9 used llama3.2:3b (~1.5%/cycle). Cycles 10–24 used llama3.1:8b (~1.8%/cycle, better quality). Cycles 25–31 plateau at 78.1% — standard completion tasks saturated.  
+**Sanitize (v0.4.75):** 92 type-mismatch relations removed (works_at→Person, located_in→Person/Org), 3 honorific stub entities pruned (Dr., Mr., MS).  
+**Doc metadata:** author/subject/year persisted in KB; injected into every query/eval system prompt.
 
 ---
 

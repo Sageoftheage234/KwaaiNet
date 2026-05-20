@@ -1,6 +1,11 @@
 document_title: "District Six - Lest We Forget"
 default_narrator: "Yousuf (Joe) Rassool"
 
+metadata:
+  author: "Yousuf (Joe) Rassool"
+  subject: "memoir, District Six, Cape Town, apartheid, forced removals, South Africa"
+  year: "1984"
+
 sections:
   - pattern: "Editor's Note"
     skip: false
