@@ -143,13 +143,15 @@ fn split_paragraph(
         return vec![];
     }
 
-    // Resolve section metadata for each unit.  A heading-only unit updates
-    // the current section state; content units inherit it.
+    // Resolve section metadata for each content unit. Headings update state
+    // but are never emitted as chunks. A schema match resets skip+note; an
+    // unrecognised heading updates the name only (skip/note keep prior value
+    // but are cleared when no schema is loaded).
     let mut cur_section_name: Option<String> = None;
     let mut cur_skip = false;
     let mut cur_note: Option<String> = None;
 
-    // (text, section_name, skip, note) for content units only
+    // (text, section_name, skip, note) — content units only, in order.
     let mut content_units: Vec<(String, Option<String>, bool, Option<String>)> = Vec::new();
 
     for (is_heading, unit_text) in &units {
@@ -160,14 +162,15 @@ fn split_paragraph(
                     cur_skip = sec.skip;
                     cur_note = sec.narrator_note.clone();
                 } else {
-                    // Named heading but not in schema — keep previous section context,
-                    // update section name so dream evidence shows chapter titles.
+                    // Unrecognised heading: update name, reset skip/note to
+                    // neutral so chapters after a skip section aren't tainted.
                     cur_section_name = Some(unit_text.clone());
+                    cur_skip = false;
+                    cur_note = None;
                 }
             } else {
                 cur_section_name = Some(unit_text.clone());
             }
-            // Heading lines are never emitted as retrieval chunks.
         } else {
             content_units.push((
                 unit_text.clone(),
@@ -178,19 +181,19 @@ fn split_paragraph(
         }
     }
 
-    let plain_texts: Vec<String> = content_units.iter().map(|(t, _, _, _)| t.clone()).collect();
-    let chunk_texts = pack_chunks(&plain_texts, cfg);
-
-    // pack_chunks may merge adjacent units; we need a mapping from chunk index back
-    // to the source unit's section metadata.  Use the first unit that contributed
-    // to each chunk (conservative — headings rarely straddle pack boundaries).
-    let chunk_meta = assign_chunk_meta(&plain_texts, &chunk_texts, &content_units);
+    // Pack units into chunks, carrying the section metadata of the FIRST unit
+    // that opens each packed chunk. This avoids any substring-matching
+    // heuristic — metadata is assigned deterministically as packing proceeds.
+    let packed = pack_chunks_with_meta(&content_units, cfg);
 
     let surr_half = cfg.chunk_size / 4;
+    // Build plain chunk texts for surrounding computation.
+    let chunk_texts: Vec<&str> = packed.iter().map(|(t, _, _, _)| t.as_str()).collect();
+
     let mut result = Vec::new();
     let mut index = 0u32;
 
-    for (i, text_str) in chunk_texts.iter().enumerate() {
+    for (i, (text_str, sec_name, skip, note)) in packed.iter().enumerate() {
         if text_str.chars().count() < cfg.min_chunk_len {
             continue;
         }
@@ -199,13 +202,13 @@ fn split_paragraph(
         match cfg.surr_mode {
             SurrMode::Full => {
                 if i > 0 {
-                    surrounding.push_str(&chunk_texts[i - 1]);
+                    surrounding.push_str(chunk_texts[i - 1]);
                     surrounding.push(' ');
                 }
                 surrounding.push_str(text_str);
                 if i + 1 < chunk_texts.len() {
                     surrounding.push(' ');
-                    surrounding.push_str(&chunk_texts[i + 1]);
+                    surrounding.push_str(chunk_texts[i + 1]);
                 }
             }
             SurrMode::Truncated => {
@@ -225,8 +228,6 @@ fn split_paragraph(
             }
         }
 
-        let (sec_name, skip, note) = chunk_meta.get(i).cloned().unwrap_or((None, false, None));
-
         result.push(Chunk {
             id: chunk_id(doc_name, index),
             text: text_str.clone(),
@@ -234,38 +235,75 @@ fn split_paragraph(
             doc_name: doc_name.to_string(),
             chunk_index: index,
             page_num: None,
-            section_name: sec_name,
-            skip_extraction: skip,
-            section_note: note,
+            section_name: sec_name.clone(),
+            skip_extraction: *skip,
+            section_note: note.clone(),
         });
         index += 1;
     }
     result
 }
 
-/// Assign section metadata to each packed chunk by finding which source unit
-/// contributed the most characters to that chunk.
-fn assign_chunk_meta(
-    units: &[String],
-    chunks: &[String],
-    meta: &[(String, Option<String>, bool, Option<String>)],
-) -> Vec<(Option<String>, bool, Option<String>)> {
-    // For each chunk, find the first source unit whose text appears in it.
-    chunks
-        .iter()
-        .map(|chunk_text| {
-            for (idx, unit_text) in units.iter().enumerate() {
-                if chunk_text.contains(unit_text.as_str())
-                    || unit_text.contains(chunk_text.as_str())
-                {
-                    let (_, sn, sk, note) = &meta[idx];
-                    return (sn.clone(), *sk, note.clone());
-                }
+/// Pack content units into chunks up to `chunk_size`, carrying the section
+/// metadata of the FIRST unit that opens each packed chunk.
+fn pack_chunks_with_meta(
+    units: &[(String, Option<String>, bool, Option<String>)],
+    cfg: &ChunkConfig,
+) -> Vec<(String, Option<String>, bool, Option<String>)> {
+    let mut result: Vec<(String, Option<String>, bool, Option<String>)> = Vec::new();
+    let mut parts: Vec<String> = Vec::new();
+    let mut cur_len = 0usize;
+    // Metadata from the first unit that opened the current pack.
+    let mut cur_meta: (Option<String>, bool, Option<String>) = (None, false, None);
+
+    let emit = |parts: &mut Vec<String>,
+                cur_meta: &(Option<String>, bool, Option<String>),
+                result: &mut Vec<(String, Option<String>, bool, Option<String>)>| {
+        if !parts.is_empty() {
+            result.push((
+                parts.join("\n"),
+                cur_meta.0.clone(),
+                cur_meta.1,
+                cur_meta.2.clone(),
+            ));
+        }
+    };
+
+    for (unit_text, sec_name, skip, note) in units {
+        let unit_len = unit_text.chars().count();
+        let sep = if parts.is_empty() { 0 } else { 1 };
+
+        if parts.is_empty() || cur_len + sep + unit_len <= cfg.chunk_size {
+            if parts.is_empty() {
+                cur_meta = (sec_name.clone(), *skip, note.clone());
             }
-            // Fallback: no match found — use neutral defaults.
-            (None, false, None)
-        })
-        .collect()
+            cur_len += sep + unit_len;
+            parts.push(unit_text.clone());
+        } else {
+            emit(&mut parts, &cur_meta, &mut result);
+
+            // Overlap prefix from tail of emitted chunk.
+            let prev_text = result.last().map(|(t, _, _, _)| t.as_str()).unwrap_or("");
+            let prev_chars: Vec<char> = prev_text.chars().collect();
+            let ol_start = prev_chars.len().saturating_sub(cfg.chunk_overlap);
+            let overlap: String = prev_chars[ol_start..].iter().collect();
+
+            parts.clear();
+            cur_len = 0;
+            // New pack inherits the section metadata of the unit that opens it.
+            cur_meta = (sec_name.clone(), *skip, note.clone());
+
+            if !overlap.is_empty() {
+                cur_len += overlap.chars().count() + 1;
+                parts.push(overlap);
+            }
+            cur_len += unit_len;
+            parts.push(unit_text.clone());
+        }
+    }
+
+    emit(&mut parts, &cur_meta, &mut result);
+    result
 }
 
 /// Returns `(is_heading, text)` pairs for all paragraphs.
