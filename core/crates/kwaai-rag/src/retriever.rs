@@ -188,7 +188,61 @@ pub async fn retrieve_graph_anchored(
 
     // 6. RRF fusion: graph chunks + vector chunks.
     let merged = rrf_merge(&graph_chunks, &vector_chunks, cfg.top_k * 2);
-    assemble_results(merged, cfg, meta)
+    let mut results = assemble_results(merged, cfg, meta)?;
+    inject_entity_descriptions(&seed_hits, graph, &mut results);
+    Ok(results)
+}
+
+/// Prepend a synthetic chunk for the top embedding-matched graph entity.
+///
+/// Injects up to 2 high-confidence entity descriptions (cosine score ≥ 0.86,
+/// excluding the name-token fallback entries at exactly 0.85) so the LLM has
+/// the entity summary in context without flooding it when the query is about
+/// an organisation or concept with many loosely related graph nodes.
+pub(crate) fn inject_entity_descriptions(
+    seed_hits: &[(i64, f64)],
+    graph: &GraphStore,
+    pool: &mut Vec<RetrievedChunk>,
+) {
+    let mut seen_ids = HashSet::new();
+    let top_ids: Vec<i64> = seed_hits
+        .iter()
+        .filter(|(id, score)| *score >= 0.86 && seen_ids.insert(*id))
+        .take(2)
+        .map(|(id, _)| *id)
+        .collect();
+
+    let synthetic: Vec<RetrievedChunk> = top_ids
+        .into_iter()
+        .filter_map(|id| {
+            let entity = graph.get_entity(id)?;
+            if entity.description.trim().len() < 20 {
+                return None;
+            }
+            Some(RetrievedChunk {
+                chunk_meta: ChunkMeta {
+                    doc_name: format!("[Graph: {}]", entity.name),
+                    chunk_index: 0,
+                    text: format!("{}: {}", entity.name, entity.description),
+                    surrounding: String::new(),
+                    page_num: None,
+                    ingested_at: String::new(),
+                    section_name: None,
+                    skip_extraction: false,
+                    section_note: None,
+                },
+                score: 2.0,
+                source_kb: None,
+                rerank_score: None,
+            })
+        })
+        .collect();
+
+    if !synthetic.is_empty() {
+        let mut result = synthetic;
+        result.extend(pool.drain(..));
+        *pool = result;
+    }
 }
 
 pub(crate) fn assemble_results(

@@ -2,6 +2,9 @@
 # Source: NotebookLM analysis of "Y.S. Rassool: The District Six Memoir"
 # Usage: kwaainet rag graph seed --file tests/d6_family_tree.yaml --kb D6
 #        Run after `rag graph build` to merge aliases and plant authoritative family relations.
+#
+# NOTE: descriptions are intentionally omitted — they are set by dream extraction from the text.
+# The seed provides canonical names, aliases, and family relations only.
 
 persons:
 
@@ -20,29 +23,17 @@ persons:
       - "my grandfather"
       - "Grandpa Gool"
       - "Gool"
-    description: >
-      Patriarch of the Gool family; Gujarat-born merchant who migrated to South Africa in 1884
-      and built a 13-room mansion at 7 Buitencingle Street, Cape Town. Had two wives: Bibi
-      (Peari Beghum) and Wahida Ta'al. Died April 1, 1940.
 
   - canonical: "Bibi Gool"
     aliases:
       - "Bibi"
       - "Peari Beghum"
-    description: >
-      First wife of J.M.H. Gool; married in an arranged marriage in India around 1879/1880.
-      Joined her husband in Cape Town in 1901 after a 20-year separation. Mother of Ayesha
-      (Lallie), Mohamed Saaid (Aity), and Zohra (Jolly).
 
   - canonical: "Wahida Gool"
     aliases:
       - "Wahida Ta'al"
       - "Wahida"
       - "Hajima"
-    description: >
-      Second wife of J.M.H. Gool; a local Cape woman of the Dollie clan, married in Cape Town
-      while Bibi was still in India. Mother of Abdul Hamid (BG), Goolam (GH), Jane, Minnie,
-      Fatima (Timmie), Mariam (Margie), Zobeida (Billy), and Mohammed Hanief (Aboeta).
 
   # ─── Branch 1: JMH + Bibi ──────────────────────────────────────────────────
 
@@ -52,19 +43,12 @@ persons:
       - "Ayesha"
       - "Lallie Gool"
       - "Ayesha Gool"
-    description: >
-      Daughter of J.M.H. Gool and Bibi, born 1899/1900. The author's mother, known as Lallie.
-      Married Peter Alexander Rassool (Peru/Peerbhai) in 1928. Mother of Yousuf (Joe), Abdul,
-      Fazil, Zain, Rasheda, Berina, Yasmin (Jessie), and Nasim.
 
   - canonical: "Mohamed Saaid Gool"
     aliases:
       - "Aity (Mohamed Saaid Gool)"
       - "Uncle Aity"
       - "Aity"
-    description: >
-      Son of J.M.H. Gool and Bibi, born in Mauritius in 1901. Businessman; married Annie Rassool,
-      sister of Peter Alexander Rassool. Father of Nasima and identical twins Nurjehan and Zarina.
 
   - canonical: "Zohra Abdurahman"
     aliases:
@@ -74,9 +58,6 @@ persons:
       - "Jolly (Zohra)"
       - "Jolly"
       - "Zohra"
-    description: >
-      Daughter of J.M.H. Gool and Bibi. Known as Auntie Jolly. Married Ahmed Abdurahman
-      (Uncle Mamoo) in 1936. Had nine children including Ismail and Joss (Joosub).
 
   # ─── Branch 2: JMH + Wahida ────────────────────────────────────────────────
 
@@ -92,10 +73,6 @@ persons:
       - "Cheops"
       - "Dr. Gool"
       - "Dr Gool"
-    description: >
-      Son of J.M.H. Gool and Wahida, born 1886. Prominent physician and mentor to the family.
-      Known by the nicknames BG and Cheops. Married Zainunnisa (Cissie) Gool, daughter of
-      Dr. Abdulla Abdurahman. Father of Shaheen Gool.
 
   - canonical: "Goolam Gool"
     aliases:
@@ -104,24 +81,15 @@ persons:
       - "Goolam (GH)"
       - "Goolam"
       - "Dr_ Goolam"
-    description: >
-      Son of J.M.H. Gool and Wahida. Medical doctor and key leader in the Non-European Unity
-      Movement (NEUM). Known by the initials G.H. Married Halima. Father of Selim Gool.
 
   - canonical: "Jane Gool-Tabata"
     aliases:
       - "Jane Gool"
       - "Janab"
-    description: >
-      Daughter of J.M.H. Gool and Wahida. Teacher and radical political activist. Married
-      political leader I.B. Tabata.
 
   - canonical: "Minnie Gool"
     aliases:
       - "Amina Gool"
-    description: >
-      Daughter of J.M.H. Gool and Wahida. Nurse and political activist. Briefly married to
-      the German Stalinist Hans Friederichs. Mother of Nina and Daria.
 
   - canonical: "Fatima Gool"
     aliases:
@@ -129,33 +97,21 @@ persons:
       - "Timmie"
       - "my Auntie Timmie"
       - "Aunt Fatima"
-    description: >
-      Daughter of J.M.H. Gool and Wahida. Student of religion and receptionist at her
-      brother's surgery. Remained single after a forbidden romance with Manilal Gandhi.
 
   - canonical: "Mariam Gool"
     aliases:
       - "Margie"
       - "Mariam (Margie)"
-    description: >
-      Daughter of J.M.H. Gool and Wahida. Professional midwife who delivered many of
-      the author's siblings.
 
   - canonical: "Zobeida Gool"
     aliases:
       - "Billy"
       - "Zobeida (Billy)"
-    description: >
-      Daughter of J.M.H. Gool and Wahida. One of the first Cape Malay/Indian girls to earn
-      a Bachelor of Arts degree.
 
   - canonical: "Mohammed Hanief Gool"
     aliases:
       - "Mohammed Hanief"
       - "Aboeta"
-    description: >
-      Son of J.M.H. Gool and Wahida. Described as the black sheep of the family; Lallie's
-      half-brother.
 
   # ─── Abdurahman family (connected by marriage) ─────────────────────────────
 
@@ -165,31 +121,22 @@ persons:
       - "Abdullah Abdurahman"
       - "Dr. Abdullah Abdurahman"
       - "Dr. Abdurahman"
-    description: >
-      Physician and patriarch of the Abdurahman family; one of Cape Town's leading political
-      dynasties. Father of Zainunnisa (Cissie) Gool.
 
   - canonical: "Cissie Gool"
     aliases:
       - "Zainunnisa Cissie Gool"
       - "Zainunnisa Gool"
-    description: >
-      Daughter of Dr. Abdulla Abdurahman; prominent political activist in Cape Town. Married
-      Dr. Abdul Hamid Gool, joining the Gool family. Mother of Shaheen Gool.
+      - "Zainunnissa Cissie Gool"
+      - "Zainunnissa Gool"
+      - "Zainunnissa"
 
   # ─── Rassool family ─────────────────────────────────────────────────────────
 
   - canonical: "Peter Alexander Rassool"
     aliases: []
-    description: >
-      The author's father, known as Peru or Peerbhai. Married Ayesha (Lallie) Gool in 1928.
-      Sibling of Annie Rassool.
 
   - canonical: "Annie Rassool"
     aliases: []
-    description: >
-      Sibling of Peter Alexander Rassool; married Mohamed Saaid (Aity) Gool, creating a second
-      bond between the Rassool and Gool families.
 
   - canonical: "Yousuf Rassool"
     aliases:
@@ -204,20 +151,18 @@ persons:
       - "the author"
       - "the narrator"
       - "the writer"
-    description: >
-      The author of the memoir. Son of Ayesha (Lallie) Gool and Peter Alexander Rassool.
-      Born and raised in District Six, Cape Town. Eldest child of the family; brother of Abdul
-      (Doolie) Rassool. Also referred to in the text as "I", "the narrator", "the author", or
-      "Y.S. Rassool".
+
+  - canonical: "Nazima Rassool"
+    aliases:
+      - "Nazima"
+      - "Professor Nazima Rassool"
+      - "Prof. Nazima Rassool"
 
   - canonical: "Abdul Rassool"
     aliases:
       - "Abdul"
       - "Doolie"
       - "Doolie Rassool"
-    description: >
-      Younger brother of Yousuf Rassool (the memoir author). Son of Peter Alexander Rassool and
-      Ayesha (Lallie) Gool. Known by the nickname Doolie. Grew up in District Six, Cape Town.
 
   # ─── Fostered relatives (the Ally/Noor line) ───────────────────────────────
 
@@ -225,43 +170,27 @@ persons:
     aliases:
       - "Gadija"
       - "Auntie Dij"
-    description: >
-      Fostered by J.M.H. Gool and Wahida after her father Barrabhai's wife died in the 1918 flu
-      epidemic. Beloved teacher who married tailor Ismail Davids. Mother of Shawquet, Rashid,
-      Zaheer, Nurjahan, and Yusuf.
 
   - canonical: "Hanief Ally"
     aliases:
       - "Uncle Hanief"
       - "Sayed Hanief Ally"
       - "Hanief"
-    description: >
-      Fostered by J.M.H. Gool and Wahida; son of Barrabhai (Bibi's brother). A mentor to the
-      author. Known as Uncle Hanief.
 
   - canonical: "Toetie Ally"
     aliases:
       - "Toetie"
       - "Auntie Toetie"
-    description: >
-      Fostered by J.M.H. Gool and Wahida; daughter of Barrabhai. Worked as a midwife.
 
   - canonical: "Hamid Ally"
     aliases:
       - "Midi"
-    description: >
-      Fostered by J.M.H. Gool and Wahida; son of Barrabhai. A talented athlete who died young
-      of consumption.
 
   # ─── Hassen Mall (friend of the narrator) ──────────────────────────────────
 
   - canonical: "Hassen Mall"
     aliases:
       - "Hassen"
-    description: >
-      Close friend and associate of Yousuf Rassool; originally from Natal/Durban. Known for his
-      leadership qualities, confident style, and cricketing skills. Active in the Unity Movement
-      and NEUM. Brother of Muddy and Ebrahim.
 
   # ─── Mohandas Karamchand Gandhi (historical figure) ────────────────────────
 
@@ -275,10 +204,6 @@ persons:
       - "hatma Gandhi"
       - "Mahatma Gandhi"
       - "Gandhi"
-    description: >
-      Indian independence activist and political leader. Worked in South Africa in the early
-      20th century advocating for Indian rights. An honoured guest at Buitencingle in those days;
-      corresponded with and was connected to the Gool family.
 
   # ─── I.B. Tabata (Jane's husband) ──────────────────────────────────────────
 
@@ -289,9 +214,6 @@ persons:
       - "Mr. Tabata"
       - "Dr. Tabata"
       - "B.M. Tabata"
-    description: >
-      Political leader and husband of Jane Gool-Tabata. Key figure in the Non-European Unity
-      Movement (NEUM) in South Africa.
 
 relations:
 
@@ -345,6 +267,7 @@ relations:
   - { from: "Ayesha Rassool",          to: "Abdul Rassool",  type: "parent_of" }
   - { from: "Peter Alexander Rassool", to: "Abdul Rassool",  type: "parent_of" }
   - { from: "Yousuf Rassool",          to: "Abdul Rassool",  type: "sibling_of" }
+  - { from: "Yousuf Rassool",          to: "Nazima Rassool", type: "spouse_of" }
 
   # ─── Children of Abdul Hamid + Cissie ──────────────────────────────────────
   - { from: "Abdul Hamid Gool", to: "Shaheen Gool", type: "parent_of" }
