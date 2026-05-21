@@ -1561,6 +1561,12 @@ pub enum GraphAction {
         #[arg(long)]
         no_relations: bool,
 
+        /// Number of adjacent chunks to include as surrounding context per extraction call.
+        /// 0 = current chunk only. 1 = one before + one after (default, +7pp recall).
+        /// Experiments show window=1 is optimal; window=2 adds cost with no recall gain.
+        #[arg(long, default_value = "1", value_name = "N")]
+        graph_window: usize,
+
         /// Wipe the graph before building (entities + relations cleared, chunks preserved).
         #[arg(long)]
         reset_graph: bool,

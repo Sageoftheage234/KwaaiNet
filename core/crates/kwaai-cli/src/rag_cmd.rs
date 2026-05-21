@@ -526,20 +526,34 @@ async fn cmd_ingest(
             print_info(&format!("Doc-meta loaded: {} entries", cfg.doc_meta.len()));
         }
 
-        if let Some(path) = doc_schema_path {
+        // Doc schema: load from YAML, or auto-detect from the document header.
+        let loaded_schema: Option<kwaai_rag::doc_schema::DocSchema> = if let Some(path) = doc_schema_path {
             let schema = kwaai_rag::doc_schema::load_doc_schema(&path)?;
             let skip_count = schema.sections.iter().filter(|s| s.skip).count();
-            let note_count = schema
-                .sections
-                .iter()
-                .filter(|s| s.narrator_note.is_some())
-                .count();
+            let seed_count = schema.sections.iter().filter(|s| s.index_seeds).count();
+            let note_count = schema.sections.iter().filter(|s| s.narrator_note.is_some()).count();
             print_info(&format!(
-                "Doc-schema loaded: {} sections ({} skip, {} with narrator note)",
-                schema.sections.len(),
-                skip_count,
-                note_count
+                "Doc-schema loaded: type={} sections={} (skip={}, index_seeds={}, narrator_notes={})",
+                schema.schema_type.as_deref().unwrap_or("untyped"),
+                schema.sections.len(), skip_count, seed_count, note_count
             ));
+            Some(schema)
+        } else {
+            let preview = &text[..text.len().min(4000)];
+            let detected = kwaai_rag::doc_schema::auto_detect_schema(preview);
+            if detected.schema_type.is_some() || !detected.metadata.is_empty() {
+                print_info(&format!(
+                    "Doc-schema auto-detected: type={}, metadata_keys=[{}]",
+                    detected.schema_type.as_deref().unwrap_or("unknown"),
+                    detected.metadata.keys().cloned().collect::<Vec<_>>().join(", ")
+                ));
+                Some(detected)
+            } else {
+                None
+            }
+        };
+
+        if let Some(ref schema) = loaded_schema {
             // Persist document metadata into the graph store for use at query/dream time.
             if !schema.metadata.is_empty() {
                 if let Ok(mut g) = GraphStore::open(&rag_cfg.data_dir(), tenant_id) {
@@ -550,7 +564,7 @@ async fn cmd_ingest(
                     ));
                 }
             }
-            cfg.doc_schema = Some(schema);
+            cfg.doc_schema = Some(schema.clone());
         }
 
         if extract_entities {
@@ -567,6 +581,7 @@ async fn cmd_ingest(
                 workers: 1,
                 entity_types: vec![],
                 no_relations: false,
+                context_window: 1,
             });
             print_info("Entity extraction enabled — knowledge graph will be updated");
         }
@@ -645,7 +660,139 @@ async fn cmd_ingest(
                 result.chunks_ingested, result.vectors_uploaded
             ))
             .await;
+
+        // After ingest: inject entity seeds from index sections.
+        if let Some(ref schema) = loaded_schema {
+            if schema.has_index_seeds() {
+                let embed = EmbedClient::new(None, Some(rag_cfg.embed_model.clone()));
+                inject_index_seeds(&text, schema, &rag_cfg, tenant_id, &embed).await;
+            }
+        }
+
         Ok(())
+    }
+}
+
+// ── index seed injection ──────────────────────────────────────────────────────
+
+/// Find and return the text of a section whose heading contains `pattern` (case-insensitive).
+/// Returns the text from the heading line to the start of the next all-caps heading or EOF.
+fn extract_section_text<'a>(full_text: &'a str, pattern: &str) -> Option<&'a str> {
+    let lower_pattern = pattern.to_lowercase();
+    let mut start_byte: Option<usize> = None;
+    let mut end_byte = full_text.len();
+
+    let mut offset = 0usize;
+    for line in full_text.lines() {
+        let line_lower = line.trim().to_lowercase();
+        if start_byte.is_none() {
+            if line_lower.contains(&lower_pattern) {
+                start_byte = Some(offset);
+            }
+        } else {
+            // Stop at the next standalone all-caps short heading (another section)
+            let trimmed = line.trim();
+            if !trimmed.is_empty()
+                && trimmed.len() < 30
+                && trimmed == trimmed.to_uppercase()
+                && trimmed.chars().any(|c| c.is_alphabetic())
+                && !line_lower.contains(&lower_pattern)
+            {
+                end_byte = offset;
+                break;
+            }
+        }
+        offset += line.len() + 1; // +1 for the newline
+    }
+
+    start_byte.map(|s| &full_text[s..end_byte.min(full_text.len())])
+}
+
+async fn inject_index_seeds(
+    full_text: &str,
+    schema: &kwaai_rag::doc_schema::DocSchema,
+    rag_cfg: &crate::config::RagConfig,
+    tenant_id: u32,
+    embed: &kwaai_rag::embed::EmbedClient,
+) {
+    use kwaai_rag::graph::{entity_id, EntityNode, GraphStore};
+
+    let mut total_added = 0usize;
+    let mut total_skipped = 0usize;
+
+    for sec in schema.sections.iter().filter(|s| s.index_seeds) {
+        let section_text = match extract_section_text(full_text, &sec.pattern) {
+            Some(t) => t,
+            None => {
+                print_warning(&format!(
+                    "Index seeds: section '{}' not found in document text",
+                    sec.pattern
+                ));
+                continue;
+            }
+        };
+
+        let seeds = kwaai_rag::doc_schema::parse_index_seeds(section_text);
+        if seeds.is_empty() {
+            continue;
+        }
+
+        print_info(&format!(
+            "Index seeds: found {} entries in '{}' section",
+            seeds.len(),
+            sec.pattern
+        ));
+
+        // Embed all seed names in one batch
+        let names: Vec<&str> = seeds.iter().map(|(n, _)| n.as_str()).collect();
+        let embeddings = match embed.embed_batch(&names).await {
+            Ok(e) => e,
+            Err(e) => {
+                print_warning(&format!("Index seed embedding failed: {e}"));
+                continue;
+            }
+        };
+
+        let store = match GraphStore::open(&rag_cfg.data_dir(), tenant_id) {
+            Ok(s) => s,
+            Err(e) => {
+                print_warning(&format!("Could not open graph store for index seeds: {e}"));
+                continue;
+            }
+        };
+        let store = std::sync::Arc::new(std::sync::Mutex::new(store));
+
+        for ((name, type_hint), embedding) in seeds.iter().zip(embeddings) {
+            let entity_type = type_hint.as_deref().unwrap_or("Person");
+            let eid = entity_id(name, entity_type);
+            let node = EntityNode {
+                id: eid,
+                name: name.clone(),
+                entity_type: entity_type.to_string(),
+                description: String::new(),
+                embedding,
+                mention_count: 1,
+                first_chunk_id: 0,
+                aliases: vec![],
+                schema_type: None,
+                gender: None,
+                evidence: vec![],
+                fields: Default::default(),
+            };
+            match store.lock() {
+                Ok(mut g) => match g.upsert_entity(node) {
+                    Ok(_) => total_added += 1,
+                    Err(_) => total_skipped += 1,
+                },
+                Err(_) => total_skipped += 1,
+            }
+        }
+    }
+
+    if total_added > 0 {
+        print_success(&format!(
+            "Index seeds: injected {total_added} entity seeds into graph ({total_skipped} skipped)"
+        ));
     }
 }
 
@@ -1839,6 +1986,7 @@ async fn run_sync_pass(
                     workers: 1,
                     entity_types: vec![],
                     no_relations: false,
+                    context_window: 1,
                 });
             }
         }
@@ -2028,6 +2176,7 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                 inference_urls,
                 entity_types,
                 no_relations,
+                graph_window,
                 reset_graph,
             } => {
                 let raw_infer_url = inference_url.unwrap_or_else(|| rag_cfg.inference_url.clone());
@@ -2157,6 +2306,7 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                     workers: effective_workers,
                     entity_types: parsed_entity_types,
                     no_relations,
+                    context_window: graph_window,
                 };
 
                 let chunks: Vec<kwaai_rag::chunker::Chunk> = all_chunks

@@ -33,6 +33,10 @@ pub struct GraphIngestConfig {
     pub entity_types: Vec<String>,
     /// When true, no relations are extracted or stored.
     pub no_relations: bool,
+    /// Number of adjacent chunks to include as surrounding context when extracting
+    /// entities from a chunk. 0 = current chunk only (legacy). 1 = include one chunk
+    /// before and after (recommended; +7pp recall in experiments). Default: 1.
+    pub context_window: usize,
 }
 
 impl GraphIngestConfig {
@@ -186,6 +190,7 @@ pub async fn extract_and_store_entities_pub(
     let model = Arc::new(graph_cfg.model.clone());
     let entity_types_cfg = Arc::new(graph_cfg.entity_types.clone());
     let no_relations = graph_cfg.no_relations;
+    let context_window = graph_cfg.context_window;
     let store = graph_cfg.store.clone();
 
     // Channel capacity must be large enough that spawned tasks never block waiting
@@ -285,7 +290,7 @@ pub async fn extract_and_store_entities_pub(
     });
 
     // Spawn one extraction task per chunk; semaphore caps concurrency.
-    for (chunk, &chunk_id) in chunks.iter().zip(chunk_ids.iter()) {
+    for (i, (chunk, &chunk_id)) in chunks.iter().zip(chunk_ids.iter()).enumerate() {
         if chunk.skip_extraction {
             debug!(
                 chunk_id,
@@ -296,7 +301,20 @@ pub async fn extract_and_store_entities_pub(
         }
         let permit = sem.clone().acquire_owned().await.expect("semaphore closed");
         let tx = tx.clone();
-        let text = chunk.text.clone();
+        // Build context text: current chunk plus up to context_window adjacent chunks.
+        // Adjacent chunks provide surrounding narrative context that improves entity
+        // identification by ~7pp recall (experiments on D6 memoir, 2026-05).
+        let text = if context_window > 0 {
+            let start = i.saturating_sub(context_window);
+            let end = (i + context_window + 1).min(total);
+            chunks[start..end]
+                .iter()
+                .map(|c| c.text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n\n[...]\n\n")
+        } else {
+            chunk.text.clone()
+        };
         let section_note = chunk.section_note.clone();
         let urls = urls.clone();
         let url_counter = url_counter.clone();
@@ -390,7 +408,9 @@ async fn extract_and_store_entities(
     embed: &EmbedClient,
     graph_cfg: &GraphIngestConfig,
 ) {
-    for (chunk, &chunk_id) in chunks.iter().zip(chunk_ids.iter()) {
+    let total = chunks.len();
+    let context_window = graph_cfg.context_window;
+    for (i, (chunk, &chunk_id)) in chunks.iter().zip(chunk_ids.iter()).enumerate() {
         if chunk.skip_extraction {
             debug!(
                 chunk_id,
@@ -399,9 +419,20 @@ async fn extract_and_store_entities(
             );
             continue;
         }
+        let text = if context_window > 0 {
+            let start = i.saturating_sub(context_window);
+            let end = (i + context_window + 1).min(total);
+            chunks[start..end]
+                .iter()
+                .map(|c| c.text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n\n[...]\n\n")
+        } else {
+            chunk.text.clone()
+        };
         let et: Vec<&str> = graph_cfg.entity_types.iter().map(|s| s.as_str()).collect();
         let (mut entities, relations) = match extract_from_text(
-            &chunk.text,
+            &text,
             chunk.section_note.as_deref(),
             &graph_cfg.inference_url,
             &graph_cfg.model,

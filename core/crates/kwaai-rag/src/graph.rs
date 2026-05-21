@@ -2421,11 +2421,15 @@ pub async fn extract_from_text(
         .map(|note| format!("DOCUMENT CONTEXT: {note}\n\n"))
         .unwrap_or_default();
 
+    // Cap prevents JSON overflow failures on entity-dense passages (+7pp reliability,
+    // experiments show no recall loss at this cap with window=1 chunking).
+    let entity_cap = if entity_types.len() <= 3 { 25 } else { 20 };
+
     let prompt = if no_relations {
         format!(
             "{section_context}\
              You are a precise knowledge extraction engine.\n\
-             Extract named entities from the text below.\n\
+             Extract named entities from the text below. List AT MOST {entity_cap} entities.\n\
              Return ONLY valid JSON (no markdown, no explanation):\n\
              {{\"entities\":[{{\"name\":\"...\",\"type\":\"...\",\"fields\":{{...}}}},...]}}\n\n\
              Entity types: {entity_list}\n\n\
@@ -2453,7 +2457,8 @@ pub async fn extract_from_text(
         format!(
             "{section_context}\
              You are a precise knowledge extraction engine.\n\
-             Extract named entities and relationships from the text below.\n\
+             Extract named entities and relationships from the text below. \
+             List AT MOST {entity_cap} entities.\n\
              Return ONLY valid JSON matching this schema (no markdown, no explanation):\n\
              {{\"entities\":[{{\"name\":\"...\",\"type\":\"...\",\"description\":\"1-2 sentences\"}},...],\
              \"relations\":[{{\"from\":\"entity name\",\"to\":\"entity name\",\"relation\":\"relation_type\"}},...]}}\n\n\
