@@ -565,6 +565,8 @@ async fn cmd_ingest(
                 inference_urls: vec![],
                 model: extraction_model.clone(),
                 workers: 1,
+                entity_types: vec![],
+                no_relations: false,
             });
             print_info("Entity extraction enabled — knowledge graph will be updated");
         }
@@ -1523,6 +1525,9 @@ async fn cmd_rebuild(
                 docs: None,
                 workers,
                 inference_urls: Some(inference_urls),
+                entity_types: None,
+                no_relations: false,
+                reset_graph: false,
             },
             kb.clone(),
         )
@@ -1832,6 +1837,8 @@ async fn run_sync_pass(
                     inference_urls: vec![],
                     model: extraction_model.clone(),
                     workers: 1,
+                    entity_types: vec![],
+                    no_relations: false,
                 });
             }
         }
@@ -2019,6 +2026,9 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                 docs,
                 workers,
                 inference_urls,
+                entity_types,
+                no_relations,
+                reset_graph,
             } => {
                 let raw_infer_url = inference_url.unwrap_or_else(|| rag_cfg.inference_url.clone());
                 let raw_extra_urls: Vec<String> = inference_urls
@@ -2058,6 +2068,29 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                 };
                 let infer_url = resolved_all[0].clone();
                 let extra_urls: Vec<String> = resolved_all[1..].to_vec();
+
+                // Parse --entity-types into a Vec<String>
+                let parsed_entity_types: Vec<String> = entity_types
+                    .as_deref()
+                    .map(|s| {
+                        s.split(',')
+                            .map(|t| t.trim().to_string())
+                            .filter(|t| !t.is_empty())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                // Optionally wipe the graph before rebuilding.
+                if reset_graph {
+                    let graph_path =
+                        rag_cfg.data_dir().join(format!("graph-{}.redb", tenant_id));
+                    if graph_path.exists() {
+                        std::fs::remove_file(&graph_path).with_context(|| {
+                            format!("clearing graph at {}", graph_path.display())
+                        })?;
+                        print_info("Graph cleared — rebuilding from scratch.");
+                    }
+                }
 
                 let meta = MetaStore::open(&rag_cfg.data_dir(), tenant_id)?;
                 let mut all_chunks = meta.all_chunks()?;
@@ -2103,6 +2136,12 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                         println!("  Workers:           {effective_workers}");
                     }
                 }
+                if !parsed_entity_types.is_empty() {
+                    println!("  Entity types:      {}", parsed_entity_types.join(", "));
+                }
+                if no_relations {
+                    println!("  Relations:         disabled");
+                }
                 println!("  This may take a while — one LLM call per chunk.\n");
 
                 let embed = EmbedClient::new(None, Some(rag_cfg.embed_model.clone()));
@@ -2116,6 +2155,8 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                     inference_urls: extra_urls,
                     model,
                     workers: effective_workers,
+                    entity_types: parsed_entity_types,
+                    no_relations,
                 };
 
                 let chunks: Vec<kwaai_rag::chunker::Chunk> = all_chunks

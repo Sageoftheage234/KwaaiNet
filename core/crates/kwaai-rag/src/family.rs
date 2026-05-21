@@ -124,6 +124,10 @@ pub async fn seed_family_tree(
             schema_type: existing.as_ref().and_then(|e| e.schema_type.clone()),
             evidence: Vec::new(),
             gender: existing.as_ref().and_then(|e| e.gender.clone()),
+            fields: existing
+                .as_ref()
+                .map(|e| e.fields.clone())
+                .unwrap_or_default(),
         };
 
         graph.upsert_entity(node)?;

@@ -137,13 +137,43 @@ const FAMILIAL_INVERSE: &[(&str, &str)] = &[
 
 // ── Core types ────────────────────────────────────────────────────────────────
 
+/// A single structured metadata field on an entity, with provenance.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FieldValue {
+    pub value: String,
+    /// Chunk IDs whose text provided evidence for this field value.
+    #[serde(default)]
+    pub evidence_chunk_ids: Vec<i64>,
+    /// 0.0–1.0; grows with evidence count: `min(1.0, count / 3.0)`.
+    pub confidence: f32,
+}
+
+impl FieldValue {
+    pub fn new(value: impl Into<String>, chunk_id: i64) -> Self {
+        Self {
+            value: value.into(),
+            evidence_chunk_ids: vec![chunk_id],
+            confidence: 1.0_f32 / 3.0,
+        }
+    }
+
+    /// Add a supporting chunk ID and recompute confidence.
+    pub fn add_evidence(&mut self, chunk_id: i64) {
+        if !self.evidence_chunk_ids.contains(&chunk_id) {
+            self.evidence_chunk_ids.push(chunk_id);
+        }
+        self.confidence = (self.evidence_chunk_ids.len() as f32 / 3.0).min(1.0);
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntityNode {
     /// Deterministic: sha256(name.lower() + "::" + entity_type)[..8] as i64 LE.
     pub id: i64,
     pub name: String,
     pub entity_type: String,
-    /// 1–2 sentence LLM-generated summary.
+    /// Prose summary derived from `fields`; updated whenever fields change.
+    /// Falls back to raw LLM description for entity types without expected fields.
     pub description: String,
     /// Embedding of "{name}: {description}" for similarity search.
     /// Includes the name so abbreviations/acronyms find the right entity.
@@ -166,6 +196,11 @@ pub struct EntityNode {
     /// after rebuild(). Use this in dream tasks instead of a separate lookup.
     #[serde(default, skip_serializing)]
     pub evidence: Vec<i64>,
+    /// Structured schema.org-aligned metadata fields with evidence provenance.
+    /// Keys are schema.org property names (e.g. "birthDate", "addressLocality").
+    /// Empty for entity types without a defined field schema.
+    #[serde(default)]
+    pub fields: HashMap<String, FieldValue>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -184,7 +219,12 @@ pub struct ExtractedEntity {
     pub name: String,
     #[serde(rename = "type")]
     pub entity_type: String,
+    /// Legacy prose description; used when `fields` is empty (full 15-type extraction).
+    #[serde(default)]
     pub description: String,
+    /// Structured fields returned by the 3-type (no_relations) extraction prompt.
+    #[serde(default)]
+    pub fields: HashMap<String, String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -211,6 +251,71 @@ pub fn entity_id(name: &str, entity_type: &str) -> i64 {
     h.update(entity_type.as_bytes());
     let d = h.finalize();
     i64::from_le_bytes(d[..8].try_into().unwrap())
+}
+
+// ── Schema field registry ─────────────────────────────────────────────────────
+
+/// Schema.org-aligned metadata fields expected for each entity type.
+/// Returns `(field_key, human_description)` pairs. Empty for types without a
+/// defined structured schema (fall back to prose description).
+pub fn expected_fields(entity_type: &str) -> &'static [(&'static str, &'static str)] {
+    match entity_type {
+        "Person" => &[
+            ("birthDate", "date of birth"),
+            ("birthPlace", "place of birth"),
+            ("deathDate", "date of death (if deceased)"),
+            ("nationality", "nationality or cultural identity"),
+            ("occupation", "profession or main occupation"),
+            ("affiliation", "organization they belong or belonged to"),
+            ("spouse", "spouse or partner name"),
+            ("parent", "parent names"),
+            ("sibling", "sibling names"),
+            ("child", "child names"),
+        ],
+        "Place" | "Location" => &[
+            ("addressLocality", "city, district or suburb"),
+            ("addressRegion", "province or region"),
+            ("addressCountry", "country"),
+            ("locationType", "type of place (district, city, country, neighbourhood)"),
+            ("historicalNote", "historical significance or period"),
+        ],
+        "Organization" => &[
+            ("foundingDate", "year or period when founded"),
+            ("dissolutionDate", "year or period when dissolved, if applicable"),
+            ("location", "city or country of headquarters or main office"),
+            ("founder", "founder name"),
+            ("orgType", "type of organization (school, mosque, political party, etc.)"),
+        ],
+        _ => &[],
+    }
+}
+
+/// Build a prose description from an entity's structured fields.
+/// Produces "Name — key: value; key: value; ..." ordered by `expected_fields`.
+/// Returns empty string when no fields are filled.
+pub fn description_from_fields(
+    name: &str,
+    entity_type: &str,
+    fields: &HashMap<String, FieldValue>,
+) -> String {
+    let schema = expected_fields(entity_type);
+    if schema.is_empty() || fields.is_empty() {
+        return String::new();
+    }
+    let parts: Vec<String> = schema
+        .iter()
+        .filter_map(|(key, _)| {
+            fields
+                .get(*key)
+                .filter(|fv| !fv.value.is_empty())
+                .map(|fv| format!("{}: {}", key, fv.value))
+        })
+        .collect();
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!("{} — {}", name, parts.join("; "))
+    }
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -415,27 +520,55 @@ impl GraphStore {
     /// Insert or merge an entity. Increments mention_count; keeps longer description.
     pub fn upsert_entity(&mut self, node: EntityNode) -> Result<()> {
         let merged = match self.nodes.get(&node.id) {
-            Some(existing) => EntityNode {
-                id: node.id,
-                name: existing.name.clone(),
-                entity_type: existing.entity_type.clone(),
-                description: if node.description.len() > existing.description.len() {
+            Some(existing) => {
+                // Merge structured fields: existing evidence is preserved; new chunk IDs added.
+                let mut merged_fields = existing.fields.clone();
+                for (key, new_fv) in &node.fields {
+                    merged_fields
+                        .entry(key.clone())
+                        .and_modify(|efv| {
+                            for &cid in &new_fv.evidence_chunk_ids {
+                                efv.add_evidence(cid);
+                            }
+                            if efv.value.is_empty() && !new_fv.value.is_empty() {
+                                efv.value.clone_from(&new_fv.value);
+                            }
+                        })
+                        .or_insert_with(|| new_fv.clone());
+                }
+                // Recompute description from merged fields, or keep the longer prose description.
+                let computed = description_from_fields(
+                    &existing.name,
+                    &existing.entity_type,
+                    &merged_fields,
+                );
+                let best_desc = if !computed.is_empty() {
+                    computed
+                } else if node.description.len() > existing.description.len() {
                     node.description.clone()
                 } else {
                     existing.description.clone()
-                },
-                embedding: if node.description.len() > existing.description.len() {
-                    node.embedding.clone()
-                } else {
+                };
+                let best_emb = if best_desc == existing.description {
                     existing.embedding.clone()
-                },
-                mention_count: existing.mention_count + 1,
-                first_chunk_id: existing.first_chunk_id,
-                aliases: existing.aliases.clone(),
-                schema_type: existing.schema_type.clone().or(node.schema_type.clone()),
-                gender: existing.gender.clone().or(node.gender.clone()),
-                evidence: existing.evidence.clone(),
-            },
+                } else {
+                    node.embedding.clone()
+                };
+                EntityNode {
+                    id: node.id,
+                    name: existing.name.clone(),
+                    entity_type: existing.entity_type.clone(),
+                    description: best_desc,
+                    embedding: best_emb,
+                    mention_count: existing.mention_count + 1,
+                    first_chunk_id: existing.first_chunk_id,
+                    aliases: existing.aliases.clone(),
+                    schema_type: existing.schema_type.clone().or(node.schema_type.clone()),
+                    gender: existing.gender.clone().or(node.gender.clone()),
+                    evidence: existing.evidence.clone(),
+                    fields: merged_fields,
+                }
+            }
             None => node,
         };
 
@@ -2274,35 +2407,71 @@ pub async fn extract_from_text(
     section_note: Option<&str>,
     inference_url: &str,
     model: &str,
+    entity_types: &[&str],
+    no_relations: bool,
 ) -> Result<(Vec<ExtractedEntity>, Vec<ExtractedRelation>)> {
-    let entity_list = ENTITY_TYPES.join(", ");
-    let relation_list = RELATION_TYPES.join(", ");
+    let effective_types = if entity_types.is_empty() {
+        ENTITY_TYPES
+    } else {
+        entity_types
+    };
+    let entity_list = effective_types.join(", ");
 
     let section_context = section_note
         .map(|note| format!("DOCUMENT CONTEXT: {note}\n\n"))
         .unwrap_or_default();
 
-    let prompt = format!(
-        "{section_context}\
-         You are a precise knowledge extraction engine.\n\
-         Extract named entities and relationships from the text below.\n\
-         Return ONLY valid JSON matching this schema (no markdown, no explanation):\n\
-         {{\"entities\":[{{\"name\":\"...\",\"type\":\"...\",\"description\":\"1-2 sentences\"}},...],\
-         \"relations\":[{{\"from\":\"entity name\",\"to\":\"entity name\",\"relation\":\"relation_type\"}},...]}}\n\n\
-         Entity types: {entity_list}\n\
-         Relation types: {relation_list}\n\n\
-         IMPORTANT RULES:\n\
-         - Never create an entity whose name is a pronoun or generic role: \
-           do NOT use names like \"I\", \"me\", \"my\", \"he\", \"she\", \"they\", \
-           \"narrator\", \"author\", \"writer\", \"the author\", \"the narrator\", \
-           \"the writer\", \"speaker\", \"subject\".\n\
-         - If the text uses \"I\" or \"the author\" to refer to a named person, \
-           use that person's actual name as the entity name instead.\n\
-         - Only extract entities that have a real proper name or a specific \
-           organisation/place/event name.\n\n\
-         If no clear entities exist, return {{\"entities\":[],\"relations\":[]}}.\n\n\
-         Text:\n{text}"
-    );
+    let prompt = if no_relations {
+        format!(
+            "{section_context}\
+             You are a precise knowledge extraction engine.\n\
+             Extract named entities from the text below.\n\
+             Return ONLY valid JSON (no markdown, no explanation):\n\
+             {{\"entities\":[{{\"name\":\"...\",\"type\":\"...\",\"fields\":{{...}}}},...]}}\n\n\
+             Entity types: {entity_list}\n\n\
+             Field keys by entity type — include only keys whose values appear in the text:\n\
+               Person:       birthDate, birthPlace, deathDate, nationality, occupation, \
+                             affiliation, spouse, parent, sibling, child\n\
+               Place:        addressLocality, addressRegion, addressCountry, locationType, \
+                             historicalNote\n\
+               Organization: foundingDate, dissolutionDate, location, founder, orgType\n\n\
+             IMPORTANT RULES:\n\
+             - Never create an entity whose name is a pronoun or generic role: \
+               do NOT use names like \"I\", \"me\", \"my\", \"he\", \"she\", \"they\", \
+               \"narrator\", \"author\", \"writer\", \"the author\", \"the narrator\", \
+               \"the writer\", \"speaker\", \"subject\".\n\
+             - If the text uses \"I\" or \"the author\" to refer to a named person, \
+               use that person's actual name as the entity name instead.\n\
+             - Only extract entities that have a real proper name or a specific \
+               organisation/place/event name.\n\
+             - Omit any field whose value is not clearly stated in the text.\n\n\
+             If no clear entities exist, return {{\"entities\":[]}}.\n\n\
+             Text:\n{text}"
+        )
+    } else {
+        let relation_list = RELATION_TYPES.join(", ");
+        format!(
+            "{section_context}\
+             You are a precise knowledge extraction engine.\n\
+             Extract named entities and relationships from the text below.\n\
+             Return ONLY valid JSON matching this schema (no markdown, no explanation):\n\
+             {{\"entities\":[{{\"name\":\"...\",\"type\":\"...\",\"description\":\"1-2 sentences\"}},...],\
+             \"relations\":[{{\"from\":\"entity name\",\"to\":\"entity name\",\"relation\":\"relation_type\"}},...]}}\n\n\
+             Entity types: {entity_list}\n\
+             Relation types: {relation_list}\n\n\
+             IMPORTANT RULES:\n\
+             - Never create an entity whose name is a pronoun or generic role: \
+               do NOT use names like \"I\", \"me\", \"my\", \"he\", \"she\", \"they\", \
+               \"narrator\", \"author\", \"writer\", \"the author\", \"the narrator\", \
+               \"the writer\", \"speaker\", \"subject\".\n\
+             - If the text uses \"I\" or \"the author\" to refer to a named person, \
+               use that person's actual name as the entity name instead.\n\
+             - Only extract entities that have a real proper name or a specific \
+               organisation/place/event name.\n\n\
+             If no clear entities exist, return {{\"entities\":[],\"relations\":[]}}.\n\n\
+             Text:\n{text}"
+        )
+    };
 
     let url = format!(
         "{}/v1/chat/completions",
@@ -2375,15 +2544,18 @@ pub async fn extract_from_text(
                     e
                 })
                 .collect();
-            let relations = p
-                .relations
-                .into_iter()
-                .map(|mut r| {
-                    r.from = clean_entity_name(&r.from);
-                    r.to = clean_entity_name(&r.to);
-                    r
-                })
-                .collect();
+            let relations = if no_relations {
+                vec![]
+            } else {
+                p.relations
+                    .into_iter()
+                    .map(|mut r| {
+                        r.from = clean_entity_name(&r.from);
+                        r.to = clean_entity_name(&r.to);
+                        r
+                    })
+                    .collect()
+            };
             Ok((entities, relations))
         }
         Err(e) => {

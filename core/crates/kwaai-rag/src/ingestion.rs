@@ -11,7 +11,8 @@ use crate::chunker::{split_text, Chunk, ChunkConfig};
 use crate::doc_schema::DocSchema;
 use crate::embedder::EmbedClient;
 use crate::graph::{
-    entity_id, extract_from_text, EntityNode, ExtractedEntity, ExtractedRelation, GraphStore,
+    description_from_fields, entity_id, extract_from_text, EntityNode, ExtractedEntity,
+    ExtractedRelation, FieldValue, GraphStore,
 };
 use crate::meta_store::{ChunkMeta, MetaStore};
 
@@ -28,6 +29,10 @@ pub struct GraphIngestConfig {
     pub model: String,
     /// Max concurrent extraction tasks. 1 = sequential (default). N = fan-out.
     pub workers: usize,
+    /// When non-empty, only these entity types are extracted (overrides ENTITY_TYPES).
+    pub entity_types: Vec<String>,
+    /// When true, no relations are extracted or stored.
+    pub no_relations: bool,
 }
 
 impl GraphIngestConfig {
@@ -179,6 +184,8 @@ pub async fn extract_and_store_entities_pub(
     let url_counter = Arc::new(AtomicUsize::new(0));
     let workers = graph_cfg.workers.max(1);
     let model = Arc::new(graph_cfg.model.clone());
+    let entity_types_cfg = Arc::new(graph_cfg.entity_types.clone());
+    let no_relations = graph_cfg.no_relations;
     let store = graph_cfg.store.clone();
 
     // Channel capacity must be large enough that spawned tasks never block waiting
@@ -220,11 +227,30 @@ pub async fn extract_and_store_entities_pub(
             let mut entity_ids_for_chunk = Vec::new();
             for (extracted, emb) in res.entities.iter().zip(res.embeddings) {
                 let eid = entity_id(&extracted.name, &extracted.entity_type);
+                // Build FieldValue map: wrap each extracted string value with chunk provenance.
+                let fields: HashMap<String, FieldValue> = extracted
+                    .fields
+                    .iter()
+                    .filter(|(_, v)| !v.is_empty())
+                    .map(|(k, v)| (k.clone(), FieldValue::new(v.clone(), res.chunk_id)))
+                    .collect();
+                let description = {
+                    let from_fields = description_from_fields(
+                        &extracted.name,
+                        &extracted.entity_type,
+                        &fields,
+                    );
+                    if from_fields.is_empty() {
+                        extracted.description.clone()
+                    } else {
+                        from_fields
+                    }
+                };
                 let node = EntityNode {
                     id: eid,
                     name: extracted.name.clone(),
                     entity_type: extracted.entity_type.clone(),
-                    description: extracted.description.clone(),
+                    description,
                     embedding: emb,
                     mention_count: 1,
                     first_chunk_id: res.chunk_id,
@@ -232,6 +258,7 @@ pub async fn extract_and_store_entities_pub(
                     schema_type: None,
                     evidence: Vec::new(),
                     gender: None,
+                    fields,
                 };
                 if let Err(e) = graph.upsert_entity(node) {
                     warn!("upsert_entity: {e}");
@@ -275,14 +302,16 @@ pub async fn extract_and_store_entities_pub(
         let url_counter = url_counter.clone();
         let model = model.clone();
         let embed = embed.clone();
+        let entity_types_cfg = entity_types_cfg.clone();
 
         tokio::spawn(async move {
             let _permit = permit;
             let idx = url_counter.fetch_add(1, Ordering::Relaxed) % urls.len();
             let url = &urls[idx];
+            let et: Vec<&str> = entity_types_cfg.iter().map(|s| s.as_str()).collect();
 
-            let (entities, relations) =
-                match extract_from_text(&text, section_note.as_deref(), url, &model).await {
+            let (mut entities, relations) =
+                match extract_from_text(&text, section_note.as_deref(), url, &model, &et, no_relations).await {
                     Ok(r) => r,
                     Err(e) => {
                         warn!("entity extraction error for chunk {chunk_id}: {e}");
@@ -298,16 +327,33 @@ pub async fn extract_and_store_entities_pub(
                     }
                 };
 
+            // Drop entities whose type the LLM returned outside the allowed list.
+            if !et.is_empty() {
+                entities.retain(|e| et.iter().any(|t| t.eq_ignore_ascii_case(&e.entity_type)));
+            }
+
             let embeddings = if entities.is_empty() {
                 vec![]
             } else {
                 let texts: Vec<String> = entities
                     .iter()
                     .map(|e| {
-                        if e.description.is_empty() {
+                        let desc = if e.fields.is_empty() {
+                            e.description.clone()
+                        } else {
+                            let fv_map: HashMap<String, FieldValue> = e
+                                .fields
+                                .iter()
+                                .filter(|(_, v)| !v.is_empty())
+                                .map(|(k, v)| (k.clone(), FieldValue::new(v.clone(), chunk_id)))
+                                .collect();
+                            let s = description_from_fields(&e.name, &e.entity_type, &fv_map);
+                            if s.is_empty() { e.description.clone() } else { s }
+                        };
+                        if desc.is_empty() {
                             e.name.clone()
                         } else {
-                            format!("{}: {}", e.name, e.description)
+                            format!("{}: {}", e.name, desc)
                         }
                     })
                     .collect();
@@ -353,11 +399,14 @@ async fn extract_and_store_entities(
             );
             continue;
         }
-        let (entities, relations) = match extract_from_text(
+        let et: Vec<&str> = graph_cfg.entity_types.iter().map(|s| s.as_str()).collect();
+        let (mut entities, relations) = match extract_from_text(
             &chunk.text,
             chunk.section_note.as_deref(),
             &graph_cfg.inference_url,
             &graph_cfg.model,
+            &et,
+            graph_cfg.no_relations,
         )
         .await
         {
@@ -368,19 +417,30 @@ async fn extract_and_store_entities(
             }
         };
 
+        if !et.is_empty() {
+            entities.retain(|e| et.iter().any(|t| t.eq_ignore_ascii_case(&e.entity_type)));
+        }
+
         if entities.is_empty() {
             continue;
         }
 
-        // Embed "{name}: {description}" so abbreviations/acronyms match by name.
         let texts: Vec<String> = entities
             .iter()
             .map(|e| {
-                if e.description.is_empty() {
-                    e.name.clone()
+                let desc = if e.fields.is_empty() {
+                    e.description.clone()
                 } else {
-                    format!("{}: {}", e.name, e.description)
-                }
+                    let fv_map: HashMap<String, FieldValue> = e
+                        .fields
+                        .iter()
+                        .filter(|(_, v)| !v.is_empty())
+                        .map(|(k, v)| (k.clone(), FieldValue::new(v.clone(), chunk_id)))
+                        .collect();
+                    let s = description_from_fields(&e.name, &e.entity_type, &fv_map);
+                    if s.is_empty() { e.description.clone() } else { s }
+                };
+                if desc.is_empty() { e.name.clone() } else { format!("{}: {}", e.name, desc) }
             })
             .collect();
         let text_refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
@@ -403,11 +463,26 @@ async fn extract_and_store_entities(
         let mut entity_ids_for_chunk = Vec::new();
         for (extracted, emb) in entities.iter().zip(embeddings) {
             let eid = entity_id(&extracted.name, &extracted.entity_type);
+            let fields: HashMap<String, FieldValue> = extracted
+                .fields
+                .iter()
+                .filter(|(_, v)| !v.is_empty())
+                .map(|(k, v)| (k.clone(), FieldValue::new(v.clone(), chunk_id)))
+                .collect();
+            let description = {
+                let from_fields =
+                    description_from_fields(&extracted.name, &extracted.entity_type, &fields);
+                if from_fields.is_empty() {
+                    extracted.description.clone()
+                } else {
+                    from_fields
+                }
+            };
             let node = EntityNode {
                 id: eid,
                 name: extracted.name.clone(),
                 entity_type: extracted.entity_type.clone(),
-                description: extracted.description.clone(),
+                description,
                 embedding: emb,
                 mention_count: 1,
                 first_chunk_id: chunk_id,
@@ -415,6 +490,7 @@ async fn extract_and_store_entities(
                 schema_type: None,
                 evidence: Vec::new(),
                 gender: None,
+                fields,
             };
             if let Err(e) = graph.upsert_entity(node) {
                 warn!("upsert_entity failed: {e}");

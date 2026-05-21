@@ -1550,6 +1550,20 @@ pub enum GraphAction {
         /// Example: --inference-urls "http://node1:11434,http://node2:11434"
         #[arg(long, value_name = "URLS")]
         inference_urls: Option<String>,
+
+        /// Restrict extraction to these entity types (comma-separated).
+        /// Example: --entity-types "Person,Place,Organization"
+        /// Default: all 15 types.
+        #[arg(long, value_name = "TYPES")]
+        entity_types: Option<String>,
+
+        /// Skip relation extraction entirely (entities only).
+        #[arg(long)]
+        no_relations: bool,
+
+        /// Wipe the graph before building (entities + relations cleared, chunks preserved).
+        #[arg(long)]
+        reset_graph: bool,
     },
 
     /// Seed the graph from a ground-truth YAML family tree — upserts canonical entities with

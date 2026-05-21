@@ -19,7 +19,8 @@ use tokio::sync::{mpsc, Semaphore};
 use uuid::Uuid;
 
 use crate::embedder::EmbedClient;
-use crate::graph::{GraphStore, RELATION_TYPES};
+use crate::graph::{description_from_fields, GraphStore, RELATION_TYPES};
+use std::collections::HashMap;
 use crate::meta_store::MetaStore;
 use crate::scorer::{score_entity, score_graph};
 
@@ -76,8 +77,11 @@ pub struct DreamReport {
 pub struct EntityCompletion {
     pub entity_id: i64,
     pub schema_type: Option<String>,
-    pub description: Option<String>,      // None = no improvement
+    pub description: Option<String>,      // None = no improvement (legacy / General task)
     pub relations: Vec<(String, String)>, // (relation_type, target_name)
+    /// Structured field updates from task-specific completion; evidence_chunk_ids
+    /// are the entity's full evidence set at the time the dream cycle ran.
+    pub fields: HashMap<String, crate::graph::FieldValue>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -171,6 +175,7 @@ pub async fn complete_entity(
                 schema_type: None,
                 description: None,
                 relations: vec![],
+                fields: HashMap::new(),
             }
         }
     };
@@ -195,6 +200,7 @@ pub async fn complete_entity(
                 schema_type: None,
                 description: None,
                 relations: vec![],
+                fields: HashMap::new(),
             }
         }
     };
@@ -208,6 +214,7 @@ pub async fn complete_entity(
                     schema_type: None,
                     description: None,
                     relations: vec![],
+                    fields: HashMap::new(),
                 }
             }
         };
@@ -230,6 +237,7 @@ pub async fn complete_entity(
                 schema_type: None,
                 description: None,
                 relations: vec![],
+                fields: HashMap::new(),
             }
         }
     };
@@ -270,6 +278,7 @@ pub async fn complete_entity(
         schema_type,
         description,
         relations,
+        fields: HashMap::new(),
     }
 }
 
@@ -284,6 +293,8 @@ struct WorkItem {
     evidence_text: String,
     mention_count: u32,
     chunk_count: usize,
+    /// Chunk IDs used as evidence; passed to parse_result for field provenance.
+    evidence_chunk_ids: Vec<i64>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -412,6 +423,7 @@ pub async fn run_dream_cycle(
                 evidence_text,
                 mention_count: node.mention_count,
                 chunk_count: chunk_ids.len(),
+                evidence_chunk_ids: chunk_ids,
             });
         }
         (items, document_titles, doc_context_line)
@@ -479,6 +491,7 @@ pub async fn run_dream_cycle(
                 item.mention_count,
                 item.chunk_count,
                 &doc_titles,
+                &item.evidence_chunk_ids,
             )
             .await;
             let _ = tx.send(Ok(result)).await;
@@ -521,18 +534,43 @@ pub async fn run_dream_cycle(
                 }
             }
 
-            // Summary completion — upsert with longer description + re-embed
-            if let Some(ref new_desc) = completion.description {
-                if let Some(node) = store.get_entity(eid).cloned() {
+            // Field completion — merge structured fields, recompute description, re-embed
+            let has_new_fields = !completion.fields.is_empty();
+            let has_new_desc = completion.description.is_some();
+            if has_new_fields || has_new_desc {
+                if let Some(mut node) = store.get_entity(eid).cloned() {
+                    // Merge new fields into the node, then recompute description.
+                    for (key, fv) in &completion.fields {
+                        node.fields
+                            .entry(key.clone())
+                            .and_modify(|efv| {
+                                for &cid in &fv.evidence_chunk_ids {
+                                    efv.add_evidence(cid);
+                                }
+                                if efv.value.is_empty() && !fv.value.is_empty() {
+                                    efv.value.clone_from(&fv.value);
+                                }
+                            })
+                            .or_insert_with(|| fv.clone());
+                    }
+                    let computed =
+                        description_from_fields(&node.name, &node.entity_type, &node.fields);
+                    let new_desc = if !computed.is_empty() {
+                        computed
+                    } else if let Some(ref d) = completion.description {
+                        d.clone()
+                    } else {
+                        node.description.clone()
+                    };
                     let embed_text = crate::graph::GraphStore::entity_embed_text(
                         &node.name,
                         &node.aliases,
-                        new_desc,
+                        &new_desc,
                     );
                     match embed.embed_batch(&[embed_text.as_str()]).await {
                         Ok(embs) if !embs.is_empty() => {
                             let updated = crate::graph::EntityNode {
-                                description: new_desc.clone(),
+                                description: new_desc,
                                 embedding: embs.into_iter().next().unwrap(),
                                 schema_type: completion
                                     .schema_type
@@ -541,7 +579,7 @@ pub async fn run_dream_cycle(
                                 ..node
                             };
                             if let Err(e) = store.upsert_entity(updated) {
-                                cycle_errors.push(format!("upsert description {eid}: {e}"));
+                                cycle_errors.push(format!("upsert fields {eid}: {e}"));
                             } else {
                                 report.entities_summary_completed += 1;
                             }

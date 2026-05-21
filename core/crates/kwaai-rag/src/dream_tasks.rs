@@ -7,10 +7,12 @@
 //! All tasks share the EntityCompletion output so they slot directly into the
 //! existing write-back path in dream.rs.
 
+use std::collections::HashMap;
+
 use serde::Deserialize;
 
 use crate::dream::EntityCompletion;
-use crate::graph::RELATION_TYPES;
+use crate::graph::{FieldValue, RELATION_TYPES};
 
 // ── Task dispatch ─────────────────────────────────────────────────────────────
 
@@ -72,6 +74,7 @@ pub async fn run_task(
     mention_count: u32,
     chunk_count: usize,
     document_titles: &[String],
+    evidence_chunks: &[i64],
 ) -> EntityCompletion {
     match kind {
         DreamTaskKind::Biography => {
@@ -85,6 +88,7 @@ pub async fn run_task(
                 mention_count,
                 chunk_count,
                 document_titles,
+                evidence_chunks,
             )
             .await
         }
@@ -97,6 +101,7 @@ pub async fn run_task(
                 url,
                 model,
                 document_titles,
+                evidence_chunks,
             )
             .await
         }
@@ -111,6 +116,7 @@ pub async fn run_task(
                 mention_count,
                 chunk_count,
                 document_titles,
+                evidence_chunks,
             )
             .await
         }
@@ -123,6 +129,7 @@ pub async fn run_task(
                 url,
                 model,
                 document_titles,
+                evidence_chunks,
             )
             .await
         }
@@ -135,6 +142,7 @@ pub async fn run_task(
                 url,
                 model,
                 document_titles,
+                evidence_chunks,
             )
             .await
         }
@@ -147,6 +155,7 @@ pub async fn run_task(
                 url,
                 model,
                 document_titles,
+                evidence_chunks,
             )
             .await
         }
@@ -183,8 +192,12 @@ pub fn trim_evidence(text: &str) -> &str {
 
 #[derive(Debug, Deserialize)]
 struct TaskPayload {
+    /// Legacy prose description returned by General task and fallback paths.
     #[serde(default)]
     description: String,
+    /// Structured fields returned by Biography/Geography/OrgProfile tasks.
+    #[serde(default)]
+    fields: HashMap<String, String>,
     #[serde(default)]
     relations: Vec<TaskRelation>,
 }
@@ -258,7 +271,15 @@ pub fn summary_tier(desc: &str) -> u8 {
     }
 }
 
-fn parse_result(raw: &str, eid: i64, current_desc: &str) -> EntityCompletion {
+/// Parse an LLM task response into an `EntityCompletion`.
+/// `evidence_chunks` are the entity's evidence chunk IDs — attached to every
+/// new field value so provenance is tracked from the dream cycle.
+fn parse_result(
+    raw: &str,
+    eid: i64,
+    current_desc: &str,
+    evidence_chunks: &[i64],
+) -> EntityCompletion {
     let cleaned = raw
         .trim()
         .trim_start_matches("```json")
@@ -274,16 +295,27 @@ fn parse_result(raw: &str, eid: i64, current_desc: &str) -> EntityCompletion {
                 schema_type: None,
                 description: None,
                 relations: vec![],
+                fields: HashMap::new(),
             }
         }
     };
 
-    // Accept the new description if it improves the summary score tier OR is
-    // meaningfully longer (same tier but more content).  The old length+20
-    // gate rejected tier-jumping rewrites where the new text was shorter but
-    // far richer (e.g. a model that writes a 120-char description over an
-    // existing 105-char one would be blocked; now it isn't).
-    let description = {
+    // Convert string fields to FieldValues, seeding with all evidence chunks.
+    let fields: HashMap<String, FieldValue> = payload
+        .fields
+        .into_iter()
+        .filter(|(_, v)| !v.is_empty())
+        .map(|(k, v)| {
+            let mut fv = FieldValue::new(v, *evidence_chunks.first().unwrap_or(&0));
+            for &cid in evidence_chunks.iter().skip(1) {
+                fv.add_evidence(cid);
+            }
+            (k, fv)
+        })
+        .collect();
+
+    // Keep legacy prose description for fallback / General task path.
+    let description = if !payload.description.is_empty() {
         let new_tier = summary_tier(&payload.description);
         let old_tier = summary_tier(current_desc);
         if new_tier > old_tier
@@ -293,6 +325,8 @@ fn parse_result(raw: &str, eid: i64, current_desc: &str) -> EntityCompletion {
         } else {
             None
         }
+    } else {
+        None
     };
 
     let relations: Vec<(String, String)> = payload
@@ -308,9 +342,10 @@ fn parse_result(raw: &str, eid: i64, current_desc: &str) -> EntityCompletion {
 
     EntityCompletion {
         entity_id: eid,
-        schema_type: None, // type already resolved; don't overwrite
+        schema_type: None,
         description,
         relations,
+        fields,
     }
 }
 
@@ -320,6 +355,7 @@ fn empty(eid: i64) -> EntityCompletion {
         schema_type: None,
         description: None,
         relations: vec![],
+        fields: HashMap::new(),
     }
 }
 
@@ -335,36 +371,20 @@ pub async fn run_biography_task(
     mention_count: u32,
     chunk_count: usize,
     document_titles: &[String],
+    evidence_chunks: &[i64],
 ) -> EntityCompletion {
     let text = trim_evidence(evidence_text);
 
-    // For very thin evidence (short passing mention), allow the LLM to use
-    // widely-known facts to fill in basic biographical context (nationality,
-    // primary role, major association).  Private individuals should stay text-only.
     let thin = text.len() < 600;
     let knowledge_rule = if thin {
         "If this is a well-known public figure (politician, general, author, etc.) you may \
          supplement sparse text with widely-known facts. For private individuals, use only \
          what the text provides."
     } else {
-        "Include relations clearly supported by the text — explicit statements AND strong \
-         contextual associations (e.g. a person living in a city, working for an organisation, \
-         opposing a movement) that are clearly evidenced in the text. Do not invent facts."
+        "Use only facts clearly supported by the source text. Do not invent facts."
     };
-
-    let is_major = mention_count > 5 || chunk_count > 5;
-    let description_rule = if is_major {
-        format!(
-            "DESCRIPTION: Write a full biographical paragraph of at least 4 sentences and \
-             at least 300 characters. Cover: who they are, their role, key events they were \
-             involved in, and their significance to the D6 community. Do NOT start with '{name}'."
-        )
-    } else {
-        format!(
-            "DESCRIPTION: MUST be at least 2 full sentences and at least 150 characters. \
-             Do NOT start with '{name}'."
-        )
-    };
+    let _ = mention_count;
+    let _ = chunk_count;
 
     let doc_rule = doc_exclusion_rule(document_titles);
     let doc_rule_line = if doc_rule.is_empty() {
@@ -376,30 +396,40 @@ pub async fn run_biography_task(
     let prompt = format!(
         "You are building a biography for a person named \"{name}\" from source text.\n\
          Return ONLY valid JSON — no markdown, no explanation.\n\n\
-         Source text (all passages mentioning this person):\n---\n{text}\n---\n\n\
-         JSON schema:\n\
-         {{\"description\":\"<sentence 1: who this person is — nationality, era, and primary role or profession> <sentence 2: their key contribution, association, or significance in the context of the text>\",\
-           \"relations\":[\
-             {{\"type\":\"located_in\",\"target\":\"<birth place, home city, or country>\"}},\
-             {{\"type\":\"spouse_of\",\"target\":\"<spouse name>\"}},\
-             {{\"type\":\"child_of\",\"target\":\"<parent name>\"}},\
-             {{\"type\":\"parent_of\",\"target\":\"<child name>\"}},\
-             {{\"type\":\"sibling_of\",\"target\":\"<sibling name>\"}},\
-             {{\"type\":\"belongs_to\",\"target\":\"<organisation, political party, or group>\"}},\
-             {{\"type\":\"works_at\",\"target\":\"<employer, military branch, or institution>\"}},\
-             {{\"type\":\"associated_with\",\"target\":\"<key person, event, or movement>\"}}\
-           ]}}\n\n\
+         Source text:\n---\n{text}\n---\n\n\
+         JSON schema (omit any field whose value is not in the text):\n\
+         {{\"fields\":{{\
+           \"birthDate\":\"date of birth\",\
+           \"birthPlace\":\"place of birth\",\
+           \"deathDate\":\"date of death if deceased\",\
+           \"nationality\":\"nationality or cultural identity\",\
+           \"occupation\":\"profession or main occupation\",\
+           \"affiliation\":\"organization they belong or belonged to\",\
+           \"spouse\":\"spouse or partner name\",\
+           \"parent\":\"parent names (comma-separated)\",\
+           \"sibling\":\"sibling names (comma-separated)\",\
+           \"child\":\"child names (comma-separated)\"\
+         }},\
+         \"relations\":[\
+           {{\"type\":\"located_in\",\"target\":\"<birth place, home city, or country>\"}},\
+           {{\"type\":\"spouse_of\",\"target\":\"<spouse name>\"}},\
+           {{\"type\":\"child_of\",\"target\":\"<parent name>\"}},\
+           {{\"type\":\"parent_of\",\"target\":\"<child name>\"}},\
+           {{\"type\":\"sibling_of\",\"target\":\"<sibling name>\"}},\
+           {{\"type\":\"belongs_to\",\"target\":\"<organisation, political party, or group>\"}},\
+           {{\"type\":\"works_at\",\"target\":\"<employer or institution>\"}},\
+           {{\"type\":\"associated_with\",\"target\":\"<key person, event, or movement>\"}}\
+         ]}}\n\n\
          Rules:\n\
-         - {description_rule}\n\
-         - RELATION DIRECTION: 'parent_of' means the source IS THE PARENT. If {name} is a child of someone, write: that_person parent_of {name}. NEVER write {name} parent_of their own parent.\n\
-         - spouse_of means LEGALLY MARRIED. ONLY include this relation if the text EXPLICITLY states marriage (e.g. 'married', 'wife', 'husband'). Do NOT infer marriage from association, friendship, or working together.\n\
-         - If in doubt about a familial relation, use 'associated_with' instead.\n\
-         - Omit any relation whose target is empty or vague\n\
+         - Only include fields whose values are determinable from the text\n\
+         - RELATION DIRECTION: 'parent_of' means the source IS THE PARENT; if {name} is a child, write the parent as source\n\
+         - spouse_of: only if text explicitly states marriage\n\
+         - Omit relations whose target is empty or vague\n\
          - {knowledge_rule}{doc_rule_line}"
     );
 
     match call_llm(&prompt, url, model).await {
-        Some(raw) => parse_result(&raw, eid, current_description),
+        Some(raw) => parse_result(&raw, eid, current_description, evidence_chunks),
         None => empty(eid),
     }
 }
@@ -412,10 +442,9 @@ pub async fn run_geography_task(
     url: &str,
     model: &str,
     document_titles: &[String],
+    evidence_chunks: &[i64],
 ) -> EntityCompletion {
     let text = trim_evidence(evidence_text);
-    // Raise threshold: evidence is concatenated chunks so even well-known places
-    // can have 1000+ chars of text that is all brief mentions ("met in Bloemfontein").
     let thin = text.len() < 800;
     let knowledge_rule = if thin {
         "You MAY supplement sparse source text with widely-known geographic facts \
@@ -434,21 +463,27 @@ pub async fn run_geography_task(
         "You are describing a place named \"{name}\" from source text.\n\
          Return ONLY valid JSON — no markdown, no explanation.\n\n\
          Source text:\n---\n{text}\n---\n\n\
-         JSON schema:\n\
-         {{\"description\":\"<sentence 1: what type of place it is and where located> <sentence 2: its historical, cultural, or political significance>\",\
-           \"relations\":[\
-             {{\"type\":\"located_in\",\"target\":\"<city, region, or country>\"}},\
-             {{\"type\":\"part_of\",\"target\":\"<larger area or district>\"}},\
-             {{\"type\":\"contains\",\"target\":\"<named sub-area or landmark>\"}}\
-           ]}}\n\n\
+         JSON schema (omit any field whose value is not in the text):\n\
+         {{\"fields\":{{\
+           \"addressLocality\":\"city, district or suburb\",\
+           \"addressRegion\":\"province or region\",\
+           \"addressCountry\":\"country\",\
+           \"locationType\":\"type of place (district, city, country, neighbourhood, etc.)\",\
+           \"historicalNote\":\"historical or cultural significance\"\
+         }},\
+         \"relations\":[\
+           {{\"type\":\"located_in\",\"target\":\"<city, region, or country>\"}},\
+           {{\"type\":\"part_of\",\"target\":\"<larger area or district>\"}},\
+           {{\"type\":\"contains\",\"target\":\"<named sub-area or landmark>\"}}\
+         ]}}\n\n\
          Rules:\n\
-         - Write BOTH sentences; description must be at least 150 characters total\n\
+         - Only include fields whose values are determinable from the text\n\
          - Omit any relation whose target is empty or vague\n\
          - {knowledge_rule}{doc_rule_line}"
     );
 
     match call_llm(&prompt, url, model).await {
-        Some(raw) => parse_result(&raw, eid, current_description),
+        Some(raw) => parse_result(&raw, eid, current_description, evidence_chunks),
         None => empty(eid),
     }
 }
@@ -463,6 +498,7 @@ pub async fn run_org_task(
     mention_count: u32,
     chunk_count: usize,
     document_titles: &[String],
+    evidence_chunks: &[i64],
 ) -> EntityCompletion {
     let text = trim_evidence(evidence_text);
     let thin = text.len() < 600;
@@ -474,20 +510,8 @@ pub async fn run_org_task(
     } else {
         "Only include relations where the target is explicitly named in the text."
     };
-
-    let is_major = mention_count > 5 || chunk_count > 5;
-    let description_rule = if is_major {
-        format!(
-            "DESCRIPTION: Write a full organisational profile of at least 4 sentences and \
-             at least 300 characters. Cover: what it is, where it operates, its key activities \
-             or purpose, and its significance in the context of the text. Do NOT start with '{name}'."
-        )
-    } else {
-        format!(
-            "DESCRIPTION: MUST be at least 2 full sentences and at least 150 characters. \
-             Do NOT start with '{name}'."
-        )
-    };
+    let _ = mention_count;
+    let _ = chunk_count;
 
     let doc_rule = doc_exclusion_rule(document_titles);
     let doc_rule_line = if doc_rule.is_empty() {
@@ -500,24 +524,30 @@ pub async fn run_org_task(
         "You are profiling an organisation named \"{name}\" from source text.\n\
          Return ONLY valid JSON — no markdown, no explanation.\n\n\
          Source text:\n---\n{text}\n---\n\n\
-         JSON schema:\n\
-         {{\"description\":\"<sentence 1: what type of organisation this is and where it operates> <sentence 2: its purpose, key activities, or role in the context of the text>\",\
-           \"relations\":[\
-             {{\"type\":\"associated_with\",\"target\":\"<key person associated with it>\"}},\
-             {{\"type\":\"founded\",\"target\":\"<entity or institution this organisation founded>\"}},\
-             {{\"type\":\"located_in\",\"target\":\"<headquarters location>\"}},\
-             {{\"type\":\"part_of\",\"target\":\"<parent organisation>\"}},\
-             {{\"type\":\"contains\",\"target\":\"<named subsidiary or branch>\"}},\
-             {{\"type\":\"belongs_to\",\"target\":\"<federation or body it belongs to>\"}}\
-           ]}}\n\n\
+         JSON schema (omit any field whose value is not in the text):\n\
+         {{\"fields\":{{\
+           \"foundingDate\":\"year or period when founded\",\
+           \"dissolutionDate\":\"year or period when dissolved, if applicable\",\
+           \"location\":\"city or country of headquarters or main office\",\
+           \"founder\":\"founder name\",\
+           \"orgType\":\"type of organization (school, mosque, political party, government body, etc.)\"\
+         }},\
+         \"relations\":[\
+           {{\"type\":\"associated_with\",\"target\":\"<key person associated with it>\"}},\
+           {{\"type\":\"founded\",\"target\":\"<entity this organisation founded>\"}},\
+           {{\"type\":\"located_in\",\"target\":\"<headquarters location>\"}},\
+           {{\"type\":\"part_of\",\"target\":\"<parent organisation>\"}},\
+           {{\"type\":\"contains\",\"target\":\"<named subsidiary or branch>\"}},\
+           {{\"type\":\"belongs_to\",\"target\":\"<federation or body it belongs to>\"}}\
+         ]}}\n\n\
          Rules:\n\
-         - {description_rule}\n\
+         - Only include fields whose values are determinable from the text\n\
          - Omit any relation whose target is empty or vague\n\
          - {knowledge_rule}{doc_rule_line}"
     );
 
     match call_llm(&prompt, url, model).await {
-        Some(raw) => parse_result(&raw, eid, current_description),
+        Some(raw) => parse_result(&raw, eid, current_description, evidence_chunks),
         None => empty(eid),
     }
 }
@@ -530,6 +560,7 @@ pub async fn run_event_task(
     url: &str,
     model: &str,
     document_titles: &[String],
+    evidence_chunks: &[i64],
 ) -> EntityCompletion {
     let text = trim_evidence(evidence_text);
     let thin = text.len() < 600;
@@ -565,7 +596,7 @@ pub async fn run_event_task(
     );
 
     match call_llm(&prompt, url, model).await {
-        Some(raw) => parse_result(&raw, eid, current_description),
+        Some(raw) => parse_result(&raw, eid, current_description, evidence_chunks),
         None => empty(eid),
     }
 }
@@ -578,6 +609,7 @@ pub async fn run_concept_task(
     url: &str,
     model: &str,
     document_titles: &[String],
+    evidence_chunks: &[i64],
 ) -> EntityCompletion {
     let text = trim_evidence(evidence_text);
     let thin = text.len() < 400;
@@ -612,7 +644,7 @@ pub async fn run_concept_task(
     );
 
     match call_llm(&prompt, url, model).await {
-        Some(raw) => parse_result(&raw, eid, current_description),
+        Some(raw) => parse_result(&raw, eid, current_description, evidence_chunks),
         None => empty(eid),
     }
 }
@@ -625,6 +657,7 @@ pub async fn run_work_task(
     url: &str,
     model: &str,
     document_titles: &[String],
+    evidence_chunks: &[i64],
 ) -> EntityCompletion {
     let text = trim_evidence(evidence_text);
     let doc_rule = doc_exclusion_rule(document_titles);
@@ -652,7 +685,7 @@ pub async fn run_work_task(
     );
 
     match call_llm(&prompt, url, model).await {
-        Some(raw) => parse_result(&raw, eid, current_description),
+        Some(raw) => parse_result(&raw, eid, current_description, evidence_chunks),
         None => empty(eid),
     }
 }
