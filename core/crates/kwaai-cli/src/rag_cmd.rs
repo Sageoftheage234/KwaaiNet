@@ -149,6 +149,9 @@ pub async fn run(args: RagArgs) -> Result<()> {
             chunk_strategy,
             doc_meta,
             doc_schema,
+            entity_types,
+            no_relations,
+            graph_window,
             yes,
         } => {
             cmd_rebuild(
@@ -162,6 +165,9 @@ pub async fn run(args: RagArgs) -> Result<()> {
                 chunk_strategy,
                 doc_meta,
                 doc_schema,
+                entity_types,
+                no_relations,
+                graph_window,
                 yes,
             )
             .await
@@ -712,8 +718,8 @@ async fn inject_index_seeds(
     full_text: &str,
     schema: &kwaai_rag::doc_schema::DocSchema,
     rag_cfg: &crate::config::RagConfig,
-    tenant_id: u32,
-    embed: &kwaai_rag::embed::EmbedClient,
+    tenant_id: Uuid,
+    embed: &EmbedClient,
 ) {
     use kwaai_rag::graph::{entity_id, EntityNode, GraphStore};
 
@@ -1611,6 +1617,9 @@ async fn cmd_rebuild(
     chunk_strategy: String,
     doc_meta: Option<std::path::PathBuf>,
     doc_schema: Option<std::path::PathBuf>,
+    entity_types: Option<String>,
+    no_relations: bool,
+    graph_window: usize,
     yes: bool,
 ) -> Result<()> {
     #[cfg(not(feature = "storage"))]
@@ -1672,9 +1681,10 @@ async fn cmd_rebuild(
                 docs: None,
                 workers,
                 inference_urls: Some(inference_urls),
-                entity_types: None,
-                no_relations: false,
+                entity_types,
+                no_relations,
                 reset_graph: false,
+                graph_window,
             },
             kb.clone(),
         )

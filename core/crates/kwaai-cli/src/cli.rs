@@ -1269,6 +1269,19 @@ pub enum RagAction {
         #[arg(long, value_name = "YAML_FILE")]
         doc_schema: Option<std::path::PathBuf>,
 
+        /// Comma-separated entity types to extract (default: all 15).
+        /// Example: --entity-types Person,Place,Organization
+        #[arg(long, value_name = "TYPES")]
+        entity_types: Option<String>,
+
+        /// Skip relation extraction entirely (recommended for 8B models — precision too low).
+        #[arg(long)]
+        no_relations: bool,
+
+        /// Number of adjacent chunks passed as context per extraction call (default: 1).
+        #[arg(long, default_value = "1", value_name = "N")]
+        graph_window: usize,
+
         /// Skip the destroy confirmation prompt
         #[arg(long, short = 'y')]
         yes: bool,
