@@ -305,3 +305,5 @@ impl std::fmt::Display for DeviceType {
         }
     }
 }
+pub mod probe;
+pub use probe::{ProbeSet, ShardOutput, ProbeConfig, ProbeResult, PoolingStrategy, RepEProbe, SteeringVector};

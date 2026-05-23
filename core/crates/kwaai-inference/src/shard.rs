@@ -11,9 +11,18 @@
 //!
 //! KV-cache is managed per session (`session_id: u64`).  Sessions expire after 600 s of
 //! inactivity; call [`TransformerShard::gc_sessions`] periodically.
+//!
+//! ## RepE Integration
+//!
+//! Attach a [`crate::probe::ProbeSet`] via [`TransformerShard::with_probes`] to enable
+//! Representation Engineering probes and steering vectors during inference.  All forward
+//! methods return [`crate::probe::ShardOutput`] instead of a bare `Tensor`; when no
+//! `ProbeSet` is attached `ShardOutput::probe_results` is always empty and the hot path
+//! has zero overhead.
 
 use crate::{
     error::{InferenceError, InferenceResult},
+    probe::{ProbeResult, ProbeSet, ShardOutput},
     tokenizer::BpeTokenizer,
 };
 use candle_core::{DType, Device, Tensor};
@@ -95,8 +104,6 @@ impl RopeCache {
             let half = d / 2;
             let x1 = t.narrow(3, 0, half).map_err(InferenceError::from)?;
             let x2 = t.narrow(3, half, half).map_err(InferenceError::from)?;
-            // cos/sin: [s, half] → broadcast [1, 1, s, half]
-            // Use broadcast_mul so query (n_heads) and key (n_kv_heads) both work.
             let cos4 = cos
                 .unsqueeze(0)
                 .and_then(|t| t.unsqueeze(0))
@@ -137,10 +144,6 @@ impl RopeCache {
 
 // ── Causal attention mask ─────────────────────────────────────────────────────
 
-/// Build a causal mask of shape `[q_len, kv_len]`.
-///
-/// `mask[i][j] = 0.0` if key `j` is at or before query position `seq_pos + i`;
-/// `mask[i][j] = -inf` otherwise (blocks future-token attention).
 fn causal_mask(
     q_len: usize,
     kv_len: usize,
@@ -186,12 +189,19 @@ pub(crate) struct ShardBlock {
     up_proj: candle_nn::Linear,
     down_proj: candle_nn::Linear,
     cfg: ShardConfig,
+    /// Global transformer block index — used by RepE probe hooks to identify
+    /// which layer fired.  Set during shard construction.
+    pub(crate) block_idx: usize,
 }
 
 impl ShardBlock {
     /// Load one transformer block from the VarBuilder already scoped to
     /// `model.layers.{global_idx}`.
-    pub(crate) fn load(vb: VarBuilder, cfg: &ShardConfig) -> InferenceResult<Self> {
+    pub(crate) fn load(
+        vb: VarBuilder,
+        cfg: &ShardConfig,
+        block_idx: usize,
+    ) -> InferenceResult<Self> {
         let h = cfg.hidden_dim;
         let kv_dim = cfg.num_kv_heads * cfg.head_dim;
         let inter = cfg.intermediate_dim;
@@ -229,6 +239,7 @@ impl ShardBlock {
             up_proj,
             down_proj,
             cfg: cfg.clone(),
+            block_idx,
         })
     }
 
@@ -238,13 +249,18 @@ impl ShardBlock {
     /// * `seq_pos` — global sequence position of the first token in `x`
     /// * `kv`      — mutable per-block KV-cache (initialised to `None` for a new session)
     /// * `rope`    — shared precomputed RoPE tables
+    /// * `probes`  — optional RepE [`ProbeSet`]; `None` = zero overhead on this path
+    ///
+    /// Returns the updated hidden state and any probe results fired at this block.
+    /// When `probes` is `None` the second element is always an empty `Vec`.
     pub(crate) fn forward(
         &self,
         x: &Tensor,
         seq_pos: usize,
         kv: &mut Option<(Tensor, Tensor)>,
         rope: &RopeCache,
-    ) -> InferenceResult<Tensor> {
+        probes: Option<&ProbeSet>,
+    ) -> InferenceResult<(Tensor, Vec<ProbeResult>)> {
         let (b, s, _h) = x.dims3().map_err(InferenceError::from)?;
         let n_h = self.cfg.num_heads;
         let n_kv = self.cfg.num_kv_heads;
@@ -259,12 +275,10 @@ impl ShardBlock {
             .forward(x)
             .map_err(InferenceError::from)?;
 
-        // Project to Q, K, V
-        let q = self.q_proj.forward(&normed).map_err(InferenceError::from)?; // [b, s, h]
-        let k = self.k_proj.forward(&normed).map_err(InferenceError::from)?; // [b, s, kv_dim]
+        let q = self.q_proj.forward(&normed).map_err(InferenceError::from)?;
+        let k = self.k_proj.forward(&normed).map_err(InferenceError::from)?;
         let v = self.v_proj.forward(&normed).map_err(InferenceError::from)?;
 
-        // Reshape to multi-head: [b, n_heads, s, head_dim]
         let q = q
             .reshape((b, s, n_h, hd))
             .map_err(InferenceError::from)?
@@ -283,15 +297,12 @@ impl ShardBlock {
 
         let t_qkv = t0.elapsed();
 
-        // Apply rotary position embeddings
         let t1 = Instant::now();
         let (q, k) = rope.apply(&q, &k, seq_pos)?;
         let t_rope = t1.elapsed();
 
-        // Append to KV-cache and update it
         let t2 = Instant::now();
         let (k, v) = if let Some((ck, cv)) = kv.take() {
-            // contiguous() after cat avoids strided access on the growing KV cache
             let k = Tensor::cat(&[&ck, &k], 2)
                 .and_then(|t| t.contiguous())
                 .map_err(InferenceError::from)?;
@@ -305,28 +316,22 @@ impl ShardBlock {
         *kv = Some((k.clone(), v.clone()));
         let t_kv = t2.elapsed();
 
-        let kv_seq = k.dim(2).map_err(InferenceError::from)?; // total keys
+        let kv_seq = k.dim(2).map_err(InferenceError::from)?;
 
         let t3 = Instant::now();
 
-        // Flash attention: fused QK softmax V in a single CUDA kernel.
-        // flash_attn expects [b, s, n_heads, hd]; handles GQA natively.
         #[cfg(feature = "flash-attn")]
         let attn_out = {
-            let q_fa = q.transpose(1, 2).map_err(InferenceError::from)?; // [b, s, n_h, hd]
-            let k_fa = k.transpose(1, 2).map_err(InferenceError::from)?; // [b, kv_seq, n_kv, hd]
+            let q_fa = q.transpose(1, 2).map_err(InferenceError::from)?;
+            let k_fa = k.transpose(1, 2).map_err(InferenceError::from)?;
             let v_fa = v.transpose(1, 2).map_err(InferenceError::from)?;
             let scale = (hd as f32).sqrt().recip();
-            // flash_attn's causal mode masks query i to keys 0..=(kv_seq-s+i), handling
-            // cached keys (seq_pos>0) correctly via the key-length offset — no special
-            // casing for seq_pos needed. Single-token decode (s==1) is trivially causal.
             let is_causal = s > 1;
             let out = candle_flash_attn::flash_attn(&q_fa, &k_fa, &v_fa, scale, is_causal)
-                .map_err(InferenceError::from)?; // [b, s, n_h, hd]
-            out.transpose(1, 2).map_err(InferenceError::from)? // [b, n_h, s, hd]
+                .map_err(InferenceError::from)?;
+            out.transpose(1, 2).map_err(InferenceError::from)?
         };
 
-        // Standard scaled dot-product attention fallback (no flash-attn feature).
         #[cfg(not(feature = "flash-attn"))]
         let attn_out = {
             let k_full = repeat_kv(&k, self.cfg.n_rep())?;
@@ -351,7 +356,6 @@ impl ShardBlock {
             attn_w.matmul(&v_full).map_err(InferenceError::from)?
         };
 
-        // Merge heads: [b, s, h]
         let h = self.cfg.hidden_dim;
         let attn_out = attn_out
             .transpose(1, 2)
@@ -381,14 +385,15 @@ impl ShardBlock {
             .up_proj
             .forward(&normed)
             .map_err(InferenceError::from)?;
-        // SwiGLU: silu(gate) * up
         let gate = candle_nn::ops::silu(&gate).map_err(InferenceError::from)?;
         let ff = (gate * up).map_err(InferenceError::from)?;
         let ff = self.down_proj.forward(&ff).map_err(InferenceError::from)?;
+        // Final residual add — this is the post-MLP hidden state (residual stream output)
         let result = (&residual + &ff).map_err(InferenceError::from)?;
         let t_mlp = t4.elapsed();
 
         debug!(
+            block_idx = self.block_idx,
             seq_len = s,
             qkv_ms = format!("{:.1}", t_qkv.as_secs_f64() * 1000.0),
             rope_ms = format!("{:.1}", t_rope.as_secs_f64() * 1000.0),
@@ -399,15 +404,38 @@ impl ShardBlock {
             "block forward"
         );
 
-        Ok(result)
+        // ── RepE probe evaluation + optional steering ─────────────────────────
+        //
+        // Fires AFTER the final residual add — this is the correct extraction
+        // point per Zou et al. (2023): the post-MLP residual stream captures
+        // the most linearly-decodable representation of model state.
+        //
+        // Zero-cost when probes is None: the match arm compiles to nothing and
+        // the Vec is never allocated.
+        let (result, probe_results) = match probes {
+            None => (result, vec![]),
+            Some(probe_set) => {
+                // Apply steering vectors first (modifies the residual stream in place)
+                let steered = probe_set
+                    .steer(self.block_idx, &result)
+                    .map_err(|e| InferenceError::InferenceFailed(e.to_string()))?;
+
+                // Then evaluate probes against the (possibly steered) hidden state
+                let results = probe_set
+                    .evaluate(self.block_idx, &steered)
+                    .map_err(|e| InferenceError::InferenceFailed(e.to_string()))?;
+
+                (steered, results)
+            }
+        };
+
+        Ok((result, probe_results))
     }
 }
 
 // ── Session KV-cache ──────────────────────────────────────────────────────────
 
-/// KV-cache for one inference session across all blocks in this shard.
 struct Session {
-    /// One `Option<(k_cache, v_cache)>` per block in the shard.
     kv: Vec<Option<(Tensor, Tensor)>>,
     last_access: Instant,
 }
@@ -427,27 +455,27 @@ impl Session {
 ///
 /// Load with [`TransformerShard::load`] then call the appropriate forward method
 /// based on this node's position in the inference chain.
+///
+/// Attach a [`ProbeSet`] via [`TransformerShard::with_probes`] to enable RepE
+/// probe extraction and steering vectors.  All forward methods return
+/// [`ShardOutput`] — `probe_results` is empty when no `ProbeSet` is attached.
 pub struct TransformerShard {
-    embedding: Option<candle_nn::Embedding>, // first node only (start_block == 0)
-    blocks: Vec<ShardBlock>,                 // blocks [start_block..end_block)
-    norm: Option<candle_nn::RmsNorm>,        // last node only
-    lm_head: Option<candle_nn::Linear>,      // last node only
+    embedding: Option<candle_nn::Embedding>,
+    blocks: Vec<ShardBlock>,
+    norm: Option<candle_nn::RmsNorm>,
+    lm_head: Option<candle_nn::Linear>,
     rope: RopeCache,
-    /// Tokenizer — all nodes load it; only the coordinator uses it actively.
     pub tokenizer: BpeTokenizer,
     pub start_block: usize,
     pub end_block: usize,
     pub cfg: ShardConfig,
     sessions: Mutex<HashMap<u64, Session>>,
+    /// Optional RepE probe set.  Attach via [`Self::with_probes`].
+    probes: Option<ProbeSet>,
 }
 
 impl TransformerShard {
     /// Load a shard from SafeTensors files.
-    ///
-    /// Components are loaded selectively:
-    /// - Embedding for first node (`start_block == 0`)
-    /// - Transformer blocks `[start_block..end_block)`
-    /// - Final RMSNorm + LM head for last node (`end_block == num_total_blocks`)
     pub fn load(
         safetensors_paths: &[&Path],
         config_path: &Path,
@@ -457,7 +485,6 @@ impl TransformerShard {
     ) -> InferenceResult<Self> {
         use candle_transformers::models::llama::LlamaConfig;
 
-        // Parse HuggingFace config.json
         let config_str = std::fs::read_to_string(config_path).map_err(|e| {
             InferenceError::ModelLoadError(format!("Cannot read {}: {e}", config_path.display()))
         })?;
@@ -502,14 +529,11 @@ impl TransformerShard {
              hidden={hidden_dim} heads={num_heads} ({num_kv_heads} kv)"
         );
 
-        // Memory-map all safetensors shards (only accessed pages are read).
-        // SAFETY: files must not be modified while the model is loaded.
         let vb = unsafe {
             VarBuilder::from_mmaped_safetensors(safetensors_paths, cfg.dtype, device)
                 .map_err(|e| InferenceError::ModelLoadError(format!("mmap safetensors: {e}")))?
         };
 
-        // Embedding: only for the first node in the chain
         let embedding = if start_block == 0 {
             info!("  Loading embedding (vocab={vocab_size}, dim={hidden_dim})");
             Some(
@@ -520,16 +544,15 @@ impl TransformerShard {
             None
         };
 
-        // Transformer blocks
         let shard_size = end_block - start_block;
         let mut blocks = Vec::with_capacity(shard_size);
         for global_idx in start_block..end_block {
             info!("  Loading block {global_idx}");
             let block_vb = vb.pp(format!("model.layers.{global_idx}"));
-            blocks.push(ShardBlock::load(block_vb, &cfg)?);
+            // Pass global_idx so each block knows its position for probe hooks
+            blocks.push(ShardBlock::load(block_vb, &cfg, global_idx)?);
         }
 
-        // Final norm + LM head: only for the last node in the chain
         let (norm, lm_head) = if end_block == num_total_blocks {
             info!("  Loading norm + lm_head");
             let n = candle_nn::rms_norm(hidden_dim, rms_norm_eps, vb.pp("model.norm"))
@@ -541,14 +564,12 @@ impl TransformerShard {
             (None, None)
         };
 
-        // Tokenizer
         let tokenizer_path = config_path
             .parent()
             .unwrap_or(Path::new("."))
             .join("tokenizer.json");
         let tokenizer = BpeTokenizer::from_file(&tokenizer_path)?;
 
-        // Precompute RoPE tables on the same device as the weights.
         let rope = RopeCache::new(&cfg, device)?;
 
         info!(
@@ -569,7 +590,26 @@ impl TransformerShard {
             end_block,
             cfg,
             sessions: Mutex::new(HashMap::new()),
+            probes: None,
         })
+    }
+
+    /// Attach a [`ProbeSet`] to this shard (builder pattern).
+    ///
+    /// All subsequent forward calls will evaluate probes and collect
+    /// [`ProbeResult`]s in the returned [`ShardOutput`].
+    ///
+    /// ```rust,ignore
+    /// let shard = TransformerShard::load(...)?.with_probes(probe_set);
+    /// ```
+    pub fn with_probes(mut self, probes: ProbeSet) -> Self {
+        self.probes = Some(probes);
+        self
+    }
+
+    /// Remove and return the attached [`ProbeSet`], if any.
+    pub fn take_probes(&mut self) -> Option<ProbeSet> {
+        self.probes.take()
     }
 
     /// Returns `true` if this is the first node in the chain (holds the embedding).
@@ -584,22 +624,18 @@ impl TransformerShard {
 
     // ── Session management ────────────────────────────────────────────────────
 
-    /// Open a new inference session (empty KV-cache for each block in this shard).
     pub fn open_session(&self, session_id: u64) {
         let mut sessions = self.sessions.lock().unwrap();
         sessions.insert(session_id, Session::new(self.blocks.len()));
         debug!("Opened session {session_id}");
     }
 
-    /// Drop a session and free its KV-cache tensors.
     pub fn close_session(&self, session_id: u64) {
         let mut sessions = self.sessions.lock().unwrap();
         sessions.remove(&session_id);
         debug!("Closed session {session_id}");
     }
 
-    /// Evict sessions that have been idle for more than 600 seconds.
-    /// Call this periodically (e.g., every 30 s) from a background task.
     pub fn gc_sessions(&self) {
         let mut sessions = self.sessions.lock().unwrap();
         let before = sessions.len();
@@ -616,13 +652,16 @@ impl TransformerShard {
     // ── Core block execution ──────────────────────────────────────────────────
 
     /// Run the hidden state through all blocks in this shard, updating the KV-cache.
+    /// Collects RepE probe results from every block that has registered probes.
     fn run_blocks(
         &self,
         mut x: Tensor,
         seq_pos: usize,
         session_id: u64,
-    ) -> InferenceResult<Tensor> {
+    ) -> InferenceResult<(Tensor, Vec<ProbeResult>)> {
         let run_start = Instant::now();
+        let mut all_probe_results: Vec<ProbeResult> = Vec::new();
+
         let mut sessions = self.sessions.lock().unwrap();
         let session = sessions
             .entry(session_id)
@@ -630,7 +669,15 @@ impl TransformerShard {
         session.last_access = Instant::now();
 
         for (local_idx, block) in self.blocks.iter().enumerate() {
-            x = block.forward(&x, seq_pos, &mut session.kv[local_idx], &self.rope)?;
+            let (next_x, mut block_probes) = block.forward(
+                &x,
+                seq_pos,
+                &mut session.kv[local_idx],
+                &self.rope,
+                self.probes.as_ref(),
+            )?;
+            x = next_x;
+            all_probe_results.append(&mut block_probes);
         }
 
         let total = run_start.elapsed();
@@ -643,24 +690,21 @@ impl TransformerShard {
             );
         }
 
-        Ok(x)
+        Ok((x, all_probe_results))
     }
 
     // ── Public forward entry points ───────────────────────────────────────────
 
     /// **First node**: embed token IDs, run blocks, return hidden states.
     ///
-    /// * `session_id` — unique inference session (KV-cache key)
-    /// * `token_ids`  — token IDs for the current step (full prompt on prefill, one token on decode)
-    /// * `seq_pos`    — global sequence position of the first token (`0` for prefill)
-    ///
-    /// Returns `[1, seq_len, hidden_dim]`.
+    /// Returns [`ShardOutput`] with `tensor` of shape `[1, seq_len, hidden_dim]`.
+    /// `probe_results` is populated when a [`ProbeSet`] is attached.
     pub fn forward_first(
         &self,
         session_id: u64,
         token_ids: &[u32],
         seq_pos: usize,
-    ) -> InferenceResult<Tensor> {
+    ) -> InferenceResult<ShardOutput> {
         let emb = self.embedding.as_ref().ok_or_else(|| {
             InferenceError::InferenceFailed(
                 "forward_first() called on a shard that does not hold the embedding \
@@ -669,41 +713,38 @@ impl TransformerShard {
             )
         })?;
 
-        // Build [1, seq_len] token tensor
         let tok = Tensor::new(token_ids, emb.embeddings().device())
             .and_then(|t| t.unsqueeze(0))
             .map_err(InferenceError::from)?;
 
-        // Embed → [1, seq_len, hidden_dim]
         let hidden = emb.forward(&tok).map_err(InferenceError::from)?;
 
-        self.run_blocks(hidden, seq_pos, session_id)
+        let (tensor, probe_results) = self.run_blocks(hidden, seq_pos, session_id)?;
+        Ok(ShardOutput::with_probes(tensor, probe_results))
     }
 
     /// **Middle node**: receive hidden states, run blocks, return hidden states.
     ///
-    /// * `hidden` — `[1, seq_len, hidden_dim]`
-    ///
-    /// Returns `[1, seq_len, hidden_dim]`.
+    /// Returns [`ShardOutput`] with `tensor` of shape `[1, seq_len, hidden_dim]`.
     pub fn forward_middle(
         &self,
         session_id: u64,
         hidden: Tensor,
         seq_pos: usize,
-    ) -> InferenceResult<Tensor> {
-        self.run_blocks(hidden, seq_pos, session_id)
+    ) -> InferenceResult<ShardOutput> {
+        let (tensor, probe_results) = self.run_blocks(hidden, seq_pos, session_id)?;
+        Ok(ShardOutput::with_probes(tensor, probe_results))
     }
 
     /// **Single-node** (first AND last): embed token IDs, run all blocks, return logits.
     ///
-    /// Convenience method for when one node serves the entire model.
-    /// Returns `[1, 1, vocab_size]`.
+    /// Returns [`ShardOutput`] with `tensor` of shape `[1, 1, vocab_size]`.
     pub fn forward_full(
         &self,
         session_id: u64,
         token_ids: &[u32],
         seq_pos: usize,
-    ) -> InferenceResult<Tensor> {
+    ) -> InferenceResult<ShardOutput> {
         let emb = self.embedding.as_ref().ok_or_else(|| {
             InferenceError::InferenceFailed(
                 "forward_full() called on a shard without embedding".to_string(),
@@ -728,15 +769,15 @@ impl TransformerShard {
         let t_embed = t_start.elapsed();
 
         let t_blocks = Instant::now();
-        let x = self.run_blocks(hidden, seq_pos, session_id)?;
-        let t_blocks = t_blocks.elapsed();
+        let (x, probe_results) = self.run_blocks(hidden, seq_pos, session_id)?;
+        let t_blocks_elapsed = t_blocks.elapsed();
 
         let t_head = Instant::now();
         let seq_len = x.dim(1).map_err(InferenceError::from)?;
         let x_last = x.narrow(1, seq_len - 1, 1).map_err(InferenceError::from)?;
         let x_last = norm.forward(&x_last).map_err(InferenceError::from)?;
         let logits = lm_head.forward(&x_last).map_err(InferenceError::from)?;
-        let t_head = t_head.elapsed();
+        let t_head_elapsed = t_head.elapsed();
 
         let total = t_start.elapsed();
         if total.as_millis() > 500 {
@@ -744,24 +785,24 @@ impl TransformerShard {
                 "[PERF] forward_full: {} tok, embed={:.1}ms blocks={:.0}ms head={:.1}ms total={:.0}ms",
                 token_ids.len(),
                 t_embed.as_secs_f64() * 1000.0,
-                t_blocks.as_secs_f64() * 1000.0,
-                t_head.as_secs_f64() * 1000.0,
+                t_blocks_elapsed.as_secs_f64() * 1000.0,
+                t_head_elapsed.as_secs_f64() * 1000.0,
                 total.as_secs_f64() * 1000.0,
             );
         }
 
-        Ok(logits)
+        Ok(ShardOutput::with_probes(logits, probe_results))
     }
 
     /// **Last node**: receive hidden states, run blocks, apply norm + LM head, return logits.
     ///
-    /// Returns `[1, 1, vocab_size]` (last-token logits, ready for sampling).
+    /// Returns [`ShardOutput`] with `tensor` of shape `[1, 1, vocab_size]`.
     pub fn forward_last(
         &self,
         session_id: u64,
         hidden: Tensor,
         seq_pos: usize,
-    ) -> InferenceResult<Tensor> {
+    ) -> InferenceResult<ShardOutput> {
         let norm = self.norm.as_ref().ok_or_else(|| {
             InferenceError::InferenceFailed(
                 "forward_last() called on a shard that is not the last node".to_string(),
@@ -773,15 +814,14 @@ impl TransformerShard {
             )
         })?;
 
-        let x = self.run_blocks(hidden, seq_pos, session_id)?; // [1, seq_len, h]
+        let (x, probe_results) = self.run_blocks(hidden, seq_pos, session_id)?;
         let seq_len = x.dim(1).map_err(InferenceError::from)?;
 
-        // Keep only the last-token hidden state for efficient logit computation
-        let x_last = x.narrow(1, seq_len - 1, 1).map_err(InferenceError::from)?; // [1, 1, h]
+        let x_last = x.narrow(1, seq_len - 1, 1).map_err(InferenceError::from)?;
         let x_last = norm.forward(&x_last).map_err(InferenceError::from)?;
-        let logits = lm_head.forward(&x_last).map_err(InferenceError::from)?; // [1, 1, vocab]
+        let logits = lm_head.forward(&x_last).map_err(InferenceError::from)?;
 
-        Ok(logits)
+        Ok(ShardOutput::with_probes(logits, probe_results))
     }
 }
 
@@ -808,7 +848,7 @@ mod tests {
         };
         let device = Device::Cpu;
         let rope = RopeCache::new(&cfg, &device).unwrap();
-        assert_eq!(rope.cos.dims(), &[64, 8]); // [max_seq, head_dim/2]
+        assert_eq!(rope.cos.dims(), &[64, 8]);
         assert_eq!(rope.sin.dims(), &[64, 8]);
     }
 
@@ -817,7 +857,6 @@ mod tests {
         let mask = causal_mask(3, 5, 2, &Device::Cpu, DType::F32).unwrap();
         assert_eq!(mask.dims(), &[3, 5]);
         let data = mask.to_vec2::<f32>().unwrap();
-        // Position 0 (global 2): can see keys 0,1,2  → j<=2
         assert_eq!(data[0][0], 0.0);
         assert_eq!(data[0][2], 0.0);
         assert!(data[0][3].is_infinite() && data[0][3] < 0.0);
@@ -826,7 +865,6 @@ mod tests {
     #[test]
     fn repeat_kv_expands_correctly() {
         let device = Device::Cpu;
-        // [1, 2, 3, 4] with n_rep=2 → [1, 4, 3, 4]
         let t = Tensor::zeros((1usize, 2usize, 3usize, 4usize), DType::F32, &device).unwrap();
         let out = repeat_kv(&t, 2).unwrap();
         assert_eq!(out.dims(), &[1, 4, 3, 4]);
