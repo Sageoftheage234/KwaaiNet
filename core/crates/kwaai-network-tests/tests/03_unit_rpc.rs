@@ -32,7 +32,7 @@ fn encode_decode_server_frame(body: server_frame::Body) -> ServerFrame {
 
 #[test]
 fn client_frame_ping_roundtrip() {
-    let mut rec = MetricsRecorder::start("unit::rpc::client_frame_ping_roundtrip", "unit");
+    let rec = MetricsRecorder::start("unit::rpc::client_frame_ping_roundtrip", "unit");
     let decoded = encode_decode_client_frame(client_frame::Body::Ping(PingRequest {}));
     assert_eq!(decoded.id, 42);
     assert!(matches!(decoded.body, Some(client_frame::Body::Ping(_))));
@@ -41,7 +41,7 @@ fn client_frame_ping_roundtrip() {
 
 #[test]
 fn client_frame_generate_roundtrip() {
-    let mut rec = MetricsRecorder::start("unit::rpc::client_frame_generate_roundtrip", "unit");
+    let rec = MetricsRecorder::start("unit::rpc::client_frame_generate_roundtrip", "unit");
     let req = GenerateRequest {
         role: "user".to_string(),
         content: "Explain distributed inference.".to_string(),
@@ -60,7 +60,7 @@ fn client_frame_generate_roundtrip() {
 
 #[test]
 fn client_frame_shard_run_roundtrip() {
-    let mut rec = MetricsRecorder::start("unit::rpc::client_frame_shard_run_roundtrip", "unit");
+    let rec = MetricsRecorder::start("unit::rpc::client_frame_shard_run_roundtrip", "unit");
     let req = ShardRunRequest {
         role: "user".to_string(),
         content: "What is KwaaiNet?".to_string(),
@@ -80,7 +80,7 @@ fn client_frame_shard_run_roundtrip() {
 
 #[test]
 fn client_frame_status_roundtrip() {
-    let mut rec = MetricsRecorder::start("unit::rpc::client_frame_status_roundtrip", "unit");
+    let rec = MetricsRecorder::start("unit::rpc::client_frame_status_roundtrip", "unit");
     let decoded = encode_decode_client_frame(client_frame::Body::Status(StatusRequest {}));
     assert!(matches!(decoded.body, Some(client_frame::Body::Status(_))));
     rec.finish(true);
@@ -88,7 +88,7 @@ fn client_frame_status_roundtrip() {
 
 #[test]
 fn client_frame_cancel_roundtrip() {
-    let mut rec = MetricsRecorder::start("unit::rpc::client_frame_cancel_roundtrip", "unit");
+    let rec = MetricsRecorder::start("unit::rpc::client_frame_cancel_roundtrip", "unit");
     let decoded = encode_decode_client_frame(client_frame::Body::Cancel(Cancel { target_id: 17 }));
     if let Some(client_frame::Body::Cancel(c)) = decoded.body {
         assert_eq!(c.target_id, 17);
@@ -104,7 +104,7 @@ fn client_frame_cancel_roundtrip() {
 
 #[test]
 fn server_frame_pong_roundtrip() {
-    let mut rec = MetricsRecorder::start("unit::rpc::server_frame_pong_roundtrip", "unit");
+    let rec = MetricsRecorder::start("unit::rpc::server_frame_pong_roundtrip", "unit");
     let decoded = encode_decode_server_frame(server_frame::Body::Pong(PingReply {
         server_time: "2026-05-23T18:32:00Z".to_string(),
     }));
@@ -118,7 +118,7 @@ fn server_frame_pong_roundtrip() {
 
 #[test]
 fn server_frame_token_roundtrip() {
-    let mut rec = MetricsRecorder::start("unit::rpc::server_frame_token_roundtrip", "unit");
+    let rec = MetricsRecorder::start("unit::rpc::server_frame_token_roundtrip", "unit");
     let decoded = encode_decode_server_frame(server_frame::Body::Token(ChatToken {
         text: " distributed".to_string(),
         done: false,
@@ -135,7 +135,7 @@ fn server_frame_token_roundtrip() {
 
 #[test]
 fn server_frame_done_roundtrip() {
-    let mut rec = MetricsRecorder::start("unit::rpc::server_frame_done_roundtrip", "unit");
+    let rec = MetricsRecorder::start("unit::rpc::server_frame_done_roundtrip", "unit");
     let decoded = encode_decode_server_frame(server_frame::Body::Done(Done {}));
     assert!(matches!(decoded.body, Some(server_frame::Body::Done(_))));
     rec.finish(true);
@@ -143,7 +143,7 @@ fn server_frame_done_roundtrip() {
 
 #[test]
 fn server_frame_error_roundtrip() {
-    let mut rec = MetricsRecorder::start("unit::rpc::server_frame_error_roundtrip", "unit");
+    let rec = MetricsRecorder::start("unit::rpc::server_frame_error_roundtrip", "unit");
     let decoded = encode_decode_server_frame(server_frame::Body::Error(kwaai_rpc::v1::Error {
         code: ErrorCode::NoPeersForModel as i32,
         message: "no peers serving llama3.2:3b".to_string(),
@@ -159,7 +159,7 @@ fn server_frame_error_roundtrip() {
 
 #[test]
 fn server_frame_status_roundtrip() {
-    let mut rec = MetricsRecorder::start("unit::rpc::server_frame_status_roundtrip", "unit");
+    let rec = MetricsRecorder::start("unit::rpc::server_frame_status_roundtrip", "unit");
     let reply = StatusReply {
         server_time: "2026-05-23T18:32:00Z".to_string(),
         model: "llama3.2:3b".to_string(),
@@ -185,7 +185,7 @@ fn server_frame_status_roundtrip() {
 
 #[test]
 fn error_codes_expected_values() {
-    let mut rec = MetricsRecorder::start("unit::rpc::error_codes_expected_values", "unit");
+    let rec = MetricsRecorder::start("unit::rpc::error_codes_expected_values", "unit");
     // These values are part of the wire contract — never renumber
     assert_eq!(ErrorCode::Unknown as i32, 0);
     assert_eq!(ErrorCode::InvalidArgument as i32, 1);
@@ -207,7 +207,7 @@ fn error_codes_expected_values() {
 
 #[test]
 fn chat_message_roundtrip() {
-    let mut rec = MetricsRecorder::start("unit::rpc::chat_message_roundtrip", "unit");
+    let rec = MetricsRecorder::start("unit::rpc::chat_message_roundtrip", "unit");
     let msg = ChatMessage {
         content: "Hello from kwaai".to_string(),
         role: "user".to_string(),
@@ -223,7 +223,7 @@ fn chat_message_roundtrip() {
 
 #[test]
 fn chat_token_done_flag() {
-    let mut rec = MetricsRecorder::start("unit::rpc::chat_token_done_flag", "unit");
+    let rec = MetricsRecorder::start("unit::rpc::chat_token_done_flag", "unit");
     let done_token = ChatToken {
         text: String::new(),
         done: true,
@@ -242,7 +242,7 @@ fn chat_token_done_flag() {
 
 #[test]
 fn frame_id_preserved_through_encode_decode() {
-    let mut rec = MetricsRecorder::start("unit::rpc::frame_id_preserved", "unit");
+    let rec = MetricsRecorder::start("unit::rpc::frame_id_preserved", "unit");
     for id in [1u64, u64::MAX, 12345, 0xDEADBEEF] {
         let frame = ClientFrame {
             id,
@@ -261,7 +261,7 @@ fn frame_id_preserved_through_encode_decode() {
 
 #[test]
 fn empty_frame_is_valid_proto() {
-    let mut rec = MetricsRecorder::start("unit::rpc::empty_frame_is_valid_proto", "unit");
+    let rec = MetricsRecorder::start("unit::rpc::empty_frame_is_valid_proto", "unit");
     let frame = ClientFrame { id: 99, body: None };
     let bytes = frame.encode_to_vec();
     let decoded = ClientFrame::decode(bytes.as_slice()).unwrap();

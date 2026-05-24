@@ -7,7 +7,7 @@ use kwaai_hivemind_dht::{
     DHTStorage, DHTValue,
     codec::{DHTRequest, DHTResponse, ProtocolMarker},
     protocol::{
-        FindRequest, FindResult, NodeInfo, PingRequest, RequestAuthInfo, ResponseAuthInfo,
+        FindRequest, FindResult, NodeInfo, PingRequest, RequestAuthInfo,
         ResultType, StoreRequest,
     },
     value::{DHTValueBuilder, get_dht_time},
@@ -32,7 +32,7 @@ fn value_with_ttl_is_valid() {
 
 #[test]
 fn value_already_expired() {
-    let mut rec = MetricsRecorder::start("unit::dht::value_already_expired", "unit");
+    let rec = MetricsRecorder::start("unit::dht::value_already_expired", "unit");
     let v = DHTValue::new(b"stale".to_vec(), 0.0); // epoch 0 — always expired
     assert!(!v.is_valid());
     assert!(v.is_expired());
@@ -62,7 +62,7 @@ fn value_serialize_deserialize_roundtrip() {
 
 #[test]
 fn deserialize_expired_value_returns_error() {
-    let mut rec = MetricsRecorder::start("unit::dht::deserialize_expired_returns_error", "unit");
+    let rec = MetricsRecorder::start("unit::dht::deserialize_expired_returns_error", "unit");
     let v = DHTValue::new(vec![0x93, 0x01, 0x02, 0x03], 0.0); // expired
     let result: kwaai_hivemind_dht::Result<Vec<u8>> = v.deserialize();
     assert!(result.is_err(), "should refuse to deserialize expired value");
@@ -87,7 +87,7 @@ fn value_to_from_msgpack() {
 
 #[test]
 fn builder_ttl() {
-    let mut rec = MetricsRecorder::start("unit::dht::builder_ttl", "unit");
+    let rec = MetricsRecorder::start("unit::dht::builder_ttl", "unit");
     let v = DHTValueBuilder::new(b"data".to_vec())
         .ttl_seconds(120.0)
         .build();
@@ -98,7 +98,7 @@ fn builder_ttl() {
 
 #[test]
 fn builder_absolute_expiration() {
-    let mut rec = MetricsRecorder::start("unit::dht::builder_absolute_expiration", "unit");
+    let rec = MetricsRecorder::start("unit::dht::builder_absolute_expiration", "unit");
     let far_future = get_dht_time() + 9999.0;
     let v = DHTValueBuilder::new(b"data".to_vec())
         .expiration_time(far_future)
@@ -109,7 +109,7 @@ fn builder_absolute_expiration() {
 
 #[test]
 fn builder_default_ttl_one_hour() {
-    let mut rec = MetricsRecorder::start("unit::dht::builder_default_ttl_one_hour", "unit");
+    let rec = MetricsRecorder::start("unit::dht::builder_default_ttl_one_hour", "unit");
     let v = DHTValueBuilder::new(b"data".to_vec()).build();
     // Default TTL is 3600s; remaining should be close to that
     let remaining = v.time_until_expiration();
@@ -119,7 +119,7 @@ fn builder_default_ttl_one_hour() {
 
 #[test]
 fn builder_from_type() {
-    let mut rec = MetricsRecorder::start("unit::dht::builder_from_type", "unit");
+    let rec = MetricsRecorder::start("unit::dht::builder_from_type", "unit");
     let value = ("kwaai-node".to_string(), 42u32);
     let v = DHTValueBuilder::from_type(&value)
         .unwrap()
@@ -135,7 +135,7 @@ fn builder_from_type() {
 
 #[test]
 fn storage_store_and_find() {
-    let mut rec = MetricsRecorder::start("unit::dht::storage_store_and_find", "unit");
+    let rec = MetricsRecorder::start("unit::dht::storage_store_and_find", "unit");
     let peer = PeerId::random();
     let storage = DHTStorage::new(peer);
 
@@ -171,7 +171,7 @@ fn storage_store_and_find() {
 
 #[test]
 fn storage_rejects_expired_store() {
-    let mut rec = MetricsRecorder::start("unit::dht::storage_rejects_expired_store", "unit");
+    let rec = MetricsRecorder::start("unit::dht::storage_rejects_expired_store", "unit");
     let peer = PeerId::random();
     let storage = DHTStorage::new(peer);
     let node = NodeInfo::from_peer_id(peer);
@@ -192,7 +192,7 @@ fn storage_rejects_expired_store() {
 
 #[test]
 fn storage_find_missing_key_returns_not_found() {
-    let mut rec = MetricsRecorder::start("unit::dht::storage_find_missing_returns_not_found", "unit");
+    let rec = MetricsRecorder::start("unit::dht::storage_find_missing_returns_not_found", "unit");
     let peer = PeerId::random();
     let storage = DHTStorage::new(peer);
     let node = NodeInfo::from_peer_id(peer);
@@ -244,7 +244,7 @@ fn storage_cleanup_removes_expired() {
 
 #[test]
 fn storage_handle_request_ping() {
-    let mut rec = MetricsRecorder::start("unit::dht::storage_handle_request_ping", "unit");
+    let rec = MetricsRecorder::start("unit::dht::storage_handle_request_ping", "unit");
     let peer = PeerId::random();
     let storage = DHTStorage::new(peer);
     let node = NodeInfo::from_peer_id(peer);
@@ -299,7 +299,7 @@ fn storage_multi_key_batch() {
 
 #[test]
 fn result_type_roundtrip() {
-    let mut rec = MetricsRecorder::start("unit::dht::result_type_roundtrip", "unit");
+    let rec = MetricsRecorder::start("unit::dht::result_type_roundtrip", "unit");
     for (rt, expected) in [
         (ResultType::NotFound, 0i32),
         (ResultType::FoundRegular, 1),
@@ -319,7 +319,7 @@ fn result_type_roundtrip() {
 
 #[test]
 fn node_info_peer_id_roundtrip() {
-    let mut rec = MetricsRecorder::start("unit::dht::node_info_peer_id_roundtrip", "unit");
+    let rec = MetricsRecorder::start("unit::dht::node_info_peer_id_roundtrip", "unit");
     let original = PeerId::random();
     let ni = NodeInfo::from_peer_id(original);
     let recovered = ni.to_peer_id().expect("should recover PeerId from NodeInfo");
@@ -403,7 +403,7 @@ fn codec_find_roundtrip() {
 
 #[test]
 fn codec_find_response_roundtrip() {
-    let mut rec = MetricsRecorder::start("unit::dht::codec_find_response_roundtrip", "unit");
+    let rec = MetricsRecorder::start("unit::dht::codec_find_response_roundtrip", "unit");
     let peer = PeerId::random();
     let node = NodeInfo::from_peer_id(peer);
 
@@ -430,7 +430,7 @@ fn codec_find_response_roundtrip() {
 
 #[test]
 fn codec_decode_empty_bytes_returns_error() {
-    let mut rec = MetricsRecorder::start("unit::dht::codec_decode_empty_bytes_returns_error", "unit");
+    let rec = MetricsRecorder::start("unit::dht::codec_decode_empty_bytes_returns_error", "unit");
     let result = DHTRequest::decode(&[]);
     assert!(result.is_err());
     rec.finish(true);
@@ -438,7 +438,7 @@ fn codec_decode_empty_bytes_returns_error() {
 
 #[test]
 fn codec_decode_invalid_marker_returns_error() {
-    let mut rec = MetricsRecorder::start("unit::dht::codec_decode_invalid_marker_returns_error", "unit");
+    let rec = MetricsRecorder::start("unit::dht::codec_decode_invalid_marker_returns_error", "unit");
     // marker byte 0xFF is not valid
     let result = DHTRequest::decode(&[0xFF, 0x00]);
     assert!(result.is_err());
@@ -451,7 +451,7 @@ fn codec_decode_invalid_marker_returns_error() {
 
 #[test]
 fn codec_length_prefix_correct() {
-    let mut rec = MetricsRecorder::start("unit::dht::codec_length_prefix_correct", "unit");
+    let rec = MetricsRecorder::start("unit::dht::codec_length_prefix_correct", "unit");
     let node = NodeInfo::from_peer_id(PeerId::random());
     let req = DHTRequest::Ping(PingRequest::new(node, false));
     let bytes = req.encode().unwrap();

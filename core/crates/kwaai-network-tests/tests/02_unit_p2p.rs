@@ -17,7 +17,7 @@ use std::time::Duration;
 
 #[test]
 fn config_default_has_sane_values() {
-    let mut rec = MetricsRecorder::start("unit::p2p::config_default_sane_values", "unit");
+    let rec = MetricsRecorder::start("unit::p2p::config_default_sane_values", "unit");
     let cfg = NetworkConfig::default();
     assert!(cfg.enable_dht);
     assert!(cfg.enable_relay_client);
@@ -45,7 +45,7 @@ fn config_with_kwaai_bootstrap_includes_bootstrap_addrs() {
 
 #[test]
 fn config_builder_overrides() {
-    let mut rec = MetricsRecorder::start("unit::p2p::config_builder_overrides", "unit");
+    let rec = MetricsRecorder::start("unit::p2p::config_builder_overrides", "unit");
     let cfg = NetworkConfig::builder()
         .max_connections(50)
         .connection_timeout(Duration::from_secs(10))
@@ -101,7 +101,7 @@ fn server_info_default_roundtrip() {
 
 #[test]
 fn server_info_builder_methods() {
-    let mut rec = MetricsRecorder::start("unit::p2p::server_info_builder_methods", "unit");
+    let rec = MetricsRecorder::start("unit::p2p::server_info_builder_methods", "unit");
     let info = ServerInfo::new("kwaai-test-node")
         .with_span(4, 16)
         .with_throughput(32.5)
@@ -144,7 +144,7 @@ fn server_info_msgpack_roundtrip_with_extras() {
 
 #[test]
 fn server_info_to_expert_info() {
-    let mut rec = MetricsRecorder::start("unit::p2p::server_info_to_expert_info", "unit");
+    let rec = MetricsRecorder::start("unit::p2p::server_info_to_expert_info", "unit");
     let info = ServerInfo::new("kwaai-node").with_span(0, 4);
     let expert_info = info.to_expert_info().unwrap();
     assert!(!expert_info.serialized_info.is_empty());
@@ -177,7 +177,7 @@ fn framing_encode_decode_message() {
 
 #[test]
 fn framing_encode_decode_error() {
-    let mut rec = MetricsRecorder::start("unit::p2p::framing_encode_decode_error", "unit");
+    let rec = MetricsRecorder::start("unit::p2p::framing_encode_decode_error", "unit");
     let framed = encode_error("inference backend unavailable");
     let (is_error, payload) = decode_message(&framed).expect("decode should succeed");
     assert!(is_error);
@@ -187,7 +187,7 @@ fn framing_encode_decode_error() {
 
 #[test]
 fn framing_length_prefix_matches_body() {
-    let mut rec = MetricsRecorder::start("unit::p2p::framing_length_prefix_matches_body", "unit");
+    let rec = MetricsRecorder::start("unit::p2p::framing_length_prefix_matches_body", "unit");
     let uid = ExpertUID { uid: "test".to_string() };
     let framed = encode_message(&uid);
 
@@ -200,7 +200,7 @@ fn framing_length_prefix_matches_body() {
 
 #[test]
 fn framing_decode_too_short_returns_none() {
-    let mut rec = MetricsRecorder::start("unit::p2p::framing_decode_too_short_returns_none", "unit");
+    let rec = MetricsRecorder::start("unit::p2p::framing_decode_too_short_returns_none", "unit");
     assert!(decode_message(&[]).is_none());
     assert!(decode_message(&[0u8; 4]).is_none());
     assert!(decode_message(&[0u8; 8]).is_none()); // exactly 8 bytes — no marker
@@ -234,7 +234,7 @@ fn node_capabilities_encode_decode() {
 
 #[test]
 fn node_capabilities_default_values() {
-    let mut rec = MetricsRecorder::start("unit::p2p::node_capabilities_defaults", "unit");
+    let rec = MetricsRecorder::start("unit::p2p::node_capabilities_defaults", "unit");
     let caps = NodeCapabilities::new("peer-id".to_string());
     assert!(!caps.can_inference);
     assert!(!caps.can_train);
@@ -245,7 +245,7 @@ fn node_capabilities_default_values() {
 
 #[test]
 fn node_capabilities_decode_bad_bytes_returns_error() {
-    let mut rec = MetricsRecorder::start("unit::p2p::node_capabilities_decode_bad_bytes", "unit");
+    let rec = MetricsRecorder::start("unit::p2p::node_capabilities_decode_bad_bytes", "unit");
     let result = NodeCapabilities::decode(&[0xFF, 0x00, 0x01]);
     assert!(result.is_err());
     rec.finish(true);

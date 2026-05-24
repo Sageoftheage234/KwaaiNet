@@ -39,7 +39,7 @@ async fn bootstrap_server_reachable() {
     // Start a node that bootstraps from the live KwaaiNet servers
     let t = Instant::now();
     let bootstrap_addr = KWAAI_BOOTSTRAP_SERVERS[0];
-    let mut node = TestNode::new_dht_client(bootstrap_addr)
+    let node = TestNode::new_dht_client(bootstrap_addr)
         .await
         .expect("node with live bootstrap");
     let startup_ms = t.elapsed().as_millis() as u64;
