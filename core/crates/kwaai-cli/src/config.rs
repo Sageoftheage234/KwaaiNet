@@ -381,6 +381,11 @@ pub struct RagConfig {
     #[serde(default = "default_inference_url")]
     pub inference_url: String,
 
+    /// Base URL for embedding requests. Accepts `http://...` or `p2p://PEER_ID`.
+    /// Defaults to `inference_url` when absent (same host for both).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embed_url: Option<String>,
+
     /// Number of context chunks to inject per request.
     #[serde(default = "default_top_k")]
     pub top_k: usize,
@@ -445,6 +450,7 @@ impl Default for RagConfig {
             embed_dim: default_embed_dim(),
             inference_url: default_inference_url(),
             top_k: default_top_k(),
+            embed_url: None,
             storage_url: None,
             rag_data_dir: None,
         }

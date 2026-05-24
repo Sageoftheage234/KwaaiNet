@@ -380,6 +380,7 @@ async fn cmd_init(
                 eve_peer_id: None,
                 embed_model,
                 embed_dim,
+                embed_url: None,
                 inference_url: "http://localhost:8080".to_string(),
                 top_k: 5,
                 storage_url: Some("local".to_string()),
@@ -510,7 +511,7 @@ async fn cmd_ingest(
             text.len()
         ));
 
-        let embed = EmbedClient::new(None, Some(rag_cfg.embed_model.clone()));
+        let embed = EmbedClient::new(rag_cfg.embed_url.clone(), Some(rag_cfg.embed_model.clone()));
         let meta = MetaStore::open(&rag_cfg.data_dir(), tenant_id)?;
 
         // Store document title in graph store for LLM prompt injection
@@ -670,7 +671,7 @@ async fn cmd_ingest(
         // After ingest: inject entity seeds from index sections.
         if let Some(ref schema) = loaded_schema {
             if schema.has_index_seeds() {
-                let embed = EmbedClient::new(None, Some(rag_cfg.embed_model.clone()));
+                let embed = EmbedClient::new(rag_cfg.embed_url.clone(), Some(rag_cfg.embed_model.clone()));
                 inject_index_seeds(&text, schema, &rag_cfg, tenant_id, &embed).await;
             }
         }
@@ -920,7 +921,7 @@ async fn cmd_query(
                     continue;
                 }
             };
-            let embed = EmbedClient::new(None, Some(rag_cfg.embed_model.clone()));
+            let embed = EmbedClient::new(rag_cfg.embed_url.clone(), Some(rag_cfg.embed_model.clone()));
             let meta = MetaStore::open(&rag_cfg.data_dir(), tenant_id)?;
             let infer_url = inference_url
                 .clone()
@@ -1190,7 +1191,7 @@ async fn cmd_chat(
             })
             .unwrap_or_else(|| rag_cfg.inference_url.clone());
 
-        let embed = EmbedClient::new(None, Some(rag_cfg.embed_model.clone()));
+        let embed = EmbedClient::new(rag_cfg.embed_url.clone(), Some(rag_cfg.embed_model.clone()));
         let meta = MetaStore::open(&rag_cfg.data_dir(), tenant_id)?;
 
         let retrieve_cfg = RetrieveConfig {
@@ -1978,7 +1979,7 @@ async fn run_sync_pass(
             }
         };
 
-        let embed = EmbedClient::new(None, Some(rag_cfg.embed_model.clone()));
+        let embed = EmbedClient::new(rag_cfg.embed_url.clone(), Some(rag_cfg.embed_model.clone()));
         let mut ingest_cfg = IngestConfig::new(embed);
         ingest_cfg.chunk_cfg = chunk_cfg.clone();
         ingest_cfg.doc_meta = doc_meta.clone();
@@ -2303,7 +2304,7 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                 }
                 println!("  This may take a while — one LLM call per chunk.\n");
 
-                let embed = EmbedClient::new(None, Some(rag_cfg.embed_model.clone()));
+                let embed = EmbedClient::new(rag_cfg.embed_url.clone(), Some(rag_cfg.embed_model.clone()));
                 let store = Arc::new(Mutex::new(
                     GraphStore::open(&rag_cfg.data_dir(), tenant_id)
                         .context("opening graph store")?,
@@ -2771,7 +2772,7 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                     file.display()
                 );
 
-                let embed = EmbedClient::new(None, Some(rag_cfg.embed_model.clone()));
+                let embed = EmbedClient::new(rag_cfg.embed_url.clone(), Some(rag_cfg.embed_model.clone()));
                 let mut store = GraphStore::open(&rag_cfg.data_dir(), tenant_id)
                     .context("opening graph store")?;
 
@@ -2835,7 +2836,7 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                 // Convert to FamilyTree and seed the graph directly
                 let tree = seed_json::to_family_tree(&payload);
 
-                let embed = EmbedClient::new(None, Some(rag_cfg.embed_model.clone()));
+                let embed = EmbedClient::new(rag_cfg.embed_url.clone(), Some(rag_cfg.embed_model.clone()));
                 let mut store = GraphStore::open(&rag_cfg.data_dir(), tenant_id)
                     .context("opening graph store")?;
 
@@ -3441,7 +3442,7 @@ async fn cmd_dream(action: DreamAction, kb: String) -> Result<()> {
                     (vec![], raw_urls)
                 };
 
-                let embed = EmbedClient::new(None, Some(rag_cfg.embed_model.clone()));
+                let embed = EmbedClient::new(rag_cfg.embed_url.clone(), Some(rag_cfg.embed_model.clone()));
                 let cfg = kwaai_rag::dream::DreamConfig {
                     completeness_threshold: threshold,
                     dedup_threshold,
@@ -3555,7 +3556,7 @@ async fn cmd_dream(action: DreamAction, kb: String) -> Result<()> {
             } => {
                 let graph = kwaai_rag::graph::GraphStore::open(&rag_cfg.data_dir(), tenant_id)
                     .context("opening graph store for eval")?;
-                let embed = EmbedClient::new(None, Some(rag_cfg.embed_model.clone()));
+                let embed = EmbedClient::new(rag_cfg.embed_url.clone(), Some(rag_cfg.embed_model.clone()));
                 let vs = std::sync::Arc::new(open_local_vs(&rag_cfg.data_dir())?);
 
                 if !json {
@@ -3717,7 +3718,7 @@ async fn cmd_eval(
         }
 
         let (rag_cfg, tenant_id) = load_rag_config_for(&kb)?;
-        let embed = EmbedClient::new(None, Some(rag_cfg.embed_model.clone()));
+        let embed = EmbedClient::new(rag_cfg.embed_url.clone(), Some(rag_cfg.embed_model.clone()));
         let meta = MetaStore::open(&rag_cfg.data_dir(), tenant_id)?;
         let vs = Arc::new(open_local_vs(&rag_cfg.data_dir())?);
         let http = reqwest::Client::builder()
@@ -4248,7 +4249,7 @@ async fn cmd_import(input_dir: std::path::PathBuf, since: u64, kb: String) -> Re
         let (rag_cfg, tenant_id) = load_rag_config_for(&kb)?;
         let mut graph =
             GraphStore::open(&rag_cfg.data_dir(), tenant_id).context("opening graph store")?;
-        let embed = EmbedClient::new(None, Some(rag_cfg.embed_model.clone()));
+        let embed = EmbedClient::new(rag_cfg.embed_url.clone(), Some(rag_cfg.embed_model.clone()));
 
         print_box_header(&format!("RAG Import ({})", kb));
         if since > 0 {

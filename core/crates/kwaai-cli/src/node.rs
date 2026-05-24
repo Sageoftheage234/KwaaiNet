@@ -539,6 +539,16 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
         )
         .await;
 
+    // Shard proxy — lets remote peers route requests to our local shard API.
+    let shard_proxy_handler = crate::ollama_proxy::make_shard_proxy_handler();
+    let _ = client
+        .add_unary_handler(
+            crate::ollama_proxy::SHARD_PROXY_PROTO,
+            shard_proxy_handler,
+            false,
+        )
+        .await;
+
     // -----------------------------------------------------------------------
     // Step 4: Wait for DHT bootstrap (intelligent polling)
     // -----------------------------------------------------------------------
