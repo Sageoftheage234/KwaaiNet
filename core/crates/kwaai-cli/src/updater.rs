@@ -313,11 +313,44 @@ impl UpdateChecker {
         self.download_to(&cuda_url, &archive).await?;
         println!(" done.");
 
-        let install_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        // Derive install dir from the running binary's path. Strip " (deleted)"
+        // that Linux appends to /proc/self/exe after a previous in-place swap.
+        let exe_path = std::env::current_exe().ok().map(|p| {
+            let s = p.to_string_lossy().into_owned();
+            if let Some(clean) = s.strip_suffix(" (deleted)") {
+                std::path::PathBuf::from(clean)
+            } else {
+                p
+            }
+        });
+        let install_dir_candidate = exe_path
+            .as_deref()
+            .and_then(|p| p.parent())
+            .map(|d| d.to_path_buf())
             .or_else(|| dirs::home_dir().map(|h| h.join(".cargo/bin")))
             .context("Cannot determine install directory")?;
+
+        // Verify we can actually write there; if not, fall back to ~/.cargo/bin.
+        let install_dir = if std::fs::metadata(&install_dir_candidate)
+            .map(|m| !m.permissions().readonly())
+            .unwrap_or(false)
+        {
+            install_dir_candidate
+        } else {
+            let fallback = dirs::home_dir()
+                .map(|h| h.join(".cargo/bin"))
+                .context("Cannot determine fallback install directory")?;
+            if install_dir_candidate != fallback {
+                println!(
+                    "  ⚠  {} is not writable — installing to {} instead.",
+                    install_dir_candidate.display(),
+                    fallback.display()
+                );
+            }
+            std::fs::create_dir_all(&fallback)?;
+            fallback
+        };
+        debug!("CUDA install dir: {}", install_dir.display());
 
         let tmp = std::env::temp_dir().join("kwaainet-cuda-extract");
         let _ = std::fs::remove_dir_all(&tmp);
@@ -353,8 +386,19 @@ impl UpdateChecker {
             if name_str == "kwaainet" || name_str == "p2pd" {
                 std::fs::set_permissions(&tmp_dest, std::fs::Permissions::from_mode(0o755))?;
             }
-            std::fs::rename(&tmp_dest, &dest)
-                .with_context(|| format!("Installing {}", name_str))?;
+            // Unlink the destination first so rename() succeeds even when `dest`
+            // is the currently-executing binary (some Linux kernels return ETXTBSY
+            // for rename(2) over a running ELF; unlink always succeeds and the old
+            // inode stays alive until the process exits).
+            let _ = std::fs::remove_file(&dest);
+            std::fs::rename(&tmp_dest, &dest).with_context(|| {
+                format!(
+                    "Installing {} ({} -> {})",
+                    name_str,
+                    tmp_dest.display(),
+                    dest.display()
+                )
+            })?;
         }
         let _ = std::fs::remove_dir_all(&tmp);
         println!("  CUDA binary installed to {}.", install_dir.display());
