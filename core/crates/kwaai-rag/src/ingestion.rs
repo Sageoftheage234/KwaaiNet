@@ -14,6 +14,7 @@ use crate::graph::{
     description_from_fields, entity_id, extract_from_text, EntityNode, ExtractedEntity,
     ExtractedRelation, FieldValue, GraphStore,
 };
+use crate::ner;
 use crate::meta_store::{ChunkMeta, MetaStore};
 
 /// Optional graph extraction config attached to an ingestion run.
@@ -286,6 +287,16 @@ pub async fn extract_and_store_entities_pub(
         }
     });
 
+    // Snapshot Person entity genders for pronoun resolution.  Taken once before
+    // the spawn loop so async tasks never need to hold the graph lock.
+    let gender_context = Arc::new({
+        let g = store.lock().unwrap();
+        g.all_entities()
+            .filter(|e| e.entity_type == "Person")
+            .map(|e| (e.name.clone(), e.gender.clone()))
+            .collect::<Vec<_>>()
+    });
+
     // Spawn one extraction task per chunk; semaphore caps concurrency.
     for (i, (chunk, &chunk_id)) in chunks.iter().zip(chunk_ids.iter()).enumerate() {
         if chunk.skip_extraction {
@@ -318,6 +329,7 @@ pub async fn extract_and_store_entities_pub(
         let model = model.clone();
         let embed = embed.clone();
         let entity_types_cfg = entity_types_cfg.clone();
+        let gender_context = gender_context.clone();
 
         tokio::spawn(async move {
             let _permit = permit;
@@ -325,8 +337,13 @@ pub async fn extract_and_store_entities_pub(
             let url = &urls[idx];
             let et: Vec<&str> = entity_types_cfg.iter().map(|s| s.as_str()).collect();
 
+            let candidates = ner::extract_proper_noun_candidates(&text);
+            let pronoun_map = ner::resolve_pronouns(&text, &gender_context);
+
             let (mut entities, relations) = match extract_from_text(
                 &text,
+                &candidates,
+                &pronoun_map,
                 section_note.as_deref(),
                 url,
                 &model,
@@ -440,8 +457,11 @@ async fn extract_and_store_entities(
             chunk.text.clone()
         };
         let et: Vec<&str> = graph_cfg.entity_types.iter().map(|s| s.as_str()).collect();
+        let candidates = ner::extract_proper_noun_candidates(&text);
         let (mut entities, relations) = match extract_from_text(
             &text,
+            &candidates,
+            &[],
             chunk.section_note.as_deref(),
             &graph_cfg.inference_url,
             &graph_cfg.model,

@@ -13,6 +13,7 @@ pub mod hyde;
 pub mod ingestion;
 pub mod iterative;
 pub mod meta_store;
+pub mod ner;
 pub mod obsidian;
 pub mod prompt;
 pub mod query_understanding;

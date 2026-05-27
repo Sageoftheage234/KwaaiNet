@@ -2445,12 +2445,21 @@ impl GraphStore {
 /// ingestion can continue without hard errors.
 pub async fn extract_from_text(
     text: &str,
+    candidates: &[String],
+    pronoun_map: &[(String, String)],
     section_note: Option<&str>,
     inference_url: &str,
     model: &str,
     entity_types: &[&str],
     no_relations: bool,
 ) -> Result<(Vec<ExtractedEntity>, Vec<ExtractedRelation>)> {
+    // Skip the LLM entirely when the local pre-screener found no proper nouns.
+    // Avoids inference cost on boilerplate, numeric, or table-heavy chunks.
+    if candidates.is_empty() {
+        tracing::debug!("no proper noun candidates — skipping LLM extraction for this chunk");
+        return Ok((vec![], vec![]));
+    }
+
     let effective_types = if entity_types.is_empty() {
         ENTITY_TYPES
     } else {
@@ -2462,17 +2471,41 @@ pub async fn extract_from_text(
         .map(|note| format!("DOCUMENT CONTEXT: {note}\n\n"))
         .unwrap_or_default();
 
+    // Resolved pronouns injected as a preamble so the LLM never treats a pronoun
+    // as a candidate entity name.
+    let pronoun_context = if pronoun_map.is_empty() {
+        String::new()
+    } else {
+        let pairs = pronoun_map
+            .iter()
+            .map(|(pron, name)| format!("'{pron}' = '{name}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("KNOWN COREFERENCES: {pairs}\n\n")
+    };
+
     // Cap prevents JSON overflow failures on entity-dense passages (+7pp reliability,
     // experiments show no recall loss at this cap with window=1 chunking).
     let entity_cap = if entity_types.len() <= 3 { 25 } else { 20 };
 
+    let candidates_block = candidates
+        .iter()
+        .map(|c| format!("- {c}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
     let prompt = if no_relations {
         format!(
             "{section_context}\
+             {pronoun_context}\
              You are a precise knowledge extraction engine.\n\
-             Extract named entities from the text below. List AT MOST {entity_cap} entities.\n\
+             The following proper noun candidates were identified in the text.\n\
+             Classify each as a named entity (keep) or discard it if it is not a real entity.\n\
+             For kept entities output: name, type, and structured fields.\n\
+             List AT MOST {entity_cap} entities.\n\
              Return ONLY valid JSON (no markdown, no explanation):\n\
              {{\"entities\":[{{\"name\":\"...\",\"type\":\"...\",\"fields\":{{...}}}},...]}}\n\n\
+             Candidates:\n{candidates_block}\n\n\
              Entity types: {entity_list}\n\n\
              Field keys by entity type — include only keys whose values appear in the text:\n\
                Person:       birthDate, birthPlace, deathDate, nationality, occupation, \
@@ -2481,40 +2514,32 @@ pub async fn extract_from_text(
                              historicalNote\n\
                Organization: foundingDate, dissolutionDate, location, founder, orgType\n\n\
              IMPORTANT RULES:\n\
-             - Never create an entity whose name is a pronoun or generic role: \
-               do NOT use names like \"I\", \"me\", \"my\", \"he\", \"she\", \"they\", \
-               \"narrator\", \"author\", \"writer\", \"the author\", \"the narrator\", \
-               \"the writer\", \"speaker\", \"subject\".\n\
-             - If the text uses \"I\" or \"the author\" to refer to a named person, \
-               use that person's actual name as the entity name instead.\n\
-             - Only extract entities that have a real proper name or a specific \
-               organisation/place/event name.\n\
+             - Never create an entity whose name is a pronoun or generic role.\n\
+             - Only keep candidates that are real proper names, organisations, or places.\n\
              - Omit any field whose value is not clearly stated in the text.\n\n\
-             If no clear entities exist, return {{\"entities\":[]}}.\n\n\
+             If no candidates are real entities, return {{\"entities\":[]}}.\n\n\
              Text:\n{text}"
         )
     } else {
         let relation_list = RELATION_TYPES.join(", ");
         format!(
             "{section_context}\
+             {pronoun_context}\
              You are a precise knowledge extraction engine.\n\
-             Extract named entities and relationships from the text below. \
+             The following proper noun candidates were identified in the text.\n\
+             Classify each as a named entity (keep) or discard it if it is not a real entity,\n\
+             then extract relationships between kept entities.\n\
              List AT MOST {entity_cap} entities.\n\
-             Return ONLY valid JSON matching this schema (no markdown, no explanation):\n\
+             Return ONLY valid JSON (no markdown, no explanation):\n\
              {{\"entities\":[{{\"name\":\"...\",\"type\":\"...\",\"description\":\"1-2 sentences\"}},...],\
              \"relations\":[{{\"from\":\"entity name\",\"to\":\"entity name\",\"relation\":\"relation_type\"}},...]}}\n\n\
+             Candidates:\n{candidates_block}\n\n\
              Entity types: {entity_list}\n\
              Relation types: {relation_list}\n\n\
              IMPORTANT RULES:\n\
-             - Never create an entity whose name is a pronoun or generic role: \
-               do NOT use names like \"I\", \"me\", \"my\", \"he\", \"she\", \"they\", \
-               \"narrator\", \"author\", \"writer\", \"the author\", \"the narrator\", \
-               \"the writer\", \"speaker\", \"subject\".\n\
-             - If the text uses \"I\" or \"the author\" to refer to a named person, \
-               use that person's actual name as the entity name instead.\n\
-             - Only extract entities that have a real proper name or a specific \
-               organisation/place/event name.\n\n\
-             If no clear entities exist, return {{\"entities\":[],\"relations\":[]}}.\n\n\
+             - Never create an entity whose name is a pronoun or generic role.\n\
+             - Only keep candidates that are real proper names, organisations, or places.\n\n\
+             If no candidates are real entities, return {{\"entities\":[],\"relations\":[]}}.\n\n\
              Text:\n{text}"
         )
     };
