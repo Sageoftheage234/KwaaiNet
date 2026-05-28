@@ -3226,6 +3226,14 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                 }
                 println!(" done.");
 
+                // Clean up any dangling edges that pointed to deleted entities.
+                let dangling = store
+                    .prune_dangling_relations()
+                    .unwrap_or_else(|e| { eprintln!("  Warning: relation cleanup failed: {e}"); 0 });
+                if dangling > 0 {
+                    println!("  Dangling relations removed: {dangling}");
+                }
+
                 let remaining = store.all_entities().count();
                 print_success(&format!(
                     "Removed {removed} ghost entities ({remaining} remaining)."

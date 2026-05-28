@@ -2275,7 +2275,50 @@ impl GraphStore {
         wtxn.commit()?;
         self.nodes.remove(&entity_id);
         self.entity_to_chunks.remove(&entity_id);
+        self.adj.remove(&entity_id);
         Ok(())
+    }
+
+    /// Remove any relation from the DB and in-memory adj map where either endpoint entity
+    /// no longer exists in `self.nodes`. Call this after bulk entity deletion to avoid
+    /// dangling edges. Returns the number of relations removed.
+    pub fn prune_dangling_relations(&mut self) -> Result<usize> {
+        let all_rels: Vec<RelationRecord> = {
+            let rtxn = self.db.begin_read()?;
+            let table = rtxn.open_table(RELATIONS_TABLE)?;
+            table
+                .iter()?
+                .filter_map(|r| r.ok())
+                .filter_map(|(_, v)| serde_json::from_slice::<RelationRecord>(v.value()).ok())
+                .collect()
+        };
+
+        let mut to_delete: Vec<Vec<u8>> = Vec::new();
+        for rel in &all_rels {
+            if !self.nodes.contains_key(&rel.src_id) || !self.nodes.contains_key(&rel.dst_id) {
+                to_delete.push(relation_key(rel.src_id, rel.dst_id, &rel.relation_type));
+                // Remove from in-memory adj both directions.
+                if let Some(v) = self.adj.get_mut(&rel.src_id) {
+                    v.retain(|(dst, rtype, _)| *dst != rel.dst_id || rtype != &rel.relation_type);
+                }
+                if let Some(v) = self.adj.get_mut(&rel.dst_id) {
+                    v.retain(|(dst, rtype, _)| *dst != rel.src_id || rtype != &rel.relation_type);
+                }
+            }
+        }
+
+        let removed = to_delete.len();
+        if !to_delete.is_empty() {
+            let wtxn = self.db.begin_write()?;
+            {
+                let mut t = wtxn.open_table(RELATIONS_TABLE)?;
+                for k in &to_delete {
+                    t.remove(k.as_slice())?;
+                }
+            }
+            wtxn.commit()?;
+        }
+        Ok(removed)
     }
 
     /// Write a resolved schema.org type back to a stored entity without changing its entity_id.
