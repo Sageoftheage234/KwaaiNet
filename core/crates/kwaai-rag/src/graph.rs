@@ -2602,6 +2602,10 @@ pub async fn extract_from_text(
              IMPORTANT RULES:\n\
              - Never create an entity whose name is a pronoun or generic role.\n\
              - Only keep candidates that are real proper names, organisations, or places.\n\
+             - Entity names must be ≤ 5 words. If a candidate contains multiple names \
+separated by commas or 'and', extract each as its own entity.\n\
+             - Descriptions must contain at least one specific fact (date, place, role, or \
+relationship) from the text. Do not describe in generic terms.\n\
              - Omit any field whose value is not clearly stated in the text.\n\n\
              If no candidates are real entities, return {{\"entities\":[]}}.\n\n\
              Text:\n{text}"
@@ -2624,7 +2628,11 @@ pub async fn extract_from_text(
              Relation types: {relation_list}\n\n\
              IMPORTANT RULES:\n\
              - Never create an entity whose name is a pronoun or generic role.\n\
-             - Only keep candidates that are real proper names, organisations, or places.\n\n\
+             - Only keep candidates that are real proper names, organisations, or places.\n\
+             - Entity names must be ≤ 5 words. If a candidate contains multiple names \
+separated by commas or 'and', extract each as its own entity.\n\
+             - Descriptions must contain at least one specific fact (date, place, role, or \
+relationship) from the text. Do not describe in generic terms.\n\n\
              If no candidates are real entities, return {{\"entities\":[],\"relations\":[]}}.\n\n\
              Text:\n{text}"
         )

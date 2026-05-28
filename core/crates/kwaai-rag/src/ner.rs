@@ -102,8 +102,14 @@ fn core(word: &str) -> &str {
     word.trim_matches(|c: char| !c.is_alphanumeric())
 }
 
-fn ends_sentence(word: &str) -> bool {
-    matches!(word.chars().last(), Some('.' | '!' | '?'))
+/// Returns true when `word` ends a phrase — either a full sentence (`.!?`) or a
+/// list/clause separator (`,;:)"'`) that makes consecutive capitalized words
+/// belong to different named entities rather than one multi-word phrase.
+fn ends_phrase(word: &str) -> bool {
+    matches!(
+        word.chars().last(),
+        Some('.' | '!' | '?' | ',' | ';' | ':' | ')' | '"' | '\'')
+    )
 }
 
 fn is_stop_word(s: &str) -> bool {
@@ -138,8 +144,9 @@ pub fn extract_proper_noun_candidates(text: &str) -> Vec<String> {
             let mut j = i + 1;
 
             // Extend phrase across consecutive capitalised words, stopping at
-            // a sentence boundary (the previous word ended with . ! ?).
-            while j < n && !ends_sentence(words[j - 1]) {
+            // any phrase boundary (sentence-end or list separator) or at 5 words
+            // (entity names in this corpus never exceed 5 words).
+            while j < n && !ends_phrase(words[j - 1]) && parts.len() < 5 {
                 let nc = core(words[j]);
                 if nc.len() > 1 && nc.starts_with(|ch: char| ch.is_uppercase()) && !is_stop_word(nc)
                 {
@@ -302,6 +309,33 @@ mod tests {
             map.iter().any(|(p, n)| p == "she" && n == "Zainab"),
             "{map:?}"
         );
+    }
+
+    #[test]
+    fn ner_phrase_boundary_comma_list() {
+        // Comma-separated names must not merge into one giant phrase.
+        let text =
+            "The meeting was attended by Soviet Ambassador, Cissie Gool, Moses Kotane, Bill Andrews.";
+        let c = extract_proper_noun_candidates(text);
+        // Each name should be its own candidate
+        assert!(c.contains(&"Soviet Ambassador".to_string()), "{c:?}");
+        assert!(c.contains(&"Cissie Gool".to_string()), "{c:?}");
+        assert!(c.contains(&"Moses Kotane".to_string()), "{c:?}");
+        assert!(c.contains(&"Bill Andrews".to_string()), "{c:?}");
+        // The entire list must NOT be one merged candidate
+        assert!(
+            !c.iter()
+                .any(|s| s.contains("Soviet") && s.contains("Kotane")),
+            "merged phrase found: {c:?}"
+        );
+    }
+
+    #[test]
+    fn ner_phrase_boundary_five_word_cap() {
+        // A single run of six consecutive capitalized words must be capped at 5.
+        let text = "He studied at Royal Cape Town University Medical School annually.";
+        let c = extract_proper_noun_candidates(text);
+        assert!(c.iter().all(|p| p.split_whitespace().count() <= 5), "{c:?}");
     }
 
     #[test]

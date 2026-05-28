@@ -402,6 +402,10 @@ pub(crate) fn inject_entity_descriptions(
     graph: &GraphStore,
     pool: &mut Vec<RetrievedChunk>,
 ) {
+    // Set NO_INJECT=1 to disable injection for baseline Round 1 measurement.
+    if std::env::var("NO_INJECT").is_ok() {
+        return;
+    }
     let q_lower = query.to_lowercase();
     let is_relative_query = [
         "wife",

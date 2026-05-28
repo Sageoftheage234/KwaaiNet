@@ -114,7 +114,16 @@ pub async fn ingest_text(
     let ingested_at = MetaStore::now_rfc3339();
 
     for batch in chunks.chunks(cfg.upload_batch_size) {
-        let texts: Vec<&str> = batch.iter().map(|c| c.text.as_str()).collect();
+        // Prepend section name when available so the embedding carries chapter/section
+        // context and improves Round 1 retrieval for section-specific questions (1.5).
+        let embed_strings: Vec<String> = batch
+            .iter()
+            .map(|c| match c.section_name.as_deref() {
+                Some(s) if !s.is_empty() => format!("[{}] {}", s, c.text),
+                _ => c.text.clone(),
+            })
+            .collect();
+        let texts: Vec<&str> = embed_strings.iter().map(|s| s.as_str()).collect();
         let embeddings = cfg.embed.embed_batch(&texts).await?;
 
         let vectors: Vec<(i64, Vec<f32>)> = batch
