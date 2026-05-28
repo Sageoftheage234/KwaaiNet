@@ -3558,6 +3558,7 @@ async fn cmd_dream(action: DreamAction, kb: String) -> Result<()> {
                 dedup_threshold,
                 max_completions,
                 workers,
+                prune_threshold,
             } => {
                 let raw_urls: Vec<String> = {
                     let mut v: Vec<String> = inference_urls
@@ -3602,6 +3603,7 @@ async fn cmd_dream(action: DreamAction, kb: String) -> Result<()> {
                     dedup_threshold,
                     max_completions_per_cycle: max_completions,
                     workers,
+                    prune_threshold,
                     ..Default::default()
                 };
 

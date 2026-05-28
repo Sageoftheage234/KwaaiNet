@@ -1495,6 +1495,11 @@ pub enum DreamAction {
         /// Concurrent completion workers [default: 4]
         #[arg(long, default_value = "4", value_name = "N")]
         workers: usize,
+
+        /// Prune entities with no chunk evidence whose overall score is below this value.
+        /// Default (0.3) keeps type-only entities (33%); raise to 0.4 to prune them.
+        #[arg(long, default_value = "0.3", value_name = "FLOAT")]
+        prune_threshold: f32,
     },
 
     /// Show the last dream cycle report
