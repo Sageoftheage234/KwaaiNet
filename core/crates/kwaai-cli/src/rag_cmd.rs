@@ -2871,7 +2871,7 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                         .with_context(|| format!("embedding batch {}/{n_batches}", bi + 1))?;
                     let vectors: Vec<(i64, Vec<f32>)> = batch
                         .iter()
-                        .zip(embeddings.into_iter())
+                        .zip(embeddings)
                         .map(|((cid, _), emb)| (*cid, emb))
                         .collect();
 
