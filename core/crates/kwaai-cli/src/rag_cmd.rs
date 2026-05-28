@@ -2802,6 +2802,100 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                 println!("  Graph entity search now includes name tokens in the embedding.\n");
             }
 
+            GraphAction::ChunkTag { embed_url } => {
+                print_box_header(&format!("Graph Chunk-Tag ({})", kb));
+                let embed_url_str = embed_url.as_deref().unwrap_or("");
+                let embed = EmbedClient::new(
+                    if embed_url_str.is_empty() {
+                        None
+                    } else {
+                        Some(embed_url_str.to_string())
+                    },
+                    Some(rag_cfg.embed_model.clone()),
+                );
+                let graph = GraphStore::open(&rag_cfg.data_dir(), tenant_id)
+                    .context("opening graph store")?;
+                let meta = MetaStore::open(&rag_cfg.data_dir(), tenant_id)
+                    .context("opening meta store")?;
+
+                // Build (chunk_id, entity_name) pairs from the graph.
+                let mut pairs = graph.chunk_primary_entity_names();
+                pairs.sort_by_key(|(cid, _)| *cid);
+                let total = pairs.len();
+                println!("  Chunks linked to entities: {total}");
+
+                if total == 0 {
+                    println!("  Nothing to tag — run `rag graph build` first.\n");
+                    return Ok(());
+                }
+
+                // Collect all chunk IDs and resolve texts from MetaStore.
+                let ids: Vec<i64> = pairs.iter().map(|(cid, _)| *cid).collect();
+                let metas = meta.get_chunks(&ids).context("reading chunk metadata")?;
+
+                // Build tagged embed texts, skipping chunks not found in MetaStore.
+                let tagged: Vec<(i64, String)> = pairs
+                    .iter()
+                    .zip(metas.iter())
+                    .filter_map(|((cid, entity_name), opt_meta)| {
+                        let m = opt_meta.as_ref()?;
+                        Some((*cid, format!("[{entity_name}] {}", m.text)))
+                    })
+                    .collect();
+
+                let found = tagged.len();
+                let missing = total - found;
+                if missing > 0 {
+                    println!("  Chunks missing from meta store (skipped): {missing}");
+                }
+                println!("  Tagging and re-embedding {found} chunks…\n");
+
+                // Embed and upload in batches of 32.
+                const BATCH: usize = 32;
+                let mut uploaded_total = 0usize;
+                let batches: Vec<&[(i64, String)]> = tagged.chunks(BATCH).collect();
+                let n_batches = batches.len();
+
+                for (bi, batch) in batches.into_iter().enumerate() {
+                    let texts: Vec<&str> = batch.iter().map(|(_, t)| t.as_str()).collect();
+                    let embeddings = embed.embed_batch(&texts).await.with_context(|| {
+                        format!("embedding batch {}/{n_batches}", bi + 1)
+                    })?;
+                    let vectors: Vec<(i64, Vec<f32>)> = batch
+                        .iter()
+                        .zip(embeddings.into_iter())
+                        .map(|((cid, _), emb)| (*cid, emb))
+                        .collect();
+
+                    let n = match rag_cfg.storage_url.as_deref() {
+                        Some("local") => {
+                            let vs = open_local_vs(&rag_cfg.data_dir())?;
+                            vs.upload(tenant_id, &vectors).await?
+                        }
+                        Some(url) => {
+                            let http = reqwest::Client::new();
+                            http_upload_vectors(&http, url, tenant_id, vectors).await?
+                        }
+                        None => {
+                            let ep = eve_peer_id(&rag_cfg)?;
+                            let (client, _) = crate::vpk::p2p_connect().await?;
+                            rpc_upload_vectors(&client, &ep, tenant_id, vectors).await?
+                        }
+                    };
+                    uploaded_total += n;
+
+                    let done = (bi + 1) * BATCH;
+                    eprint!("\r  [{:>4}/{found}]  uploaded={uploaded_total}    ", done.min(found));
+                }
+                eprintln!();
+
+                print_success(&format!(
+                    "Tagged and re-embedded {uploaded_total} chunk vectors."
+                ));
+                println!("  Entity-linked chunks now carry [EntityName] prefix in their vector space.");
+                println!("  Run `rag eval` to measure recall improvement.\n");
+            }
+
             GraphAction::Seed { file, kb: _ } => {
                 print_box_header(&format!("Graph Seed ({})", kb));
 

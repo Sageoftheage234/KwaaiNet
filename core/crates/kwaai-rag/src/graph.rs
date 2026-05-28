@@ -2358,6 +2358,22 @@ impl GraphStore {
         self.chunk_to_entities.iter().map(|(&k, v)| (k, v))
     }
 
+    /// For each chunk linked to at least one entity, return (chunk_id, primary_entity_name).
+    /// Primary = the linked entity with the highest mention_count.
+    /// Chunks with no entity links are omitted.
+    pub fn chunk_primary_entity_names(&self) -> Vec<(i64, String)> {
+        self.chunk_to_entities
+            .iter()
+            .filter_map(|(&cid, eids)| {
+                let best = eids
+                    .iter()
+                    .filter_map(|&eid| self.nodes.get(&eid))
+                    .max_by_key(|n| n.mention_count)?;
+                Some((cid, best.name.clone()))
+            })
+            .collect()
+    }
+
     pub fn rebuild_in_memory(&mut self) -> Result<()> {
         self.nodes.clear();
         self.adj.clear();
