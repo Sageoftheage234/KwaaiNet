@@ -79,6 +79,8 @@
 | 35 | v0.4.80 | **M30 graph restored** (1905/6164 backup) — same graph as M29, no ghost prune. Ollama eval. | llama3.1:8b | **59.5%** (69/116) ← NEW BEST | — | **Ghost prune catastrophically reduced graph connectivity.** M30 graph with Ollama at 59.5% beats M22 (58.6%). Ghost entities (names in text, no chunk links) ARE useful — their graph relations create BFS traversal paths to real chunks. Removing 361 entities severed 2972 relations → 7pp regression. Lesson: ghost prune is harmful for hybrid retrieval. |
 | 36 | v0.4.80 | M30 graph — eval run 2 | llama3.1:8b | **57.8%** (67/116) | — | 3-run avg: (59.5+57.8+56.0)/3 = **57.8%** avg on M30 graph. True baseline with Ollama = ~58% ± 2pp. Matches M22 record. Ghost prune lesson: keeping ghost entities preserves graph connectivity → better retrieval. |
 | 37 | v0.4.80 | M30 graph — eval run 3 | llama3.1:8b | **56.0%** (65/116) | — | 3-run confirmed. Variance: 56.0–59.5pp (3.5pp spread). True mean ≈ 57.8%. |
+| 38 | v0.4.80 | M30 + **mode=auto** (vs iterative) | llama3.1:8b | **39.7%** (46/116) | — | Auto mode catastrophic vs iterative on this dataset (−18pp). Iterative multi-round gap-fill is essential for memoir content. |
+| 39 | v0.4.80 | M30 + **dream cycle --no-relations**. Plateau confirmed — 0 completions in 1.8s. All entities already have descriptions from M25-M29 cycles. | llama3.1:8b | — | — | Dream plateau at 56.5% health is real. M30 graph is ceiling with current approach. Config fixed: D6 inference_url → 11434. Next: investigate per-question failures, or consider mxbai-embed-large re-embed (M22 used mxbai, M25+ used nomic). |
 
 > Note: keyword hit rate varies ±4pp between runs of the same config due to LLM sampling. Milestones 12–13 are separate runs of the same stack; consider 48–50% the range for the current best config.
 
@@ -251,8 +253,10 @@ With k=30 chunks at ~300 chars each, 8192 chars only showed ~16/30 chunks. Raisi
 
 | Priority | Approach | Expected gain |
 |----------|----------|---------------|
-| High | **Dream cycles on M25 graph** — run 20–30 cycles on NER rebuild to prune noise entities (Alec Bedser, Emperor Hirohito etc.), reclassify 500+ Unknowns, enrich thin descriptions | +3–5pp, match/beat M22 |
-| High | **Graph noise from NER** — 2173 entities vs 1013 in M22; entity search is diluted and injecting off-topic entities. Dream pruning + sanitize will reduce this. Also consider raising dedup auto_threshold slightly. | Latency −30%, q12/q16/q20 fixed |
+| High | **M30 graph is working baseline** — 1905 entities, 6164 relations, ~57.8% avg (3-run). DO NOT ghost-prune. Graph connectivity is valuable. | Current best |
+| High | **mxbai-embed-large re-embed** — M22 used mxbai (1024-dim); M25+ used nomic (768-dim). Rebuilding KB with mxbai may push above 58.6%. Risk: full rebuild needed. | +1-3pp? |
+| Medium | **Per-question failure analysis** — get detailed per-question breakdown to find systematic failures. q04/q05/q07/q13/q20 are known weak spots. | Targeted fixes |
+| Medium | **Dream with wider threshold** — try `--threshold 0.7` to reattempt previously-good entities with a harder bar | Maybe 0 additional |
 | Medium | **M26 judge eval** — run with `--llm-judge` after dream cycles to measure structural improvement | Structural signal |
 | Medium | **Q5 (JMH Gool)** — 2/8 persistent failure; entity graph search returns wrong entity first. Investigate entity embedding for Haji Joosub Maulvi Hamid Gool. | +3–4 kw |
 | Medium | **Q16 (Gandhi/Gool)** — LLM hallucinated Gandhi as "scion of Gool-Rassool family". Gandhi entity description needs grounding from source text. | +2–3 kw |
