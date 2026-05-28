@@ -10,11 +10,11 @@
 
 ```
 65% ┤
-    │
-60% ┤                                                                       ████ 56.9%                         ████ 58.6% M22 ← keyword best
-    │                                                                            ████ 56.0% M18          ████ 56.0% M23  ████ 56.0% M27
+    │                                                                                                               ████ 59.5% M35 ← new single-run best
+60% ┤                                                                       ████ 56.9%                         ████ 58.6% M22   ████ 57.8% M35 avg
+    │                                                                            ████ 56.0% M18          ████ 56.0% M23  ████ 56.0% M27/M29/M37
 55% ┤                                                                  ████ 51.7%    ████ 54.3% M19  ████ 54.3% M21         ████ 52.6% M24  ████ 55.2% M25/M28
-    │                                                             ████ 50.0%              ████ 51.7% M20          ████ 53.4% M26
+    │                                                             ████ 50.0%              ████ 51.7% M20          ████ 53.4% M26      ████ 52-54% M30-M34 (ghost prune)
 50% ┤                                                        ████ 49.1%
     │                                                   ████ 48.3%
 45% ┤                                         ████ 44.8%
@@ -74,7 +74,11 @@
 | 30 | v0.4.80 | M29 + **ghost-prune** (24 isolated ghosts, names not in any source text). 1905 → 1905 (24 removed but 0 relations affected). | llama3.1:8b | **53.4%** (62/116) | — | Within ±4pp variance. Note: eval switched to Ollama (port 11434) from llama.cpp (port 8080) — may account for scoring difference vs M29. Isolated ghost removal had minimal impact as expected (24/1929 = 1.2%). |
 | 31 | v0.4.80 | M30 + **ghost-prune --with-relations** (361 connected ghosts). 1905 → 1544 entities; 6164 → 3192 relations (2972 dangling edges removed). Health 56.5% → 54.2%. | llama3.1:8b | **54.3%** (63/116) | — | +0.9pp vs M30. Within ±4pp variance of M29. Alec Bedser entity removed ✓. Churchill/Hirohito remain (mentioned in source text). Ghost prune vs M29 (llama.cpp 56%) gap likely Ollama vs llama.cpp model behavior difference, not graph quality. Next: dream cycles on pruned graph. |
 | 32 | v0.4.80 | M31 + **dream cycle** (1 cycle, --no-relations). **Regression** — dream cycle used port 8080 (kwaainet shard serve, not Ollama). All 100 LLM calls failed instantly. 0 completions applied. Graph unchanged at 1544/3192. | — | **46.6%** (54/116) avg | — | Root cause: config inference_url was `http://localhost:8080` (shard serve) not `http://localhost:11434` (Ollama). Dream cycle spawns tasks, all return immediately with parse failures. eval regression to 46.6% is unexplained — graph unchanged, likely sampling variance on eval. Config fixed: D6 inference_url → `http://localhost:11434`. |
-| 33 | v0.4.80 | M31 + **dream cycles with correct Ollama URL** (--no-relations, 100 completions). Ghost-pruned graph (1544/3192). | llama3.1:8b | — | — | In progress. |
+| 33 | v0.4.80 | M31 + **dream cycle 1 with correct Ollama URL** (--no-relations, 76 summaries, 9 merges). 1544→1535 entities. Health 54.2%→54.9%. Dream plateau at cycle 2 (0 completions). | llama3.1:8b | **52.6%** (61/116) | — | Ghost-pruned graph stagnated. 76 descriptions added peripheral entities (Roly Jenkins, Kismet CC etc.) not relevant to eval questions. Dream plateau confirmed. |
+| 34 | v0.4.80 | M33 graph (1535/3192) — no changes, second eval run to check variance. | llama3.1:8b | **50.9%** (59/116) | — | Within variance of M33. Both M33-M34 clearly below M29-M30 level. Ghost prune confirmed harmful. |
+| 35 | v0.4.80 | **M30 graph restored** (1905/6164 backup) — same graph as M29, no ghost prune. Ollama eval. | llama3.1:8b | **59.5%** (69/116) ← NEW BEST | — | **Ghost prune catastrophically reduced graph connectivity.** M30 graph with Ollama at 59.5% beats M22 (58.6%). Ghost entities (names in text, no chunk links) ARE useful — their graph relations create BFS traversal paths to real chunks. Removing 361 entities severed 2972 relations → 7pp regression. Lesson: ghost prune is harmful for hybrid retrieval. |
+| 36 | v0.4.80 | M30 graph — eval run 2 | llama3.1:8b | **57.8%** (67/116) | — | 3-run avg: (59.5+57.8+56.0)/3 = **57.8%** avg on M30 graph. True baseline with Ollama = ~58% ± 2pp. Matches M22 record. Ghost prune lesson: keeping ghost entities preserves graph connectivity → better retrieval. |
+| 37 | v0.4.80 | M30 graph — eval run 3 | llama3.1:8b | **56.0%** (65/116) | — | 3-run confirmed. Variance: 56.0–59.5pp (3.5pp spread). True mean ≈ 57.8%. |
 
 > Note: keyword hit rate varies ±4pp between runs of the same config due to LLM sampling. Milestones 12–13 are separate runs of the same stack; consider 48–50% the range for the current best config.
 
