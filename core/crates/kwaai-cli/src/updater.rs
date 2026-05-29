@@ -260,7 +260,7 @@ impl UpdateChecker {
             let ps1_content = format!(
                 "Start-Sleep -Seconds 3\r\n\
                  Get-Process kwaainet,p2pd -ErrorAction SilentlyContinue | Stop-Process -Force\r\n\
-                 Start-Sleep -Seconds 2\r\n\
+                 Start-Sleep -Seconds 5\r\n\
                  $ErrorActionPreference = 'Stop'\r\n\
                  $zip  = '{zip_str}'\r\n\
                  $dest = '{dir_str}'\r\n\
@@ -269,7 +269,16 @@ impl UpdateChecker {
                  Expand-Archive -LiteralPath $zip -DestinationPath $tmp -Force\r\n\
                  Get-ChildItem -Path $tmp -Recurse -Include {file_include} | ForEach-Object {{\r\n\
                    $target = Join-Path $dest $_.Name\r\n\
-                   Move-Item -Path $_.FullName -Destination $target -Force\r\n\
+                   $retries = 0\r\n\
+                   while ($retries -lt 5) {{\r\n\
+                     try {{\r\n\
+                       Move-Item -Path $_.FullName -Destination $target -Force -ErrorAction Stop\r\n\
+                       break\r\n\
+                     }} catch {{\r\n\
+                       $retries++\r\n\
+                       Start-Sleep -Seconds 2\r\n\
+                     }}\r\n\
+                   }}\r\n\
                    Add-Content -Path '{log_str}' -Value ('Installed ' + $_.Name)\r\n\
                  }}\r\n\
                  Remove-Item $zip -Force -ErrorAction SilentlyContinue\r\n\
