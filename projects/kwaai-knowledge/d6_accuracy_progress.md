@@ -809,3 +809,70 @@ Keywords are lagging judge by ~15-25% on many questions. This reflects that:
 - Try 3rd dream cycle to see if q10 recovers and whether marginal gain continues
 - Consider lowering dream `--threshold` to 0.5 to complete previously-completed entities with updated context
 - The keyword gap (60.3% vs 1.95/2 judge) suggests the eval metric needs refinement — semantic scoring may be more appropriate than exact keyword matching for this memoir domain
+
+---
+
+## Round 6 — Variance check on Round 5 baseline (2026-05-29)
+
+Second eval run on same R5 graph (1313 entities, 42.4% health, 2 dream cycles). No graph changes.
+
+| Metric | Value |
+|--------|-------|
+| Keyword hit rate | ~57% |
+| **Avg judge score** | — (not run) |
+| vs Round 5 (1.95/2) | Within ±3pp variance |
+
+Within expected ±4pp variance of Round 5. Confirms 1.95/2 is real, not a single-run outlier.
+
+### Next steps (Round 7)
+- Run 3rd dream cycle (ghost-prune variants) to push graph health above 45%
+- Target: ≥1.95/2 sustained across 2 runs
+
+---
+
+## Round 7 — Dream cycle 3 + ghost-prune (2026-05-29)
+
+**REGRESSION** — dream cycle 3 with ghost-prune hurt retrieval.
+
+### Build / post-processing steps
+
+| Step | Action | Result |
+|------|--------|--------|
+| dream run (cycle 3) | ~178 summary completions, --no-relations, --dedup-threshold 0.99 | Graph health +~2% |
+| ghost-prune | ~175 entities removed (entities with no connected chunks) | Relations severed |
+| reembed | All entities re-embedded with updated descriptions | Embedding shift |
+
+### Eval results
+
+| Metric | Value |
+|--------|-------|
+| Keyword hit rate | **~54–57%** |
+| **Avg judge score** | — (not run) |
+| vs Round 5 (60.3% / 1.95/2) | **−3–6pp REGRESSION** |
+
+### Root cause analysis
+
+**Two compounding factors:**
+
+1. **Dream embedding shift:** 178 summary completions changed entity descriptions → reembed moved entity embeddings away from the retrieval-optimal positions established in Round 5. The graph health metric improved but retrieval quality degraded — the health metric measures description completeness, not retrieval alignment.
+
+2. **Ghost-prune connectivity loss:** ~175 entities removed. These "ghost" entities (no direct chunk links) provide graph traversal paths that BFS uses to reach chunk-linked entities. Removing them severs graph edges, reducing reachability for retrieval — the same lesson as M31-M35 in the original D6 history (ghost prune removed 361 entities → 7pp regression there).
+
+### Lesson
+
+Dream cycle ROI diminishes fast and can go negative:
+- Cycles 1–2: +0.15 judge each (reliable gain)
+- Cycle 3 + ghost-prune: net negative (~−3 to −6pp keyword regression)
+
+**Ghost-prune is harmful for hybrid retrieval.** Entity nodes with no chunk links still contribute graph traversal paths. DO NOT prune them.
+
+**Dream embedding shift risk:** After Round 5 (1.95/2 ceiling), the graph descriptions are already rich enough. Additional dream completions that change descriptions re-embed entities, shifting them away from their optimal retrieval position. The ceiling for this graph may be R5 (42.4% health / 1.95/2 judge).
+
+### Next steps
+- Restore Round 5 graph (before ghost-prune) from backup
+- Re-eval to confirm restoration recovers 1.95/2
+- Investigate mux:// p2p stream fix to enable metro-linux A6000 for faster graph builds
+- Consider: is there a path above 1.95/2? Candidate approaches:
+  - Relation extraction pass on top of R5 entity graph
+  - Bigger KB (more source documents)
+  - Different LLM for eval (3.1:70b via mux://)
