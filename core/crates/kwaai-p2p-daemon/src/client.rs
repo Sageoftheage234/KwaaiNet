@@ -72,10 +72,7 @@ impl AsyncWrite for P2PStream {
         }
     }
 
-    fn poll_flush(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<std::io::Result<()>> {
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         match &mut self.0 {
             DaemonStream::Tcp(tcp) => Pin::new(tcp).poll_flush(cx),
             #[cfg(unix)]
@@ -83,10 +80,7 @@ impl AsyncWrite for P2PStream {
         }
     }
 
-    fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<std::io::Result<()>> {
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         match &mut self.0 {
             DaemonStream::Tcp(tcp) => Pin::new(tcp).poll_shutdown(cx),
             #[cfg(unix)]
