@@ -2368,6 +2368,8 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                 let ids: Vec<i64> = all_chunks.iter().map(|(id, _)| *id).collect();
 
                 let build_start = std::time::Instant::now();
+                let progress_path = rag_cfg.data_dir().join("graph-build-progress.json");
+                let started_at = chrono::Utc::now().to_rfc3339();
                 kwaai_rag::ingestion::extract_and_store_entities_pub(
                     &chunks,
                     &ids,
@@ -2375,10 +2377,14 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                     &graph_cfg,
                     Some(std::sync::Arc::new(move |done: usize, total: usize, entities: usize, relations: usize| {
                         let elapsed = build_start.elapsed().as_secs_f64();
-                        let eta_str = if done > 0 && done < total {
-                            let rate = elapsed / done as f64;
-                            let remaining = rate * (total - done) as f64;
-                            format!("  ETA {:.0}s", remaining)
+                        let rate = if done > 0 { done as f64 / elapsed } else { 0.0 };
+                        let eta_secs = if rate > 0.0 && done < total {
+                            (total - done) as f64 / rate
+                        } else {
+                            0.0
+                        };
+                        let eta_str = if eta_secs > 0.0 {
+                            format!("  ETA {:.0}s", eta_secs)
                         } else {
                             String::new()
                         };
@@ -2387,6 +2393,14 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                         );
                         if done == total {
                             eprintln!();
+                        }
+                        // Write progress JSON every 10 chunks (and on completion).
+                        if done % 10 == 0 || done == total {
+                            let json = format!(
+                                "{{\"chunks_done\":{done},\"chunks_total\":{total},\"entities\":{entities},\"relations\":{relations},\"elapsed_secs\":{elapsed:.1},\"chunks_per_sec\":{rate:.2},\"eta_secs\":{eta_secs:.0},\"started_at\":\"{started_at}\",\"updated_at\":\"{}\"}}\n",
+                                chrono::Utc::now().to_rfc3339()
+                            );
+                            let _ = std::fs::write(&progress_path, json.as_bytes());
                         }
                     })),
                 )
