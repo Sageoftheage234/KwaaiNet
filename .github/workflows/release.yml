@@ -792,7 +792,6 @@ jobs:
             kwaai-p2p-daemon \
             kwaai-distributed \
             kwaai-wasm \
-            kwaai-storage \
             kwaai-rag \
             kwaainet; do
             echo "=== publishing ${crate} ==="
