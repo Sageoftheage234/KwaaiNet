@@ -1883,7 +1883,101 @@ impl GraphStore {
                     if normalize_name(&na.name) == normalize_name(&nb.name) {
                         continue; // exact matches handled by Tier 1
                     }
-                    let sim = cosine_sim_f32(&na.embedding, &nb.embedding);
+                    let mut sim = cosine_sim_f32(&na.embedding, &nb.embedding);
+                    if sim < threshold {
+                        continue;
+                    }
+                    // Guard: shared single-token dominance causes false high similarity.
+                    // Three cases:
+                    //   (a) Same surname: "Helen Abrahams" / "Hassen Abrahams".
+                    //       Also catches hyphenated extensions: "Gool" / "Gool-Ebrahim".
+                    //   (b) Same prefix/first-name: "Auntie Annie" / "Auntie Minnie",
+                    //       "Cecil Rhodes" / "Cecil Wightman".  Uses 33% threshold so
+                    //       short suffixes like "Annie"/"Minnie" (dist=2, max=6) are caught.
+                    //   (c) 3-token names with no shared distinctive token (> 4 chars):
+                    //       "Cecil John Rhodes" / "Rev John Phillips" — "John" (4 chars)
+                    //       doesn't qualify, so they cap even though last tokens differ.
+                    {
+                        let wa: Vec<&str> = na.name.split_whitespace().collect();
+                        let wb: Vec<&str> = nb.name.split_whitespace().collect();
+
+                        // Blob guard: a 4+-token entity is likely a multi-person
+                        // extraction artifact; don't auto-merge with a short name.
+                        if (wa.len() >= 4) != (wb.len() >= 4) {
+                            sim = sim.min(0.96);
+                        }
+
+                        // Gender guard: "Mr X" and "Mrs X" are different people.
+                        if wa.len() >= 2 && wb.len() >= 2 {
+                            let male_h = ["mr", "sir"];
+                            let female_h = ["mrs", "miss", "ms"];
+                            let ha = wa[0].to_lowercase();
+                            let hb = wb[0].to_lowercase();
+                            if (male_h.contains(&ha.as_str()) && female_h.contains(&hb.as_str()))
+                                || (female_h.contains(&ha.as_str())
+                                    && male_h.contains(&hb.as_str()))
+                            {
+                                sim = sim.min(0.96);
+                            }
+                        }
+
+                        if wa.len() >= 2 && wb.len() >= 2 {
+                            let first_a = wa[0].to_lowercase();
+                            let first_b = wb[0].to_lowercase();
+                            let last_a = wa.last().unwrap().to_lowercase();
+                            let last_b = wb.last().unwrap().to_lowercase();
+
+                            // (a) Same last token or hyphenated extension → surname dominates
+                            let last_matches = last_a == last_b
+                                || (last_b.contains('-')
+                                    && last_b.starts_with(last_a.as_str()))
+                                || (last_a.contains('-')
+                                    && last_a.starts_with(last_b.as_str()));
+                            if last_matches {
+                                let max_len = first_a.len().max(first_b.len());
+                                let dist = levenshtein_distance(&first_a, &first_b);
+                                if max_len > 2 && dist * 2 >= max_len {
+                                    sim = sim.min(0.96);
+                                }
+                            }
+
+                            // (b) Same first token → prefix/first-name dominates (33% threshold)
+                            if first_a == first_b {
+                                let max_len = last_a.len().max(last_b.len());
+                                let dist = levenshtein_distance(&last_a, &last_b);
+                                if max_len > 2 && dist * 3 >= max_len {
+                                    sim = sim.min(0.96);
+                                }
+                            }
+
+                            // (c) Both ≥ 3 tokens, first AND last differ, no shared
+                            //     distinctive middle token → cap
+                            if wa.len() >= 3 && wb.len() >= 3
+                                && first_a != first_b
+                                && last_a != last_b
+                            {
+                                let wa_set: std::collections::HashSet<String> =
+                                    wa.iter().map(|s| s.to_lowercase()).collect();
+                                let wb_set: std::collections::HashSet<String> =
+                                    wb.iter().map(|s| s.to_lowercase()).collect();
+                                let has_shared_distinctive =
+                                    wa_set.intersection(&wb_set).any(|t| t.len() > 4);
+                                if !has_shared_distinctive {
+                                    sim = sim.min(0.96);
+                                }
+                            }
+
+                            // (d) Cross-position shared token: "Hamid Khan" / "Abdul Hamid"
+                            //     share "hamid" at last_a == first_b; "Dullah Omar" /
+                            //     "Omar Khayyam" share "omar" at last_a == first_b.
+                            //     These are almost always different people.
+                            let cross_pos = (last_a.len() > 3 && last_a == first_b)
+                                || (first_a.len() > 3 && first_a == last_b);
+                            if cross_pos {
+                                sim = sim.min(0.96);
+                            }
+                        }
+                    }
                     if sim < threshold {
                         continue;
                     }
@@ -1953,6 +2047,23 @@ impl GraphStore {
                     };
                     if normalize_name(&na.name) == normalize_name(&nc.name) {
                         continue; // Tier 1 handles exact matches
+                    }
+                    // Don't merge Mr X with Mrs X — different people.
+                    let leading = |n: &str| {
+                        normalize_name(n)
+                            .split_whitespace()
+                            .next()
+                            .unwrap_or("")
+                            .to_string()
+                    };
+                    let ha = leading(&na.name);
+                    let hc = leading(&nc.name);
+                    let male_h = ["mr", "sir"];
+                    let female_h = ["mrs", "miss", "ms"];
+                    if (male_h.contains(&ha.as_str()) && female_h.contains(&hc.as_str()))
+                        || (female_h.contains(&ha.as_str()) && male_h.contains(&hc.as_str()))
+                    {
+                        continue;
                     }
                     let key = ord_pair(alias, canonical);
                     if seen.insert(key) {
@@ -2080,6 +2191,50 @@ impl GraphStore {
                             continue;
                         }
                         if edit_distance(&norm_a, &norm_b) <= 2 {
+                            let wa_v: Vec<&str> = norm_a.split_whitespace().collect();
+                            let wb_v: Vec<&str> = norm_b.split_whitespace().collect();
+                            // Skip when only short leading tokens differ: "ms gool" ≠ "ah gool"
+                            if wa_v.len() >= 2 && wb_v.len() >= 2
+                                && wa_v[0] != wb_v[0]
+                                && wa_v[0].len() <= 3 && wb_v[0].len() <= 3
+                                && wa_v[1..] == wb_v[1..]
+                            {
+                                continue;
+                            }
+                            // Skip when same surname but differing leading initials:
+                            // "jmh gool" ≠ "a h gool" — different family members.
+                            if wa_v.len() >= 2 && wb_v.len() >= 2 {
+                                let last_a = *wa_v.last().unwrap();
+                                let last_b = *wb_v.last().unwrap();
+                                if last_a == last_b && last_a.len() >= 4 {
+                                    let all_init_a =
+                                        wa_v[..wa_v.len() - 1].iter().all(|t| t.len() <= 3);
+                                    let all_init_b =
+                                        wb_v[..wb_v.len() - 1].iter().all(|t| t.len() <= 3);
+                                    if all_init_a && all_init_b {
+                                        let mut sa: Vec<&&str> =
+                                            wa_v[..wa_v.len() - 1].iter().collect();
+                                        let mut sb: Vec<&&str> =
+                                            wb_v[..wb_v.len() - 1].iter().collect();
+                                        sa.sort();
+                                        sb.sort();
+                                        if sa != sb {
+                                            continue;
+                                        }
+                                    }
+                                }
+                            }
+                            // Apply same-first-token structural guard as Tier 2:
+                            // "auntie annie" / "auntie minnie" — same prefix, different suffix.
+                            if wa_v.len() >= 2 && wb_v.len() >= 2 && wa_v[0] == wb_v[0] {
+                                let last_a = wa_v.last().unwrap();
+                                let last_b = wb_v.last().unwrap();
+                                let max_len = last_a.len().max(last_b.len());
+                                let dist = levenshtein_distance(last_a, last_b);
+                                if max_len > 2 && dist * 3 >= max_len {
+                                    continue;
+                                }
+                            }
                             let (alias, canonical) = if na.name.len() > nb.name.len()
                                 || (na.name.len() == nb.name.len()
                                     && na.mention_count >= nb.mention_count)
@@ -2658,7 +2813,14 @@ the author. Only extract proper names (first name + surname, or a well-known sin
              - If a name appears ONLY as the author of a literary work being read or cited \
 (e.g. Chekhov, Dickens, Shaw) it is NOT an entity in this memoir text — skip it.\n\
              - Collective nouns (\"the servants\", \"the uncles\", \"the family\") and bare \
-titles (\"the Imam\", \"the Doctor\") are not Person entities.\n\n\
+titles (\"the Imam\", \"the Doctor\") are not Person entities.\n\
+             - Do NOT extract: common English words (Many, Such, One, Moreover, Sometime, \
+Alas, Half, How, When), ethnic/racial adjectives used as nouns (German, French, Russian, \
+Jewish, Moslem, Xhosa, Pathan, Slavic, Aryan, Non-White), group nouns (Royal Family, \
+Killers), vehicles (Black Maria), or fictional characters from other works (Hamlet, \
+Cassandra) unless they are real people explicitly named in this memoir.\n\
+             - Do NOT fuse a fictional character with its author: \"King Lear\" and \
+\"William Shakespeare\" are separate entities — do not output \"King Lear William Shakespeare\".\n\n\
              If no candidates are real entities, return {{\"entities\":[]}}.\n\n\
              Text:\n{text}"
         )
@@ -2705,7 +2867,14 @@ relations from two people being mentioned in the same paragraph.\n\
              - Two people who share a common spouse are NOT `sibling_of` or `spouse_of` \
 each other — use `associated_with` at most.\n\
              - Do not create relations to generic roles (\"Dad\", \"Granny\") or to a person \
-who appears only as an author of a literary work.\n\n\
+who appears only as an author of a literary work.\n\
+             - Do NOT extract: common English words (Many, Such, One, Moreover, Sometime, \
+Alas, Half, When), ethnic/racial adjectives used as nouns (German, French, Russian, \
+Jewish, Moslem, Xhosa, Pathan, Slavic, Non-White), group nouns (Royal Family), \
+vehicles (Black Maria), or fictional characters from other works (Hamlet, Cassandra) \
+unless they are real people explicitly named in this memoir.\n\
+             - Do NOT fuse a fictional character with its author: keep them as separate \
+entities or omit the fictional one entirely.\n\n\
              If no candidates are real entities, return {{\"entities\":[],\"relations\":[]}}.\n\n\
              Text:\n{text}"
         )
@@ -2806,13 +2975,14 @@ who appears only as an author of a literary work.\n\n\
 /// Fix PDF-extraction underscore artifacts in entity names extracted by the LLM.
 ///
 /// PDF text extraction commonly produces:
-///   "Dr_"      instead of "Dr."   (period after title/initial → underscore)
-///   "J_ M_"    instead of "J. M." (initials lose their periods)
+///   "Dr_"       instead of "Dr."    (period after title → underscore)
+///   "J_ M_"     instead of "J. M."  (spaced initials)
+///   "M_K_"      instead of "M.K."   (chained initials)
 ///   "Wooding_s" instead of "Wooding's" (apostrophe-s → underscore-s)
 ///
 /// Rules applied in order:
 ///   1. `WORD_s` at a word boundary → `WORD's`   (possessive/contraction)
-///   2. `LETTER_` followed by space, end, or another initial pattern → `LETTER.`
+///   2. `_` preceded by a letter and followed by whitespace, end, or uppercase → `.`
 ///   3. Remaining lone underscores → stripped
 fn clean_entity_name(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
@@ -2835,20 +3005,16 @@ fn clean_entity_name(name: &str) -> String {
                     continue;
                 }
             }
-            // Rule 2: single letter before `_`, followed by space/end/next initial
-            let prev_is_single_letter = out
+            // Rule 2: `_` preceded by a letter and followed by whitespace, end,
+            // or an uppercase letter (chained initials like M_K_ → M.K.) → period
+            let prev_is_alpha = out
                 .chars()
                 .last()
                 .map(|p| p.is_alphabetic())
-                .unwrap_or(false)
-                && !out.is_empty()
-                && {
-                    // check the previous char was preceded by a space or start
-                    let ob: &[u8] = out.as_bytes();
-                    ob.len() == 1 || ob[ob.len() - 2] == b' ' || ob[ob.len() - 2] == b'.'
-                };
-            let next_is_space_or_end = i + 1 >= n || chars[i + 1] == ' ';
-            if prev_is_single_letter && next_is_space_or_end {
+                .unwrap_or(false);
+            let next_is_break_or_initial =
+                i + 1 >= n || chars[i + 1] == ' ' || chars[i + 1].is_uppercase();
+            if prev_is_alpha && next_is_break_or_initial {
                 out.push('.');
                 i += 1;
                 continue;
@@ -2891,6 +3057,26 @@ fn cosine_sim_f32(a: &[f32], b: &[f32]) -> f32 {
     (dot / (na * nb)).clamp(-1.0, 1.0) as f32
 }
 
+fn levenshtein_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let (m, n) = (a.len(), b.len());
+    let mut prev: Vec<usize> = (0..=n).collect();
+    let mut curr = vec![0usize; n + 1];
+    for i in 1..=m {
+        curr[0] = i;
+        for j in 1..=n {
+            curr[j] = if a[i - 1] == b[j - 1] {
+                prev[j - 1]
+            } else {
+                1 + prev[j - 1].min(prev[j]).min(curr[j - 1])
+            };
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[n]
+}
+
 fn update_adj(
     adj: &mut HashMap<i64, Vec<(i64, String, f32)>>,
     from: i64,
@@ -2903,5 +3089,40 @@ fn update_adj(
         entry[pos].2 = strength;
     } else {
         entry.push((to, rel.to_string(), strength));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_clean_entity_name_chained_initials() {
+        assert_eq!(clean_entity_name("M_K_ Gandhi"), "M.K. Gandhi");
+        assert_eq!(clean_entity_name("E_S_ Reddy"), "E.S. Reddy");
+        assert_eq!(clean_entity_name("J_ M_ H_ Gool"), "J. M. H. Gool");
+        assert_eq!(clean_entity_name("Mrs_ Wo"), "Mrs. Wo");
+        assert_eq!(clean_entity_name("Joe Rassool_s"), "Joe Rassool's");
+        assert_eq!(clean_entity_name("Tykie_s"), "Tykie's");
+        // Clean names pass through unchanged
+        assert_eq!(clean_entity_name("Gandhi"), "Gandhi");
+        assert_eq!(clean_entity_name("Goolam Gool"), "Goolam Gool");
+    }
+
+    #[test]
+    fn test_levenshtein_distance() {
+        assert_eq!(levenshtein_distance("helen", "hassen"), 3);
+        assert_eq!(levenshtein_distance("yousuf", "yousuf"), 0);
+        assert_eq!(levenshtein_distance("hassen", "hassan"), 1);
+        assert_eq!(levenshtein_distance("", "abc"), 3);
+        assert_eq!(levenshtein_distance("abc", ""), 3);
+        // "helen" vs "hassen": dist=3, max=6 → 3*2=6 >= 6 → would cap sim
+        let dist = levenshtein_distance("helen", "hassen");
+        let max_len = "helen".len().max("hassen".len());
+        assert!(dist * 2 >= max_len, "Helen/Hassen should trigger same-surname guard");
+        // "hassen" vs "hassan": dist=1, max=6 → 1*2=2 < 6 → would NOT cap
+        let dist2 = levenshtein_distance("hassen", "hassan");
+        let max2 = "hassen".len().max("hassan".len());
+        assert!(dist2 * 2 < max2, "Hassen/Hassan variant spelling should not be capped");
     }
 }

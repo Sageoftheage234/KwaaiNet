@@ -241,20 +241,87 @@ pub async fn extract_and_store_entities_pub(
 
             let mut entity_ids_for_chunk = Vec::new();
             for (extracted, emb) in res.entities.iter().zip(res.embeddings) {
-                // Drop generic family roles and pronouns that slip through the LLM prompt.
+                // Drop generic family roles, pronouns, collective labels, and common words
+                // that slip through the LLM prompt despite the extraction rules.
                 const GENERIC_ROLE_BLOCKLIST: &[&str] = &[
+                    // Generic family roles
                     "granny", "gran", "grandma", "grandfather", "grandpa", "gramps",
                     "dad", "daddy", "father", "mother", "mom", "mum", "mama",
                     "uncle", "auntie", "aunt", "cousin", "son", "daughter",
+                    // Pronouns / self-reference
                     "me", "i", "he", "she", "they", "we",
                     "the narrator", "the author", "narrator", "author",
+                    // Political/ideological concepts extracted as persons
+                    "herrenvolk", "apartheid", "coloured", "coloureds", "blacks",
+                    "whites", "indians", "africans", "europeans",
+                    "non-white", "non-european", "cape malay", "cape malay_indian",
+                    "pathan", "xhosa", "slavic", "hungarian", "jewish",
+                    "aryan", "moslem", "muslim",
+                    // Ethnic/national adjectives used as nouns
+                    "german", "french", "russian", "british", "english",
+                    // Common English words mistakenly extracted as persons
+                    "everything", "something", "nothing", "anything",
+                    "there", "here", "this", "that", "these", "those",
+                    "each", "every", "all", "none", "some", "any", "both",
+                    "one", "many", "such", "how", "when", "moreover", "sometime",
+                    "alas", "half",
+                    // Plural family/group names (not individuals)
+                    "gools", "rassools", "goldings", "killers", "stranglers",
+                    "royal family",
+                    // Possessives / corrupted text artifacts
+                    "mr.", "mr_", "rev.", "rev_", "dr.", "dr_",
+                    // Abstract / non-human concepts
+                    "god", "allah", "lord", "devil", "fate", "nature",
+                    "y_allah", "y allah",
+                    // Islamic honorifics extracted as standalone entities
+                    "hadji", "haji", "hajj", "maulvi", "molvi", "imam", "sheikh",
+                    // Vehicles / objects mistaken for persons
+                    "black maria",
+                    // Fictional / out-of-context characters (LLM hallucinations)
+                    "captain america", "captain marvel", "captain britain",
+                    "superman", "batman", "spiderman", "spider-man",
+                    "hamlet", "cassandra",
+                    // More family role variants
+                    "mommy", "mummy",
+                    // Common words / abbreviations extracted as persons
+                    "then", "tb", "cac", "gandhian",
+                    // Fused bad extractions
+                    "berlin hitler", "mom ayesha",
                 ];
                 let name_lc = extracted.name.to_lowercase();
                 let name_lc = name_lc.trim();
                 if GENERIC_ROLE_BLOCKLIST.contains(&name_lc) {
                     continue;
                 }
-                let eid = entity_id(&extracted.name, &extracted.entity_type);
+                // Drop entities whose name starts with a sentence-opening word —
+                // these are extraction artifacts where the LLM grabbed a phrase
+                // fragment ("When Auntie Jolly", "That Mr Smith", etc.).
+                const SENTENCE_STARTERS: &[&str] = &[
+                    "when", "where", "while", "that", "this", "those", "these",
+                    "what", "which", "who", "whom", "whose", "how", "why",
+                    "if", "although", "because", "since", "after", "before",
+                    "as", "and", "but", "or", "nor", "so", "yet", "for",
+                    "the", "a", "an",
+                ];
+                let first_word = name_lc.split_whitespace().next().unwrap_or("");
+                if SENTENCE_STARTERS.contains(&first_word) {
+                    continue;
+                }
+                // Strip trailing possessive 's / 's from entity names so
+                // "Ebrahim's" and "Khalifa's" don't persist as separate entities.
+                let clean_name = extracted
+                    .name
+                    .trim_end_matches("'s")
+                    .trim_end_matches("\u{2019}s") // right single quotation mark
+                    .trim_end_matches("s'")        // plural possessive
+                    .trim()
+                    .to_string();
+                let extracted_name = if clean_name.is_empty() {
+                    extracted.name.as_str()
+                } else {
+                    &clean_name
+                };
+                let eid = entity_id(extracted_name, &extracted.entity_type);
                 // Build FieldValue map: wrap each extracted string value with chunk provenance.
                 let fields: HashMap<String, FieldValue> = extracted
                     .fields
@@ -263,8 +330,11 @@ pub async fn extract_and_store_entities_pub(
                     .map(|(k, v)| (k.clone(), FieldValue::new(v.clone(), res.chunk_id)))
                     .collect();
                 let description = {
-                    let from_fields =
-                        description_from_fields(&extracted.name, &extracted.entity_type, &fields);
+                    let from_fields = description_from_fields(
+                        extracted_name,
+                        &extracted.entity_type,
+                        &fields,
+                    );
                     if from_fields.is_empty() {
                         extracted.description.clone()
                     } else {
@@ -273,7 +343,7 @@ pub async fn extract_and_store_entities_pub(
                 };
                 let node = EntityNode {
                     id: eid,
-                    name: extracted.name.clone(),
+                    name: extracted_name.to_string(),
                     entity_type: extracted.entity_type.clone(),
                     description,
                     embedding: emb,
