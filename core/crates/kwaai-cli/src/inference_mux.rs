@@ -23,7 +23,7 @@ use std::{
     collections::HashMap,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc,
+        Arc, OnceLock,
     },
 };
 use tokio::{
@@ -197,20 +197,19 @@ async fn handle_mux_stream_server(stream: TcpStream) {
     }
 }
 
+static OLLAMA_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+fn ollama_client() -> &'static reqwest::Client {
+    OLLAMA_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+            .expect("build reqwest client")
+    })
+}
+
 async fn call_ollama_local(req: &MuxRequest) -> MuxResponse {
-    let client = match reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            return MuxResponse {
-                request_id: req.request_id,
-                status: 503,
-                body: format!("reqwest init: {e}").into_bytes(),
-            }
-        }
-    };
+    let client = ollama_client();
 
     let url = format!("http://127.0.0.1:11434{}", req.path);
     let method: reqwest::Method = req.method.parse().unwrap_or(reqwest::Method::POST);
@@ -455,15 +454,41 @@ async fn handle_mux_proxy_connection(
     shared: SharedMuxClient,
     peer_id: PeerId,
 ) {
-    let mut buf = vec![0u8; 4 * 1024 * 1024];
-    let n = match tokio::time::timeout(std::time::Duration::from_secs(10), stream.read(&mut buf))
-        .await
-    {
-        Ok(Ok(n)) if n > 0 => n,
-        _ => return,
+    // Two-phase read — same approach as ollama_proxy::handle_connection.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+    let mut buf: Vec<u8> = Vec::with_capacity(64 * 1024);
+
+    let header_end = loop {
+        if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+            break pos;
+        }
+        let mut tmp = [0u8; 16 * 1024];
+        match tokio::time::timeout_at(deadline, stream.read(&mut tmp)).await {
+            Ok(Ok(0)) | Ok(Err(_)) | Err(_) => return,
+            Ok(Ok(n)) => buf.extend_from_slice(&tmp[..n]),
+        }
     };
 
-    let (method, path, body) = match parse_http_request(&buf[..n]) {
+    let content_length: usize = std::str::from_utf8(&buf[..header_end])
+        .unwrap_or("")
+        .lines()
+        .find(|l| l.to_ascii_lowercase().starts_with("content-length:"))
+        .and_then(|l| l.splitn(2, ':').nth(1))
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(0);
+
+    let total = header_end + 4 + content_length;
+    while buf.len() < total {
+        let mut tmp = [0u8; 16 * 1024];
+        let want = (total - buf.len()).min(tmp.len());
+        match tokio::time::timeout_at(deadline, stream.read(&mut tmp[..want])).await {
+            Ok(Ok(0)) | Err(_) => break,
+            Ok(Ok(n)) => buf.extend_from_slice(&tmp[..n]),
+            Ok(Err(_)) => return,
+        }
+    }
+
+    let (method, path, body) = match parse_http_request(&buf) {
         Some(t) => t,
         None => {
             let _ = stream

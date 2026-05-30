@@ -549,6 +549,11 @@ pub async fn run_node(config: &KwaaiNetConfig) -> Result<()> {
         )
         .await;
 
+    // Inference-mux server — persistent multiplexed stream handler.
+    // Registering here means any node running `kwaainet start` supports
+    // `mux://PEER_ID` in --inference-urls, not just shard-serve nodes.
+    let _ = crate::inference_mux::start_inference_mux_server(&mut client).await;
+
     // -----------------------------------------------------------------------
     // Step 4: Wait for DHT bootstrap (intelligent polling)
     // -----------------------------------------------------------------------
