@@ -2894,6 +2894,7 @@ entities or omit the fictional one entirely.\n\n\
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.1,
         "max_tokens": 1024,
+        "options": {"num_ctx": 8192},
     });
 
     let send_result = tokio::time::timeout(
