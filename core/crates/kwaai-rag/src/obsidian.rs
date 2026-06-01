@@ -17,19 +17,30 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 
 use crate::embedder::EmbedClient;
-use crate::graph::{entity_id, EntityNode, GraphStore};
+use crate::graph::{clean_entity_name, entity_id, EntityNode, GraphStore};
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 fn slug(name: &str) -> String {
-    name.chars()
-        .map(|c| {
-            // Keep period so "P.V. Tobias" → "P.V. Tobias.md" not "P_V_ Tobias.md"
-            if c.is_alphanumeric() || c == ' ' || c == '-' || c == '.' {
+    // Apply full entity-name normalisation so DB names with OCR underscores
+    // (e.g. "Yousuf _Joe_ Rassool", "Grandpa_s daughter") produce clean filenames.
+    let cleaned = clean_entity_name(name);
+    cleaned
+        .chars()
+        .map(|c| match c {
+            // Normalise typographic single quotes (from PDF OCR) to ASCII apostrophe
+            '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}' => '\'',
+            c if c.is_alphanumeric()
+                || c == ' '
+                || c == '-'
+                || c == '.'
+                || c == '('
+                || c == ')'
+                || c == '\'' =>
+            {
                 c
-            } else {
-                '_'
             }
+            _ => '_',
         })
         .collect::<String>()
         .trim()

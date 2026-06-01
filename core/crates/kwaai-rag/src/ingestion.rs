@@ -587,10 +587,49 @@ pub async fn extract_and_store_entities_pub(
                 }
                 // Normalise OCR underscore artifacts: J_ M_ H_ → J. M. H., M_K_ → M.K.
                 // Rule: `_` preceded by a letter AND followed by space/end/uppercase → `.`
-                // Rule: `_s` at word boundary → `'s`  (possessive)
-                // Remaining underscores are stripped.
+                // Pre-pass: ` _Word_ ` → ` (Word) ` parenthetical nicknames.
+                // Then: `_s` at word boundary → `'s`, initials `M_K_` → `M.K.`,
+                // remaining underscores stripped.
                 let name_normalised = {
-                    let raw = &extracted.name;
+                    // parenthetical pre-pass
+                    let paren_fixed = {
+                        let mut result = extracted.name.clone();
+                        loop {
+                            let b = result.as_bytes().to_vec();
+                            let mut found: Option<(usize, usize)> = None;
+                            let mut ii = 0;
+                            while ii < b.len() {
+                                if b[ii] == b'_' && (ii == 0 || b[ii - 1] == b' ') {
+                                    let mut jj = ii + 1;
+                                    while jj < b.len() {
+                                        if b[jj] == b'_'
+                                            && jj > ii + 1
+                                            && (jj + 1 >= b.len() || b[jj + 1] == b' ')
+                                        {
+                                            found = Some((ii, jj));
+                                            break;
+                                        }
+                                        jj += 1;
+                                    }
+                                }
+                                if found.is_some() {
+                                    break;
+                                }
+                                ii += 1;
+                            }
+                            match found {
+                                Some((open, close)) => {
+                                    let content = result[open + 1..close].to_string();
+                                    result = format!(
+                                        "{}({}){}", &result[..open], content, &result[close + 1..]
+                                    );
+                                }
+                                None => break,
+                            }
+                        }
+                        result
+                    };
+                    let raw = &paren_fixed;
                     let chars: Vec<char> = raw.chars().collect();
                     let n = chars.len();
                     let mut s = String::with_capacity(raw.len());

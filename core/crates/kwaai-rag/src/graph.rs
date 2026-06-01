@@ -3020,7 +3020,49 @@ entities or omit the fictional one entirely.\n\n\
 ///   1. `WORD_s` at a word boundary → `WORD's`   (possessive/contraction)
 ///   2. `_` preceded by a letter and followed by whitespace, end, or uppercase → `.`
 ///   3. Remaining lone underscores → stripped
-fn clean_entity_name(name: &str) -> String {
+pub fn clean_entity_name(name: &str) -> String {
+    // Pre-pass: normalise typographic single quotes (PDF OCR) to ASCII apostrophe,
+    // then convert OCR parenthetical patterns " _Word_ " → " (Word) "
+    let name_owned;
+    let name = {
+        let mut result: String = name
+            .chars()
+            .map(|c| match c {
+                '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}' => '\'',
+                other => other,
+            })
+            .collect();
+        loop {
+            let b = result.as_bytes().to_vec();
+            let mut found: Option<(usize, usize)> = None;
+            let mut i = 0;
+            while i < b.len() {
+                if b[i] == b'_' && (i == 0 || b[i - 1] == b' ') {
+                    let mut j = i + 1;
+                    while j < b.len() {
+                        if b[j] == b'_' && j > i + 1 && (j + 1 >= b.len() || b[j + 1] == b' ') {
+                            found = Some((i, j));
+                            break;
+                        }
+                        j += 1;
+                    }
+                }
+                if found.is_some() {
+                    break;
+                }
+                i += 1;
+            }
+            match found {
+                Some((open, close)) => {
+                    let content = result[open + 1..close].to_string();
+                    result = format!("{}({}){}", &result[..open], content, &result[close + 1..]);
+                }
+                None => break,
+            }
+        }
+        name_owned = result;
+        name_owned.as_str()
+    };
     let mut out = String::with_capacity(name.len());
     let chars: Vec<char> = name.chars().collect();
     let n = chars.len();
@@ -3143,6 +3185,20 @@ mod tests {
         // Clean names pass through unchanged
         assert_eq!(clean_entity_name("Gandhi"), "Gandhi");
         assert_eq!(clean_entity_name("Goolam Gool"), "Goolam Gool");
+    }
+
+    #[test]
+    fn test_clean_entity_name_unicode_quotes() {
+        // U+2019 right single quotation mark (PDF apostrophe)
+        assert_eq!(clean_entity_name("Grandpa\u{2019}s daughter"), "Grandpa's daughter");
+        assert_eq!(clean_entity_name("Granny\u{2019}s niece"), "Granny's niece");
+        assert_eq!(clean_entity_name("Y\u{2019}Allah"), "Y'Allah");
+        // U+2018/U+2019 as nickname delimiters
+        assert_eq!(clean_entity_name("Pharaoh \u{2018}Cheops\u{2019}"), "Pharaoh 'Cheops'");
+        // underscore possessive still works
+        assert_eq!(clean_entity_name("Grandpa_s daughter"), "Grandpa's daughter");
+        // parenthetical
+        assert_eq!(clean_entity_name("Yousuf _Joe_ Rassool"), "Yousuf (Joe) Rassool");
     }
 
     #[test]
