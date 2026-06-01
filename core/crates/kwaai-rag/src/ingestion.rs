@@ -585,28 +585,85 @@ pub async fn extract_and_store_entities_pub(
                 if SENTENCE_STARTERS.contains(&first_word) {
                     continue;
                 }
-                // Normalise OCR underscore artifacts in entity names returned by the LLM.
-                // In this corpus `_` replaces `.` in initials (J_ M_ H_ → J. M. H.).
+                // Normalise OCR underscore artifacts: J_ M_ H_ → J. M. H., M_K_ → M.K.
+                // Rule: `_` preceded by a letter AND followed by space/end/uppercase → `.`
+                // Rule: `_s` at word boundary → `'s`  (possessive)
+                // Remaining underscores are stripped.
                 let name_normalised = {
-                    let mut s = extracted.name.replace("_ ", ". ");
-                    if s.ends_with('_') {
-                        s.pop();
-                        s.push('.');
+                    let raw = &extracted.name;
+                    let chars: Vec<char> = raw.chars().collect();
+                    let n = chars.len();
+                    let mut s = String::with_capacity(raw.len());
+                    let mut i = 0;
+                    while i < n {
+                        let c = chars[i];
+                        if c == '_' {
+                            // `_s` at word boundary → `'s`
+                            if i + 1 < n && chars[i + 1] == 's' {
+                                let after = i + 2;
+                                if after >= n
+                                    || !chars[after].is_alphabetic()
+                                    || chars[after].is_uppercase()
+                                {
+                                    s.push('\'');
+                                    s.push('s');
+                                    i += 2;
+                                    continue;
+                                }
+                            }
+                            // `_` preceded by letter, followed by space/end/uppercase → `.`
+                            let prev_alpha =
+                                s.chars().last().map(|p| p.is_alphabetic()).unwrap_or(false);
+                            let next_break =
+                                i + 1 >= n || chars[i + 1] == ' ' || chars[i + 1].is_uppercase();
+                            if prev_alpha && next_break {
+                                s.push('.');
+                            }
+                            // else: strip (leading `_`, lowercase-followed, etc.)
+                        } else {
+                            s.push(c);
+                        }
+                        i += 1;
                     }
-                    s
+                    s.split_whitespace().collect::<Vec<_>>().join(" ")
                 };
                 // Strip trailing possessive 's / 's from entity names so
                 // "Ebrahim's" and "Khalifa's" don't persist as separate entities.
-                let clean_name = name_normalised
+                let after_possessive = name_normalised
                     .trim_end_matches("'s")
                     .trim_end_matches("\u{2019}s") // right single quotation mark
                     .trim_end_matches("s'") // plural possessive
                     .trim()
                     .to_string();
+                // Strip trailing sentence fragments the LLM accidentally appended:
+                // "Aminabhen Please" → "Aminabhen", guards single-word names.
+                const TRAILING_JUNK: &[&str] = &[
+                    "please", "thank", "thanks", "yes", "no", "too", "also", "only", "said",
+                    "asked", "replied", "told", "wrote", "was", "is", "are", "the", "a", "an",
+                    "and", "but", "or", "for", "to", "of", "in", "on", "at", "with", "from", "by",
+                    "as", "his", "her", "their",
+                ];
+                let clean_name = {
+                    let mut s = after_possessive;
+                    loop {
+                        let words: Vec<&str> = s.split_whitespace().collect();
+                        if words.len() <= 1 {
+                            break;
+                        }
+                        let last = words.last().unwrap().to_lowercase();
+                        if TRAILING_JUNK.contains(&last.as_str()) {
+                            let trim_to = s.len() - words.last().unwrap().len();
+                            s = s[..trim_to].trim_end().to_string();
+                        } else {
+                            break;
+                        }
+                    }
+                    s
+                };
                 let extracted_name = if clean_name.is_empty() {
                     name_normalised.as_str()
                 } else {
-                    &clean_name
+                    clean_name.as_str()
                 };
                 let eid = entity_id(extracted_name, &extracted.entity_type);
                 // Build FieldValue map: wrap each extracted string value with chunk provenance.

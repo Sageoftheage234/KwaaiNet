@@ -1932,10 +1932,16 @@ impl GraphStore {
                                 || (last_b.contains('-') && last_b.starts_with(last_a.as_str()))
                                 || (last_a.contains('-') && last_a.starts_with(last_b.as_str()));
                             if last_matches {
-                                let max_len = first_a.len().max(first_b.len());
-                                let dist = levenshtein_distance(&first_a, &first_b);
-                                if max_len > 2 && dist * 2 >= max_len {
-                                    sim = sim.min(0.96);
+                                // Don't cap when one side has an abbreviated/initial first token
+                                // (e.g. "A.H." or "AH" vs "Abdul Hamid") — let embedding decide.
+                                let a_is_abbrev = first_a.len() <= 2 || first_a.contains('.');
+                                let b_is_abbrev = first_b.len() <= 2 || first_b.contains('.');
+                                if !a_is_abbrev && !b_is_abbrev {
+                                    let max_len = first_a.len().max(first_b.len());
+                                    let dist = levenshtein_distance(&first_a, &first_b);
+                                    if max_len > 2 && dist * 2 >= max_len {
+                                        sim = sim.min(0.96);
+                                    }
                                 }
                             }
 
@@ -2728,16 +2734,10 @@ impl GraphStore {
 
 /// Extract entities and relations from a chunk of text using the local LLM.
 /// Returns `Ok((entities, relations))` or `Ok(([], []))` on parse failure so
-/// Normalise OCR underscores in proper-noun candidates before sending to the LLM.
-/// In this corpus `_` replaces `.` in abbreviated initials: `J_ M_ H_` → `J. M. H.`
-/// We replace every `_ ` (underscore-space) with `. ` and every trailing `_` with `.`.
+/// Normalise OCR underscore artifacts in proper-noun candidates before sending to the LLM.
+/// Delegates to `clean_entity_name` which handles all patterns: `J_ M_ H_`, `M_K_`, `Dr_`.
 fn normalize_underscores(s: &str) -> String {
-    let mut out = s.replace("_ ", ". ");
-    if out.ends_with('_') {
-        out.pop();
-        out.push('.');
-    }
-    out
+    clean_entity_name(s)
 }
 
 /// ingestion can continue without hard errors.
