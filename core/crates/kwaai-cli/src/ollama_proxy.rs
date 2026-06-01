@@ -272,7 +272,7 @@ async fn handle_connection(
         .unwrap_or("")
         .lines()
         .find(|l| l.to_ascii_lowercase().starts_with("content-length:"))
-        .and_then(|l| l.splitn(2, ':').nth(1))
+        .and_then(|l| l.split_once(':').map(|x| x.1))
         .and_then(|v| v.trim().parse().ok())
         .unwrap_or(0);
 

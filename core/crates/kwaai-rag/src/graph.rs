@@ -1929,10 +1929,8 @@ impl GraphStore {
 
                             // (a) Same last token or hyphenated extension → surname dominates
                             let last_matches = last_a == last_b
-                                || (last_b.contains('-')
-                                    && last_b.starts_with(last_a.as_str()))
-                                || (last_a.contains('-')
-                                    && last_a.starts_with(last_b.as_str()));
+                                || (last_b.contains('-') && last_b.starts_with(last_a.as_str()))
+                                || (last_a.contains('-') && last_a.starts_with(last_b.as_str()));
                             if last_matches {
                                 let max_len = first_a.len().max(first_b.len());
                                 let dist = levenshtein_distance(&first_a, &first_b);
@@ -1952,7 +1950,8 @@ impl GraphStore {
 
                             // (c) Both ≥ 3 tokens, first AND last differ, no shared
                             //     distinctive middle token → cap
-                            if wa.len() >= 3 && wb.len() >= 3
+                            if wa.len() >= 3
+                                && wb.len() >= 3
                                 && first_a != first_b
                                 && last_a != last_b
                             {
@@ -2194,9 +2193,11 @@ impl GraphStore {
                             let wa_v: Vec<&str> = norm_a.split_whitespace().collect();
                             let wb_v: Vec<&str> = norm_b.split_whitespace().collect();
                             // Skip when only short leading tokens differ: "ms gool" ≠ "ah gool"
-                            if wa_v.len() >= 2 && wb_v.len() >= 2
+                            if wa_v.len() >= 2
+                                && wb_v.len() >= 2
                                 && wa_v[0] != wb_v[0]
-                                && wa_v[0].len() <= 3 && wb_v[0].len() <= 3
+                                && wa_v[0].len() <= 3
+                                && wb_v[0].len() <= 3
                                 && wa_v[1..] == wb_v[1..]
                             {
                                 continue;
@@ -2853,8 +2854,7 @@ Regrettably, Science, Several, Soon, Still, Tell, Whether, Worse.\n\
              Text:\n{text}"
         )
     } else {
-        let person_only =
-            entity_types.len() == 1 && entity_types[0].eq_ignore_ascii_case("Person");
+        let person_only = entity_types.len() == 1 && entity_types[0].eq_ignore_ascii_case("Person");
         let relation_list = if person_only {
             PERSON_RELATION_TYPES.join(", ")
         } else {
@@ -2917,10 +2917,7 @@ entities or omit the fictional one entirely.\n\n\
         )
     };
 
-    let url = format!(
-        "{}/api/chat",
-        inference_url.trim_end_matches('/')
-    );
+    let url = format!("{}/api/chat", inference_url.trim_end_matches('/'));
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(120))
         .connect_timeout(std::time::Duration::from_secs(10))
@@ -2972,9 +2969,7 @@ entities or omit the fictional one entirely.\n\n\
             }
         };
 
-    let content = v["message"]["content"]
-        .as_str()
-        .unwrap_or("{}");
+    let content = v["message"]["content"].as_str().unwrap_or("{}");
     let cleaned = content
         .trim()
         .trim_start_matches("```json")
@@ -3160,10 +3155,16 @@ mod tests {
         // "helen" vs "hassen": dist=3, max=6 → 3*2=6 >= 6 → would cap sim
         let dist = levenshtein_distance("helen", "hassen");
         let max_len = "helen".len().max("hassen".len());
-        assert!(dist * 2 >= max_len, "Helen/Hassen should trigger same-surname guard");
+        assert!(
+            dist * 2 >= max_len,
+            "Helen/Hassen should trigger same-surname guard"
+        );
         // "hassen" vs "hassan": dist=1, max=6 → 1*2=2 < 6 → would NOT cap
         let dist2 = levenshtein_distance("hassen", "hassan");
         let max2 = "hassen".len().max("hassan".len());
-        assert!(dist2 * 2 < max2, "Hassen/Hassan variant spelling should not be capped");
+        assert!(
+            dist2 * 2 < max2,
+            "Hassen/Hassan variant spelling should not be capped"
+        );
     }
 }
