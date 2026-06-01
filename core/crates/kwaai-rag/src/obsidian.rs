@@ -24,7 +24,8 @@ use crate::graph::{entity_id, EntityNode, GraphStore};
 fn slug(name: &str) -> String {
     name.chars()
         .map(|c| {
-            if c.is_alphanumeric() || c == ' ' || c == '-' {
+            // Keep period so "P.V. Tobias" → "P.V. Tobias.md" not "P_V_ Tobias.md"
+            if c.is_alphanumeric() || c == ' ' || c == '-' || c == '.' {
                 c
             } else {
                 '_'
@@ -32,6 +33,7 @@ fn slug(name: &str) -> String {
         })
         .collect::<String>()
         .trim()
+        .trim_matches('.')
         .to_string()
 }
 
