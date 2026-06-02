@@ -1947,8 +1947,24 @@ impl GraphStore {
                         (Some(x), Some(y)) => (x, y),
                         _ => continue,
                     };
+                    // Gate A: cross-type pairs are never merged (Person ≠ Place, etc.)
+                    if na.entity_type != nb.entity_type {
+                        continue;
+                    }
+                    // Gate B: explicit disambiguation markers mean distinct individuals
+                    if has_disambiguation_token(&na.name) || has_disambiguation_token(&nb.name) {
+                        continue;
+                    }
                     if normalize_name(&na.name) == normalize_name(&nb.name) {
                         continue; // exact matches handled by Tier 1
+                    }
+                    // Gate C: names must be string-similar before paying the cost of
+                    // embedding comparison — prevents merging on description similarity alone.
+                    const JW_DEDUP_GATE: f32 = 0.60;
+                    if jaro_winkler(&normalize_name(&na.name), &normalize_name(&nb.name))
+                        < JW_DEDUP_GATE
+                    {
+                        continue;
                     }
                     let mut sim = cosine_sim_f32(&na.embedding, &nb.embedding);
                     if sim < threshold {
@@ -3203,6 +3219,73 @@ fn relation_key(src: i64, dst: i64, rel_type: &str) -> Vec<u8> {
     k.extend_from_slice(&dst.to_le_bytes());
     k.extend_from_slice(rel_type.as_bytes());
     k
+}
+
+/// Jaro-Winkler string similarity in [0, 1]. Applied as a name-level gate in Tier 2
+/// dedup before the more expensive cosine similarity check. Operates on char sequences.
+fn jaro_winkler(s1: &str, s2: &str) -> f32 {
+    let c1: Vec<char> = s1.chars().collect();
+    let c2: Vec<char> = s2.chars().collect();
+    let (l1, l2) = (c1.len(), c2.len());
+    if l1 == 0 && l2 == 0 {
+        return 1.0;
+    }
+    if l1 == 0 || l2 == 0 {
+        return 0.0;
+    }
+    if c1 == c2 {
+        return 1.0;
+    }
+    let win = (l1.max(l2) / 2).saturating_sub(1);
+    let mut m1 = vec![false; l1];
+    let mut m2 = vec![false; l2];
+    let mut matches = 0usize;
+    for i in 0..l1 {
+        let lo = i.saturating_sub(win);
+        let hi = (i + win + 1).min(l2);
+        for j in lo..hi {
+            if !m2[j] && c1[i] == c2[j] {
+                m1[i] = true;
+                m2[j] = true;
+                matches += 1;
+                break;
+            }
+        }
+    }
+    if matches == 0 {
+        return 0.0;
+    }
+    let mut t = 0usize;
+    let mut k = 0usize;
+    for i in 0..l1 {
+        if m1[i] {
+            while !m2[k] {
+                k += 1;
+            }
+            if c1[i] != c2[k] {
+                t += 1;
+            }
+            k += 1;
+        }
+    }
+    let m = matches as f64;
+    let jaro = (m / l1 as f64 + m / l2 as f64 + (m - t as f64 / 2.0) / m) / 3.0;
+    let prefix = c1.iter().zip(c2.iter()).take(4).take_while(|(a, b)| a == b).count();
+    (jaro + prefix as f64 * 0.1 * (1.0 - jaro)) as f32
+}
+
+/// Returns true if the name carries an explicit disambiguation marker that means it
+/// refers to a distinct individual and should never be auto-merged with a similarly-
+/// named entity (e.g. "John Smith (novelist)" or "John Smith III").
+fn has_disambiguation_token(name: &str) -> bool {
+    let t = name.trim_end();
+    if t.ends_with(')') && t.rfind('(').map_or(false, |p| p > 0) {
+        return true;
+    }
+    matches!(
+        name.split_whitespace().last().unwrap_or(""),
+        "II" | "III" | "IV" | "VI" | "VII" | "VIII" | "IX"
+    )
 }
 
 fn cosine_sim_f32(a: &[f32], b: &[f32]) -> f32 {
