@@ -343,7 +343,18 @@ pub fn description_from_fields(
         .filter_map(|(key, _)| {
             fields
                 .get(*key)
-                .filter(|fv| !fv.value.is_empty())
+                .filter(|fv| {
+                    if fv.value.is_empty() {
+                        return false;
+                    }
+                    // Drop placeholder values the LLM emits when it has no evidence.
+                    !matches!(
+                        fv.value.to_lowercase().trim(),
+                        "unknown" | "undefined" | "n/a" | "none" | "not stated"
+                            | "not specified" | "not mentioned" | "not known"
+                            | "not applicable" | "unspecified"
+                    )
+                })
                 .map(|fv| format!("{}: {}", key, fv.value))
         })
         .collect();
@@ -2873,6 +2884,20 @@ impl GraphStore {
         ids: &[i64],
         embed: &crate::embedder::EmbedClient,
     ) -> Result<usize> {
+        // Re-derive description from structured fields so that placeholder values
+        // ("unknown", "undefined", etc.) are stripped by description_from_fields().
+        // This is a no-op for entities whose fields are empty (prose-only descriptions).
+        for id in ids {
+            if let Some(node) = self.nodes.get_mut(id) {
+                if !node.fields.is_empty() {
+                    let fresh = description_from_fields(&node.name, &node.entity_type, &node.fields);
+                    if !fresh.is_empty() {
+                        node.description = fresh;
+                    }
+                }
+            }
+        }
+
         let texts: Vec<String> = ids
             .iter()
             .map(|id| {
