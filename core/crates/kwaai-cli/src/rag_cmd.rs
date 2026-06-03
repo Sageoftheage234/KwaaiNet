@@ -603,6 +603,7 @@ async fn cmd_ingest(
                 no_relations: false,
                 context_window: 1,
                 gliner_client: None,
+                entity_centric: false,
             });
             print_info("Entity extraction enabled — knowledge graph will be updated");
         }
@@ -1711,6 +1712,7 @@ async fn cmd_rebuild(
                 graph_window,
                 sample_pct,
                 gliner_url: None,
+                entity_centric: false,
             },
             kb.clone(),
         )
@@ -2024,6 +2026,7 @@ async fn run_sync_pass(
                     no_relations: false,
                     context_window: 1,
                     gliner_client: None,
+                    entity_centric: false,
                 });
             }
         }
@@ -2225,6 +2228,7 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                 reset_graph,
                 sample_pct,
                 gliner_url,
+                entity_centric,
             } => {
                 let raw_infer_url = inference_url.unwrap_or_else(|| rag_cfg.inference_url.clone());
                 let raw_extra_urls: Vec<String> = inference_urls
@@ -2369,6 +2373,7 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                     no_relations,
                     context_window: graph_window,
                     gliner_client,
+                    entity_centric,
                 };
 
                 let chunks: Vec<kwaai_rag::chunker::Chunk> = all_chunks

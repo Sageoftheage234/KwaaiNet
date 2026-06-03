@@ -42,6 +42,10 @@ pub struct GraphIngestConfig {
     /// Optional GLiNER NER client. When set, person spans are detected before each LLM
     /// call and injected as high-confidence hints into the extraction prompt.
     pub gliner_client: Option<GliNERClient>,
+    /// When true, use entity-centric extraction: GLiNER scans all chunks first to
+    /// collect unique person names, then one focused LLM call is made per name with
+    /// aggregated multi-chunk context. Requires gliner_client to be set.
+    pub entity_centric: bool,
 }
 
 impl GraphIngestConfig {
@@ -197,6 +201,10 @@ pub async fn extract_and_store_entities_pub(
     graph_cfg: &GraphIngestConfig,
     progress: Option<Arc<dyn Fn(usize, usize, usize, usize) + Send + Sync>>,
 ) {
+    if graph_cfg.entity_centric {
+        extract_entity_centric(chunks, chunk_ids, embed, graph_cfg, progress).await;
+        return;
+    }
     let total = chunks.len();
     let urls = Arc::new(graph_cfg.effective_urls());
     let url_counter = Arc::new(AtomicUsize::new(0));
@@ -1138,4 +1146,209 @@ fn apply_doc_meta(
         }
     }
     chunks
+}
+
+// ── Entity-centric extraction ─────────────────────────────────────────────────
+
+/// Build the text window for a single chunk center with adjacent context.
+fn window_text(chunks: &[Chunk], center: usize, window: usize) -> String {
+    if window == 0 {
+        return chunks[center].text.clone();
+    }
+    let start = center.saturating_sub(window);
+    let end = (center + window + 1).min(chunks.len());
+    chunks[start..end]
+        .iter()
+        .map(|c| c.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n[...]\n\n")
+}
+
+/// Entity-centric extraction.
+///
+/// Phase 1 — GLiNER scans every chunk window to build `name → [chunk_indices]`.
+/// Phase 2 — For each unique name, aggregate up to MAX_SOURCE_CHUNKS distinct
+///            chunk windows, make one focused LLM call, and store the result.
+///
+/// Requires `--gliner-url`. Prints comparison metrics on completion.
+async fn extract_entity_centric(
+    chunks: &[Chunk],
+    _chunk_ids: &[i64],
+    embed: &EmbedClient,
+    graph_cfg: &GraphIngestConfig,
+    progress: Option<Arc<dyn Fn(usize, usize, usize, usize) + Send + Sync>>,
+) {
+    const MAX_SOURCE_CHUNKS: usize = 3;
+
+    let gliner = match graph_cfg.gliner_client.as_ref() {
+        Some(g) => g,
+        None => {
+            warn!("--entity-centric requires --gliner-url; aborting entity-centric run");
+            return;
+        }
+    };
+
+    let total = chunks.len();
+    let cw = graph_cfg.context_window;
+
+    // ── Phase 1: GLiNER scan ──────────────────────────────────────────────────
+    let mut entity_to_chunks: std::collections::HashMap<String, Vec<usize>> =
+        std::collections::HashMap::new();
+    for (i, _) in chunks.iter().enumerate() {
+        let text = window_text(chunks, i, cw);
+        for span in gliner.person_spans(&text).await {
+            entity_to_chunks.entry(span).or_default().push(i);
+        }
+    }
+    let unique_names: Vec<(String, Vec<usize>)> = entity_to_chunks.into_iter().collect();
+    let n_unique = unique_names.len();
+    info!(
+        "entity-centric phase 1: {} unique spans in {} chunks",
+        n_unique, total
+    );
+    println!("  EC phase 1: {n_unique} unique GLiNER spans → one LLM call each");
+
+    // ── Phase 2: per-entity LLM calls ────────────────────────────────────────
+    let urls = Arc::new(graph_cfg.effective_urls());
+    let url_counter = Arc::new(AtomicUsize::new(0));
+    let model = Arc::new(graph_cfg.model.clone());
+    let store = graph_cfg.store.clone();
+    let workers = graph_cfg.workers.max(1);
+    let no_relations = graph_cfg.no_relations;
+    let et_owned: Arc<Vec<String>> = Arc::new(graph_cfg.entity_types.clone());
+
+    let llm_calls = Arc::new(AtomicUsize::new(0));
+    let context_chars = Arc::new(AtomicUsize::new(0));
+
+    let sem = Arc::new(tokio::sync::Semaphore::new(workers));
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<ChunkResult>(workers.max(4) * 4);
+
+    // Drain: build EntityNode from each extracted entity and upsert into graph.
+    let drain_store = store.clone();
+    let done_ctr = Arc::new(AtomicUsize::new(0));
+    let drain = {
+        let done_ctr = done_ctr.clone();
+        tokio::spawn(async move {
+            while let Some(res) = rx.recv().await {
+                let mut g = match drain_store.lock() {
+                    Ok(g) => g,
+                    Err(_) => { warn!("graph mutex poisoned"); continue; }
+                };
+                for (extracted, emb) in res.entities.iter().zip(res.embeddings.iter()) {
+                    let fields: std::collections::HashMap<String, crate::graph::FieldValue> =
+                        extracted.fields.iter().map(|(k, v)| {
+                            (k.clone(), crate::graph::FieldValue {
+                                value: v.clone(),
+                                evidence_chunk_ids: vec![],
+                                confidence: 1.0,
+                            })
+                        }).collect();
+                    let description = {
+                        let from_fields = crate::graph::description_from_fields(
+                            &extracted.name, &extracted.entity_type, &fields,
+                        );
+                        if from_fields.is_empty() { extracted.description.clone() } else { from_fields }
+                    };
+                    let eid = crate::graph::entity_id(&extracted.name, &extracted.entity_type);
+                    let node = crate::graph::EntityNode {
+                        id: eid,
+                        name: extracted.name.clone(),
+                        entity_type: extracted.entity_type.clone(),
+                        description,
+                        embedding: emb.clone(),
+                        mention_count: 1,
+                        first_chunk_id: res.chunk_id,
+                        aliases: vec![],
+                        schema_type: None,
+                        evidence: vec![],
+                        gender: None,
+                        fields,
+                    };
+                    if let Err(e) = g.upsert_entity(node) {
+                        warn!("ec upsert: {e}");
+                    }
+                }
+                let done = done_ctr.fetch_add(1, Ordering::Relaxed) + 1;
+                if let Some(ref cb) = progress {
+                    cb(done, n_unique, g.node_count(), g.relation_count());
+                }
+            }
+        })
+    };
+
+    for (entity_name, source_indices) in unique_names {
+        let permit = sem.clone().acquire_owned().await.expect("semaphore closed");
+        let tx = tx.clone();
+        let urls = urls.clone();
+        let url_counter = url_counter.clone();
+        let model = model.clone();
+        let embed = embed.clone();
+        let llm_calls = llm_calls.clone();
+        let context_chars = context_chars.clone();
+        let et_owned = et_owned.clone();
+
+        // Aggregate up to MAX_SOURCE_CHUNKS distinct windows
+        let mut seen = std::collections::BTreeSet::new();
+        for &ci in source_indices.iter().take(MAX_SOURCE_CHUNKS) {
+            let start = ci.saturating_sub(cw);
+            let end = (ci + cw + 1).min(total);
+            for idx in start..end { seen.insert(idx); }
+        }
+        let context: String = seen.iter()
+            .map(|&ci| chunks[ci].text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n[...]\n\n");
+        let ctx_len = context.len();
+
+        tokio::spawn(async move {
+            let _permit = permit;
+            let url = &urls[url_counter.fetch_add(1, Ordering::Relaxed) % urls.len()];
+
+            llm_calls.fetch_add(1, Ordering::Relaxed);
+            context_chars.fetch_add(ctx_len, Ordering::Relaxed);
+
+            let candidates = vec![entity_name.clone()];
+            let hints = vec![entity_name.clone()];
+            let et_refs: Vec<&str> = et_owned.iter().map(|s| s.as_str()).collect();
+
+            let (mut entities, _) = match extract_from_text(
+                &context, &candidates, &[], None, url, &model,
+                &et_refs, no_relations, Some(&hints),
+            ).await {
+                Ok(r) => r,
+                Err(e) => {
+                    warn!("ec extract error for '{entity_name}': {e}");
+                    let _ = tx.send(ChunkResult { chunk_id: 0, entities: vec![], relations: vec![], embeddings: vec![] }).await;
+                    return;
+                }
+            };
+
+            let texts: Vec<String> = entities.iter()
+                .map(|e| format!("{}: {}", e.name, e.description))
+                .collect();
+            let embeddings = match embed.embed_batch(&texts.iter().map(|s| s.as_str()).collect::<Vec<_>>()).await {
+                Ok(v) => v,
+                Err(e) => { warn!("ec embed error: {e}"); vec![] }
+            };
+            entities.truncate(embeddings.len());
+
+            let _ = tx.send(ChunkResult { chunk_id: 0, entities, relations: vec![], embeddings }).await;
+        });
+    }
+
+    drop(tx);
+    let _ = drain.await;
+
+    let calls = llm_calls.load(Ordering::Relaxed);
+    let chars = context_chars.load(Ordering::Relaxed);
+    let avg_ctx = if calls > 0 { chars / calls } else { 0 };
+    let entity_count = store.lock().map(|g| g.node_count()).unwrap_or(0);
+    info!(
+        "entity-centric complete: {} calls, {} avg ctx chars, {} entities",
+        calls, avg_ctx, entity_count
+    );
+    println!(
+        "  EC metrics: {} LLM calls  |  {} avg context chars  |  {} entities",
+        calls, avg_ctx, entity_count
+    );
 }

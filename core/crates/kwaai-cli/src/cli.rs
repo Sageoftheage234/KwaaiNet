@@ -1618,6 +1618,14 @@ pub enum GraphAction {
         /// high-confidence hints into the extraction prompt. Requires `scripts/gliner_server.py`.
         #[arg(long, value_name = "URL")]
         gliner_url: Option<String>,
+
+        /// Use entity-centric extraction instead of chunk-centric.
+        /// Requires --gliner-url. Phase 1 scans all chunks with GLiNER to collect unique
+        /// person names; Phase 2 makes one focused LLM call per name, aggregating all
+        /// chunks where that person is mentioned. Trades more LLM calls for better
+        /// per-entity descriptions. Use with --sample-pct for comparison runs.
+        #[arg(long)]
+        entity_centric: bool,
     },
 
     /// Reverse a bad dedup merge: remove an alias from a canonical entity and restore it as its
