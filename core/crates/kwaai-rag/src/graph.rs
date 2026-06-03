@@ -228,6 +228,11 @@ pub struct EntityNode {
     /// Empty for entity types without a defined field schema.
     #[serde(default)]
     pub fields: HashMap<String, FieldValue>,
+    /// Structural completeness score in [0, 1] computed by score_entity() after each
+    /// CC build. 0.0 means not yet scored (backwards-compatible default).
+    /// Low scores drive EC refinement when --ec-refine-threshold is set.
+    #[serde(default)]
+    pub confidence: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -649,6 +654,7 @@ impl GraphStore {
                     gender: existing.gender.clone().or(node.gender.clone()),
                     evidence: existing.evidence.clone(),
                     fields: merged_fields,
+                    confidence: 0.0,
                 }
             }
             None => node,
@@ -709,6 +715,7 @@ impl GraphStore {
             gender: None,
             evidence: vec![],
             fields: Default::default(),
+            confidence: 0.0,
         };
 
         let wtxn = self.db.begin_write()?;
@@ -992,6 +999,24 @@ impl GraphStore {
         scored
     }
 
+    /// Recompute and persist the confidence score for one entity. Returns the new score.
+    pub fn rescore_entity(&mut self, id: i64) -> f32 {
+        let rels: Vec<String> = self
+            .adj
+            .get(&id)
+            .map(|v| v.iter().map(|(_, r, _)| r.clone()).collect())
+            .unwrap_or_default();
+        let score = if let Some(node) = self.nodes.get(&id) {
+            crate::scorer::score_entity(node, &rels).overall
+        } else {
+            return 0.0;
+        };
+        if let Some(node) = self.nodes.get_mut(&id) {
+            node.confidence = score;
+        }
+        score
+    }
+
     pub fn get_entity(&self, id: i64) -> Option<&EntityNode> {
         self.nodes.get(&id)
     }
@@ -1036,6 +1061,43 @@ impl GraphStore {
 
     pub fn all_entities(&self) -> impl Iterator<Item = &EntityNode> {
         self.nodes.values()
+    }
+
+    /// Sync entity.evidence from entity_to_chunks for all in-memory nodes.
+    /// During a live build session, link_chunk() updates entity_to_chunks but the
+    /// EntityNode.evidence fields are not updated in-place. Call this before any
+    /// code that reads entity.evidence (e.g. EC refinement, confidence scoring).
+    pub fn sync_evidence(&mut self) {
+        for (&eid, cids) in &self.entity_to_chunks {
+            if let Some(node) = self.nodes.get_mut(&eid) {
+                node.evidence = cids.clone();
+            }
+        }
+    }
+
+    /// Compute score_entity() for every node, write `confidence` back in-memory and
+    /// persist the updated records to redb. Called once at the end of every CC build.
+    pub fn score_all_confidences(&mut self) -> Result<()> {
+        let ids: Vec<i64> = self.nodes.keys().copied().collect();
+        let wtxn = self.db.begin_write()?;
+        {
+            let mut t = wtxn.open_table(ENTITIES_TABLE)?;
+            for id in &ids {
+                let rels: Vec<String> = self
+                    .adj
+                    .get(id)
+                    .map(|v| v.iter().map(|(_, r, _)| r.clone()).collect())
+                    .unwrap_or_default();
+                if let Some(node) = self.nodes.get_mut(id) {
+                    let score = crate::scorer::score_entity(node, &rels);
+                    node.confidence = score.overall;
+                    let val = serde_json::to_vec(node)?;
+                    t.insert(id.to_le_bytes().as_ref(), val.as_slice())?;
+                }
+            }
+        }
+        wtxn.commit()?;
+        Ok(())
     }
 
     pub fn chunks_for_entity(&self, entity_id: i64) -> &[i64] {

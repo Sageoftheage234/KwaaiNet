@@ -1633,6 +1633,17 @@ pub enum GraphAction {
         /// Reduces LLM calls by N× at the cost of denser context per call.
         #[arg(long, value_name = "N", default_value = "1")]
         chunk_batch: usize,
+
+        /// After the CC build, escalate entities whose confidence score is below this
+        /// threshold to a focused EC refinement pass. 0.0 = disabled (default).
+        /// Score is computed by score_entity() (type + summary + relation completeness).
+        /// Suggested starting value: 0.45.
+        #[arg(long, value_name = "THRESHOLD", default_value = "0.0")]
+        ec_refine_threshold: f32,
+
+        /// Maximum number of entities to escalate per run (cost guard). Default 50.
+        #[arg(long, value_name = "N", default_value = "50")]
+        ec_refine_budget: usize,
     },
 
     /// Reverse a bad dedup merge: remove an alias from a canonical entity and restore it as its

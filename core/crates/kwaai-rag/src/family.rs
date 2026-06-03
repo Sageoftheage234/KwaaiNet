@@ -128,6 +128,7 @@ pub async fn seed_family_tree(
                 .as_ref()
                 .map(|e| e.fields.clone())
                 .unwrap_or_default(),
+            confidence: existing.as_ref().map(|e| e.confidence).unwrap_or(0.0),
         };
 
         graph.upsert_entity(node)?;

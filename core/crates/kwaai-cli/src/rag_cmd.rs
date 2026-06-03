@@ -605,6 +605,8 @@ async fn cmd_ingest(
                 gliner_client: None,
                 entity_centric: false,
                     chunk_batch: 1,
+                    ec_refine_threshold: 0.0,
+                    ec_refine_budget: 50,
             });
             print_info("Entity extraction enabled — knowledge graph will be updated");
         }
@@ -802,6 +804,7 @@ async fn inject_index_seeds(
                 gender: None,
                 evidence: vec![],
                 fields: Default::default(),
+                confidence: 0.0,
             };
             match store.lock() {
                 Ok(mut g) => match g.upsert_entity(node) {
@@ -1714,7 +1717,9 @@ async fn cmd_rebuild(
                 sample_pct,
                 gliner_url: None,
                 entity_centric: false,
-                    chunk_batch: 1,
+                chunk_batch: 1,
+                ec_refine_threshold: 0.0,
+                ec_refine_budget: 50,
             },
             kb.clone(),
         )
@@ -2030,6 +2035,8 @@ async fn run_sync_pass(
                     gliner_client: None,
                     entity_centric: false,
                     chunk_batch: 1,
+                    ec_refine_threshold: 0.0,
+                    ec_refine_budget: 50,
                 });
             }
         }
@@ -2233,6 +2240,8 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                 gliner_url,
                 entity_centric,
                 chunk_batch,
+                ec_refine_threshold,
+                ec_refine_budget,
             } => {
                 let raw_infer_url = inference_url.unwrap_or_else(|| rag_cfg.inference_url.clone());
                 let raw_extra_urls: Vec<String> = inference_urls
@@ -2379,6 +2388,8 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                     gliner_client,
                     entity_centric,
                     chunk_batch,
+                    ec_refine_threshold,
+                    ec_refine_budget,
                 };
 
                 let chunks: Vec<kwaai_rag::chunker::Chunk> = all_chunks

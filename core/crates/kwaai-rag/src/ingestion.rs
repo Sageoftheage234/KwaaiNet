@@ -46,6 +46,11 @@ pub struct GraphIngestConfig {
     /// collect unique person names, then one focused LLM call is made per name with
     /// aggregated multi-chunk context. Requires gliner_client to be set.
     pub entity_centric: bool,
+    /// After CC build, escalate entities whose confidence score (from score_entity()) is
+    /// below this threshold to a focused EC refinement pass. 0.0 = disabled (default).
+    pub ec_refine_threshold: f32,
+    /// Max entities to escalate per run (cost guard). Default 50.
+    pub ec_refine_budget: usize,
     /// Process N consecutive chunks per LLM call (default 1 = one chunk + context_window).
     /// chunk_batch=3: loop strides by 3, each call covers chunks [i..i+3] plus the
     /// context_window on each side. Reduces calls by 3× at the cost of denser context.
@@ -293,6 +298,7 @@ pub async fn extract_and_store_entities_pub(
                     evidence: Vec::new(),
                     gender: None,
                     fields,
+                    confidence: 0.0,
                 };
                 if let Err(e) = graph.upsert_entity(node) {
                     warn!("upsert_entity: {e}");
@@ -487,6 +493,22 @@ pub async fn extract_and_store_entities_pub(
     drop(tx); // close sender — drain task's rx.recv() will return None once queue empties
 
     drain_handle.await.unwrap_or(());
+
+    // Sync entity.evidence from the chunk index (populated during the drain by
+    // link_chunk(), but not automatically reflected on in-memory EntityNode fields).
+    // Needed so EC refinement and confidence scoring can read per-entity chunk lists.
+    {
+        let mut g = store.lock().unwrap();
+        g.sync_evidence();
+        if let Err(e) = g.score_all_confidences() {
+            warn!("confidence scoring failed: {e}");
+        }
+    }
+
+    // EC refinement: escalate low-confidence entities for a targeted second pass.
+    if graph_cfg.ec_refine_threshold > 0.0 {
+        refine_low_confidence_entities(chunks, chunk_ids, embed, graph_cfg).await;
+    }
 }
 
 /// Extract entities from all chunks and persist them to the GraphStore.
@@ -632,6 +654,7 @@ async fn extract_and_store_entities(
                 evidence: Vec::new(),
                 gender: None,
                 fields,
+                confidence: 0.0,
             };
             if let Err(e) = graph.upsert_entity(node) {
                 warn!("upsert_entity failed: {e}");
@@ -971,6 +994,7 @@ async fn extract_entity_centric(
                         evidence: vec![],
                         gender: None,
                         fields,
+                        confidence: 0.0,
                     };
                     if let Err(e) = g.upsert_entity(node) {
                         warn!("ec upsert: {e}");
@@ -1058,5 +1082,222 @@ async fn extract_entity_centric(
     println!(
         "  EC metrics: {} LLM calls  |  {} avg context chars  |  {} entities",
         calls, avg_ctx, entity_count
+    );
+}
+
+// ── EC Refinement pass ────────────────────────────────────────────────────────
+
+/// After a CC build, escalate low-confidence entities for a focused EC second pass.
+///
+/// For each entity whose confidence < cfg.ec_refine_threshold:
+///   1. Collect the chunk IDs from entity.evidence, map to chunk indices.
+///   2. Aggregate up to 3 source-chunk windows into a person-centric dossier.
+///   3. Call extract_entity_refinement() with a focused "fill in missing fields" prompt.
+///   4. Merge the improved entity back via upsert_entity(); re-score confidence.
+async fn refine_low_confidence_entities(
+    chunks: &[Chunk],
+    chunk_ids: &[i64],
+    embed: &EmbedClient,
+    cfg: &GraphIngestConfig,
+) {
+    const MAX_SOURCE_CHUNKS: usize = 3;
+
+    // Build chunk-db-id → index map for context window lookup.
+    let id_to_index: std::collections::HashMap<i64, usize> = chunk_ids
+        .iter()
+        .enumerate()
+        .map(|(i, &id)| (id, i))
+        .collect();
+
+    let total = chunks.len();
+    let cw = cfg.context_window;
+    let threshold = cfg.ec_refine_threshold;
+    let budget = cfg.ec_refine_budget.max(1);
+
+    // Collect targets: low-confidence entities matching our entity_types filter.
+    let targets: Vec<(i64, String, String, Vec<i64>, f32)> = {
+        let g = cfg.store.lock().unwrap();
+        let mut v: Vec<_> = g
+            .all_entities()
+            .filter(|n| {
+                n.confidence < threshold
+                    && (cfg.entity_types.is_empty()
+                        || cfg.entity_types.iter().any(|t| {
+                            t.eq_ignore_ascii_case(&n.entity_type)
+                        }))
+            })
+            .map(|n| (n.id, n.name.clone(), n.entity_type.clone(), n.evidence.clone(), n.confidence))
+            .collect();
+        // Lowest confidence first so the budget targets the weakest entities.
+        v.sort_by(|a, b| a.4.partial_cmp(&b.4).unwrap_or(std::cmp::Ordering::Equal));
+        v.truncate(budget);
+        v
+    };
+
+    if targets.is_empty() {
+        println!("  EC refinement: 0 entities below threshold {threshold:.2}");
+        return;
+    }
+    println!(
+        "  EC refinement: {} entities below threshold {threshold:.2} → escalating (budget={budget})",
+        targets.len()
+    );
+
+    let urls = Arc::new(cfg.effective_urls());
+    let url_counter = Arc::new(AtomicUsize::new(0));
+    let model = Arc::new(cfg.model.clone());
+    let workers = cfg.workers.max(1);
+    let sem = Arc::new(tokio::sync::Semaphore::new(workers));
+    let et_owned: Arc<Vec<String>> = Arc::new(cfg.entity_types.clone());
+
+    let mut improved = 0usize;
+    let mut new_entities = 0usize;
+    let mut confidence_delta_sum = 0f32;
+    let initial_entity_count = cfg.store.lock().unwrap().node_count();
+
+    // Sequential refinement (EC calls are already expensive; no need to parallelize at budget=50).
+    for (target_id, entity_name, entity_type, evidence, old_conf) in &targets {
+        // Build aggregated context from evidence chunks.
+        let source_indices: Vec<usize> = evidence
+            .iter()
+            .filter_map(|cid| id_to_index.get(cid).copied())
+            .collect();
+
+        if source_indices.is_empty() {
+            // Entity has no chunk evidence in this corpus slice — skip.
+            continue;
+        }
+
+        let mut seen = std::collections::BTreeSet::new();
+        for &ci in source_indices.iter().take(MAX_SOURCE_CHUNKS) {
+            let start = ci.saturating_sub(cw);
+            let end = (ci + cw + 1).min(total);
+            for idx in start..end {
+                seen.insert(idx);
+            }
+        }
+        let context: String = seen
+            .iter()
+            .map(|&ci| chunks[ci].text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n[...]\n\n");
+
+        let permit = sem.clone().acquire_owned().await.expect("semaphore closed");
+        let url = &urls[url_counter.fetch_add(1, Ordering::Relaxed) % urls.len()];
+
+        // Reuse extract_from_text with a single candidate + hint for focused extraction.
+        let candidates = vec![entity_name.clone()];
+        let hints = vec![entity_name.clone()];
+        let et_refs: Vec<&str> = et_owned.iter().map(|s| s.as_str()).collect();
+        let (mut entities, _) = match extract_from_text(
+            &context,
+            &candidates,
+            &[],
+            None,
+            url,
+            &model,
+            &et_refs,
+            true, // no_relations — refinement is field-enrichment only
+            Some(&hints),
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                warn!("EC refinement error for '{}': {e}", entity_name);
+                drop(permit);
+                continue;
+            }
+        };
+        drop(permit);
+
+        // Filter by entity type and blocklist.
+        entities.retain(|e| {
+            et_owned.is_empty()
+                || et_owned.iter().any(|t| t.eq_ignore_ascii_case(&e.entity_type))
+        });
+
+        for extracted in &entities {
+            let Some(clean_name) = clean_extracted_name(&extracted.name) else {
+                continue;
+            };
+            let eid = crate::graph::entity_id(&clean_name, &extracted.entity_type);
+
+            // Embed the refined entity.
+            let embed_text = format!("{}: {}", clean_name, extracted.description);
+            let embedding = match embed.embed_batch(&[embed_text.as_str()]).await {
+                Ok(mut v) => v.pop().unwrap_or_default(),
+                Err(e) => {
+                    warn!("EC refinement embed error: {e}");
+                    continue;
+                }
+            };
+
+            let fields: std::collections::HashMap<String, crate::graph::FieldValue> =
+                extracted.fields.iter().map(|(k, v)| {
+                    (k.clone(), crate::graph::FieldValue {
+                        value: v.clone(),
+                        evidence_chunk_ids: vec![],
+                        confidence: 1.0,
+                    })
+                }).collect();
+
+            let description = {
+                let from_fields = crate::graph::description_from_fields(
+                    &clean_name, &extracted.entity_type, &fields,
+                );
+                if from_fields.is_empty() { extracted.description.clone() } else { from_fields }
+            };
+
+            let node = crate::graph::EntityNode {
+                id: eid,
+                name: clean_name.clone(),
+                entity_type: extracted.entity_type.clone(),
+                description,
+                embedding,
+                mention_count: 1,
+                first_chunk_id: 0,
+                aliases: vec![],
+                schema_type: None,
+                evidence: vec![],
+                gender: None,
+                fields,
+                confidence: 0.0, // will be re-scored below
+            };
+
+            let mut g = cfg.store.lock().unwrap();
+            if let Err(e) = g.upsert_entity(node) {
+                warn!("EC refinement upsert error: {e}");
+            }
+        }
+
+        // Re-score the target entity to measure improvement.
+        let new_conf = {
+            let mut g = cfg.store.lock().unwrap();
+            g.rescore_entity(*target_id)
+        };
+
+        if new_conf > *old_conf + 0.01 {
+            improved += 1;
+            confidence_delta_sum += new_conf - old_conf;
+        }
+    }
+
+    // Persist updated confidence scores.
+    {
+        let mut g = cfg.store.lock().unwrap();
+        if let Err(e) = g.score_all_confidences() {
+            warn!("EC refinement confidence persist failed: {e}");
+        }
+    }
+
+    let final_entity_count = cfg.store.lock().unwrap().node_count();
+    new_entities = final_entity_count.saturating_sub(initial_entity_count);
+    let avg_delta = if improved > 0 { confidence_delta_sum / improved as f32 } else { 0.0 };
+    println!(
+        "  EC refinement done: {}/{} existing entities improved (avg confidence ↑ +{avg_delta:.2}), {} new entities discovered",
+        improved,
+        targets.len(),
+        new_entities,
     );
 }
