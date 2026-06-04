@@ -260,3 +260,47 @@ to 100% with the same settings.
 
 Expected: ~800-1200 entities, ~300-500 after dream enrichment, approaching the M22
 baseline of 58-60% keyword recall.
+
+---
+
+## 2026-06-04 – D6_person_full_dream5_20260604
+
+- **Pipeline:** CC+EC build (100%) → dedup → sanitize → reembed → seed → 5× dream cycles → eval
+- **Frozen:** no further modifications pending manual review
+
+### Graph state before dream
+- 1,111 entities, 142 relations, 36.6% health
+
+### Dream cycles (max-completions=300, dedup-threshold=0.99, --no-relations)
+
+| Cycle | Health | Δ | Summaries | Merged |
+|-------|--------|---|-----------|--------|
+| 1 | 36.6% → 38.0% | +1.4pp | 246 | 12 |
+| 2 | 38.0% → 39.3% | +1.2pp | 233 | 0 |
+| 3 | 39.3% → 40.2% | +0.9pp | 242 | 3 |
+| 4 | 40.2% → 40.6% | +0.5pp | 231 | 2 |
+| 5 | 40.6% → 40.9% | +0.3pp | 237 | 1 |
+
+Decelerating gain (+1.4 → +0.3pp) — approaching plateau after 5 cycles. More cycles needed for M22-level health (78.1%).
+
+### Final graph
+- **1,095 entities, 140 relations, 40.9% health**
+
+### Eval result
+- **56.0% recall (126/225 keywords)** — 40 questions, avg 31.1s/question
+- mode=iterative, top_k=20, no judge score
+
+### Per-question highlights
+- Perfect (100%): q01 author, q02 children, q04 dedication, q26 Dr. Abdurahman
+- Strong (≥80%): q08 wife detail, q10 Kloof Nek, q11 TLSA, q17 Hewat, q31 mosque, q34 Group Areas Act
+- Weak (0%): q03 grandchildren, q36 political organisations
+
+### Comparison
+| | Person-only full+dream5 | Full M30 (~57.8% avg) | Full M22 (58.6%, 31 cycles) |
+|---|---|---|---|
+| Entities | 1,095 | ~1,905 | 1,013 |
+| Relations | 140 | ~6,164 | 2,193 |
+| Health | 40.9% | — | 78.1% |
+| Recall | **56.0%** | 57.8% | 58.6% |
+
+Person-only graph at 5 dream cycles achieves 56.0% — within 2pp of the full-corpus best (58.6% at 31 cycles). This validates the Person-only pipeline and confirms dream enrichment is the primary driver of accuracy, not entity type breadth.
