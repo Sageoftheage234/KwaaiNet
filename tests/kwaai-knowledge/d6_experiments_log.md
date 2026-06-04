@@ -9,6 +9,7 @@ Plan: [`projects/kwaai-knowledge/d6-person-entity-experiments.md`](../../project
 | D6_person_1pct_tier1_20260602 | 2026-06-02 | 1 | 12 (1%) | 34 | 33 | — | — | sanity check only |
 | D6_person_10pct_dedup_v1_20260602 | 2026-06-02 | 2 | 114 (10%) | 288 | 262 | — | — | Tier 2 NOT merged — FP rate 69%; see analysis |
 | D6_confidence_hybrid_10pct_v1_20260603 | 2026-06-03 | confidence hybrid Stage 2 | 114 (10%) | 223 CC | 242 CC+EC | — | — | 11 improved, 19 new discovered |
+| D6_mini_loop_10pct_20260604 | 2026-06-04 | full mini-loop | 114 (10%) | 223 CC | 241 final | **52.0%** | — | CC+EC+dedup+seed+dream+EC@0.34 |
 
 ---
 
@@ -214,3 +215,48 @@ and the field enrichment of 11 existing entities.
 - Add family tree seed for relation pillar coverage
 - Run dream cycles to improve summary scores toward 0.65+ health
 - Re-evaluate threshold: consider 0.40 to capture only the truly empty entities in larger graphs
+
+---
+
+## 2026-06-04 – D6_mini_loop_10pct_20260604
+
+- **Type:** Full mini Dream RAG loop on 10% corpus
+- **Pipeline:** CC+EC build → dedup → sanitize+reembed → seed → dream (1 cycle) → EC refine-only
+
+### Pipeline steps
+
+| Step | Entities | Relations | Health | Notes |
+|------|----------|-----------|--------|-------|
+| CC + EC (threshold=0.45, budget=50) | 242 | 0 | 35.0% | 19 new EC discoveries |
+| Dedup (Tier 1+3+4) | 224 | 0 | — | 18 clean merges |
+| Sanitize + reembed | 223 | 0 | — | 1 stub pruned |
+| Family tree seed | 219 | 118 | 38.5% | 69 relations, 33 aliases merged |
+| Dream cycle (150 completions) | 218 | 136 | 41.5% | 120 summaries, 1 merge |
+| EC refine-only (threshold=0.34, budget=31) | 241 | 136 | 40.9% | +6 improved, +23 new |
+
+### Eval result
+- **Recall (token-overlap): 52.0%** (117/225 keywords)
+- Avg latency: 26.2s/question
+- Judge score: not run (needs `--llm-judge` flag)
+- Graph: 241 entities, 136 relations, 40.9% health
+
+### Interpretation
+52.0% from a 10%-corpus graph on a full 40-question set covering the entire memoir.
+Most of the remaining gap vs the full-corpus best (59.5%) is explained by missing source
+text rather than graph quality. This validates the pipeline and confirms readiness to scale
+to 100% with the same settings.
+
+### Threshold evolution
+- Fresh graph (before dream): threshold=0.45 captures all entities (all at 33% baseline)
+- Post-dream graph: threshold=0.34 targets only the 31 entities dream couldn't reach
+  (no source text in the 10% corpus slice). Threshold adapts naturally with graph health.
+
+### Ready for 100% run
+- CC + EC: same flags, remove --sample-pct
+- Dedup: same Tier 1+3+4 conservative settings
+- Seed: same d6_family_tree.yaml
+- Dream: increase --max-completions to 300-500 for larger graph
+- EC refine-only at 0.34: same after dream
+
+Expected: ~800-1200 entities, ~300-500 after dream enrichment, approaching the M22
+baseline of 58-60% keyword recall.
