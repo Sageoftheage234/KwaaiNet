@@ -3218,6 +3218,18 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                 }
             }
 
+            GraphAction::Delete { name, entity_type } => {
+                let eid = kwaai_rag::graph::entity_id(&name, &entity_type);
+                let mut store = kwaai_rag::graph::GraphStore::open(&rag_cfg.data_dir(), tenant_id)
+                    .context("opening graph store")?;
+                if store.get_entity(eid).is_none() {
+                    print_error(&format!("Entity '{}' [{}] not found", name, entity_type));
+                } else {
+                    store.delete_entity(eid).context("deleting entity")?;
+                    print_success(&format!("Deleted '{}' [{}]", name, entity_type));
+                }
+            }
+
             GraphAction::GhostPrune {
                 with_relations,
                 dry_run,

@@ -1760,6 +1760,17 @@ pub enum GraphAction {
 
     /// Remove entities that have no text evidence: no chunk links in the graph AND name
     /// not found in any MetaStore chunk.  These are typically dream-hallucinated entities
+    /// Delete a specific entity by name and type. Use this to remove NER artifacts or
+    /// incorrectly extracted multi-person blobs that ghost-prune won't catch.
+    /// Run `graph reembed` afterwards to refresh embeddings.
+    Delete {
+        /// Entity name (case-insensitive exact match)
+        name: String,
+        /// Entity type (default: Person)
+        #[arg(long, default_value = "Person", value_name = "TYPE")]
+        entity_type: String,
+    },
+
     /// that were never mentioned in the source documents.  Safe to run after dream cycles.
     ///
     /// By default only removes entities with no relations (isolated ghosts). Use --with-relations

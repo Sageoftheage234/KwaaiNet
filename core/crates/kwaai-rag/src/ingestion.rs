@@ -812,6 +812,9 @@ pub(crate) fn clean_extracted_name(raw: &str) -> Option<String> {
     let name_lc = name_lc.trim();
     if GENERIC_ROLE_BLOCKLIST.contains(&name_lc) { return None; }
     let word_count = name_lc.split_whitespace().count();
+    // The extraction prompt instructs ≤5 words; anything over 7 is an NER phrase-merge
+    // artifact where the LLM concatenated a list of names into one entity.
+    if word_count > 7 { return None; }
     if word_count <= 3 && ROLE_PREFIXES.iter().any(|p| name_lc.starts_with(p)) { return None; }
     let first_word = name_lc.split_whitespace().next().unwrap_or("");
     if SENTENCE_STARTERS.contains(&first_word) { return None; }

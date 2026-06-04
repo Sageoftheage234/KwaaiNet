@@ -446,10 +446,14 @@ pub(crate) fn inject_entity_descriptions(
         let iid = resolve_author_relative(query, aid, graph).unwrap_or(aid);
         (aid, iid)
     } else {
-        // For non-relative queries: try candidates in descending score order and pick the
-        // first one whose description passes the quality gate. This avoids skipping injection
-        // entirely when the highest-scoring entity happens to have a thin description.
-        let desc_ok = |id: i64| {
+        // For non-relative queries: prefer name-matched candidates sorted by how many of
+        // their name tokens (canonical + aliases) appear in the query. This prevents
+        // "Wahida Gool" from being injected for "Who was JMH Gool?" just because she has
+        // a richer description — JMH Gool shares more name tokens with the query.
+        // Non-name-matched entities are only injected if their embedding score is very high
+        // (> 0.92) to prevent topically-similar but wrong entities (e.g. Abdurahman for
+        // "political organisations" queries where his name doesn't appear).
+        let desc_ok = |id: i64, lenient: bool| {
             let Some(e) = graph.get_entity(id) else {
                 return false;
             };
@@ -458,17 +462,57 @@ pub(crate) fn inject_entity_descriptions(
                 .chars()
                 .filter(|c| matches!(c, '.' | '?' | '!'))
                 .count();
-            if name_matched.contains(&id) {
+            if lenient {
                 desc.len() >= 40 && sents >= 1
             } else {
                 desc.len() >= 100 && sents >= 2
             }
         };
-        let candidate = seed_hits
+
+        // Count how many significant query tokens (≥3 chars) appear in the entity's
+        // canonical name or any of its aliases after normalisation.
+        let q_sig_tokens: std::collections::HashSet<String> = q_lower
+            .split_whitespace()
+            .filter(|t| t.len() >= 3)
+            .map(|t| crate::graph::normalize_name(t))
+            .collect();
+        let name_overlap = |id: i64| -> usize {
+            let Some(e) = graph.get_entity(id) else { return 0 };
+            std::iter::once(e.name.as_str())
+                .chain(e.aliases.iter().map(|a| a.as_str()))
+                .map(|n| {
+                    crate::graph::normalize_name(n)
+                        .split_whitespace()
+                        .filter(|t| t.len() >= 3 && q_sig_tokens.contains(*t))
+                        .count()
+                })
+                .max()
+                .unwrap_or(0)
+        };
+
+        // Sort name-matched candidates by overlap count descending, then by embedding score.
+        let mut nm: Vec<(i64, f64)> = seed_hits
             .iter()
-            .filter(|(_, s)| *s > 0.85)
-            .chain(seed_hits.iter().filter(|(_, s)| *s > 0.7 && *s <= 0.85))
-            .find(|(id, _)| desc_ok(*id));
+            .filter(|(id, _)| name_matched.contains(id))
+            .map(|(id, s)| (*id, *s))
+            .collect();
+        nm.sort_by(|a, b| {
+            name_overlap(b.0)
+                .cmp(&name_overlap(a.0))
+                .then(b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal))
+        });
+
+        let candidate = nm
+            .iter()
+            .find(|(id, _)| desc_ok(*id, true))
+            .or_else(|| {
+                // Non-name-matched: only if very high embedding confidence (> 0.92).
+                // Prevents topically-similar but wrong entities from being injected.
+                seed_hits
+                    .iter()
+                    .filter(|(id, s)| !name_matched.contains(id) && *s > 0.92)
+                    .find(|(id, _)| desc_ok(*id, false))
+            });
         let Some((id, _)) = candidate else { return };
         (*id, *id)
     };
