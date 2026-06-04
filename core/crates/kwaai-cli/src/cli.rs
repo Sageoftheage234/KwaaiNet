@@ -1644,6 +1644,13 @@ pub enum GraphAction {
         /// Maximum number of entities to escalate per run (cost guard). Default 50.
         #[arg(long, value_name = "N", default_value = "50")]
         ec_refine_budget: usize,
+
+        /// Skip the CC extraction phase: re-score existing entities and run only the
+        /// EC refinement pass using chunks from the current corpus slice.
+        /// Requires --ec-refine-threshold > 0. Use after dream cycles for a surgical
+        /// second pass without re-extracting.
+        #[arg(long)]
+        ec_refine_only: bool,
     },
 
     /// Reverse a bad dedup merge: remove an alias from a canonical entity and restore it as its

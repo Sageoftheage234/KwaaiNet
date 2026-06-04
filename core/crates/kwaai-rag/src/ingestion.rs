@@ -51,6 +51,9 @@ pub struct GraphIngestConfig {
     pub ec_refine_threshold: f32,
     /// Max entities to escalate per run (cost guard). Default 50.
     pub ec_refine_budget: usize,
+    /// When true, skip the CC extraction loop entirely — just re-score existing entities
+    /// and run the EC refinement pass. Requires ec_refine_threshold > 0.0.
+    pub ec_refine_only: bool,
     /// Process N consecutive chunks per LLM call (default 1 = one chunk + context_window).
     /// chunk_batch=3: loop strides by 3, each call covers chunks [i..i+3] plus the
     /// context_window on each side. Reduces calls by 3× at the cost of denser context.
@@ -212,6 +215,21 @@ pub async fn extract_and_store_entities_pub(
 ) {
     if graph_cfg.entity_centric {
         extract_entity_centric(chunks, chunk_ids, embed, graph_cfg, progress).await;
+        return;
+    }
+
+    // EC-refine-only: skip CC extraction, just re-score and run refinement pass.
+    if graph_cfg.ec_refine_only {
+        println!("  EC refine-only: skipping CC extraction, re-scoring existing entities");
+        let mut g = graph_cfg.store.lock().unwrap();
+        g.sync_evidence();
+        if let Err(e) = g.score_all_confidences() {
+            warn!("confidence scoring failed: {e}");
+        }
+        drop(g);
+        if graph_cfg.ec_refine_threshold > 0.0 {
+            refine_low_confidence_entities(chunks, chunk_ids, embed, graph_cfg).await;
+        }
         return;
     }
     let total = chunks.len();

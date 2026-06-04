@@ -607,6 +607,7 @@ async fn cmd_ingest(
                     chunk_batch: 1,
                     ec_refine_threshold: 0.0,
                     ec_refine_budget: 50,
+                    ec_refine_only: false,
             });
             print_info("Entity extraction enabled — knowledge graph will be updated");
         }
@@ -1720,6 +1721,7 @@ async fn cmd_rebuild(
                 chunk_batch: 1,
                 ec_refine_threshold: 0.0,
                 ec_refine_budget: 50,
+                    ec_refine_only: false,
             },
             kb.clone(),
         )
@@ -2037,6 +2039,7 @@ async fn run_sync_pass(
                     chunk_batch: 1,
                     ec_refine_threshold: 0.0,
                     ec_refine_budget: 50,
+                    ec_refine_only: false,
                 });
             }
         }
@@ -2242,6 +2245,7 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                 chunk_batch,
                 ec_refine_threshold,
                 ec_refine_budget,
+                ec_refine_only,
             } => {
                 let raw_infer_url = inference_url.unwrap_or_else(|| rag_cfg.inference_url.clone());
                 let raw_extra_urls: Vec<String> = inference_urls
@@ -2390,6 +2394,7 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                     chunk_batch,
                     ec_refine_threshold,
                     ec_refine_budget,
+                    ec_refine_only,
                 };
 
                 let chunks: Vec<kwaai_rag::chunker::Chunk> = all_chunks
