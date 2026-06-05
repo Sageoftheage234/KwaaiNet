@@ -3181,6 +3181,25 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                 .await?;
             }
 
+            GraphAction::ExtractRelations {
+                inference_url,
+                model,
+                sample,
+                output,
+                commit,
+            } => {
+                cmd_extract_relations(
+                    &rag_cfg.data_dir(),
+                    tenant_id,
+                    &inference_url,
+                    &model,
+                    sample,
+                    output.as_deref(),
+                    commit,
+                )
+                .await?;
+            }
+
             GraphAction::Sanitize => {
                 let mut store = GraphStore::open(&rag_cfg.data_dir(), tenant_id)
                     .context("opening graph store for sanitize")?;
@@ -3855,6 +3874,461 @@ async fn cmd_alias_scan(
     }
 
     Ok(())
+}
+
+// ── extract-relations ─────────────────────────────────────────────────────────
+
+/// Lexical triggers indicating a family relation may be explicitly stated.
+/// These must appear adjacent to an actual person name in context — some (like
+/// "aunt", "uncle") also appear in index entries and are handled by the index
+/// filter separately.
+const FAMILY_TRIGGERS: &[&str] = &[
+    "wife", "husband", "married", "wed ", "spouse",
+    "son ", "daughter", "father", "mother", "parent",
+    "sister", "brother", "sibling",
+    "niece", "nephew", " cousin",
+    " aunt ", " uncle ",  // spaces prevent matching "Auntie" in index entries
+    "child of",           // "children of" removed — too often a metaphor ("children of District Six")
+    "born to", "gave birth",
+    "half-brother", "half-sister", "half-sibling",
+    "stepson", "stepdaughter",
+    "in-law",
+];
+
+/// Returns true if the chunk text contains at least one family trigger.
+fn has_family_trigger(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    FAMILY_TRIGGERS.iter().any(|&t| lower.contains(t))
+}
+
+/// Returns true if the chunk looks like an index or table-of-contents page.
+/// These are characterised by many short lines that end with bare page numbers.
+fn is_index_chunk(text: &str) -> bool {
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.len() < 5 {
+        return false;
+    }
+    // Count lines that end with digits (page numbers) or are mostly numeric
+    let num_heavy = lines.iter().filter(|l| {
+        let t = l.trim();
+        if t.is_empty() { return false; }
+        // Ends with ", NNN" or " NNN" or just a number
+        t.rsplit_once(|c: char| !c.is_ascii_digit())
+            .map(|(_, suffix)| suffix.len() >= 1 && suffix.len() <= 4)
+            .unwrap_or(false)
+    }).count();
+    let ratio = num_heavy as f32 / lines.len() as f32;
+    ratio >= 0.35  // >35% of lines end with page numbers → index
+}
+
+/// Returns the count of entity names (or their aliases) that appear literally in the text.
+/// We use a simple case-insensitive substring match. Only entities with ≥1 word of ≥4 chars
+/// in their name are checked (to avoid noise from very short names like "Naz").
+fn count_entity_mentions_in_text(
+    text: &str,
+    entities: &[(String, Vec<String>)],
+) -> usize {
+    let lower = text.to_lowercase();
+    entities.iter().filter(|(name, aliases)| {
+        // Check canonical name
+        let name_lc = name.to_lowercase();
+        if name_lc.split_whitespace().any(|w| w.len() >= 4) && lower.contains(&name_lc) {
+            return true;
+        }
+        // Check aliases
+        aliases.iter().any(|a| {
+            let a_lc = a.to_lowercase();
+            a_lc.split_whitespace().any(|w| w.len() >= 4) && lower.contains(&a_lc)
+        })
+    }).count()
+}
+
+async fn cmd_extract_relations(
+    data_dir: &std::path::Path,
+    tenant_id: uuid::Uuid,
+    inference_url: &str,
+    model: &str,
+    sample: f64,
+    output: Option<&std::path::Path>,
+    commit: bool,
+) -> Result<()> {
+    use std::collections::HashMap;
+    use std::io::Write;
+
+    print_box_header("Graph: Extract Family Relations");
+
+    let meta = kwaai_rag::meta_store::MetaStore::open(data_dir, tenant_id)
+        .context("opening meta store")?;
+    let mut store = kwaai_rag::graph::GraphStore::open(data_dir, tenant_id)
+        .context("opening graph store")?;
+
+    let all_chunks = meta.all_chunks().context("loading chunks")?;
+    let total_chunks = all_chunks.len();
+
+    // Build chunk_id → ChunkMeta map for fast lookup
+    let chunk_map: HashMap<i64, _> = all_chunks.into_iter().collect();
+
+    // Find chunks linked to ≥2 graph entities, passing all pre-filters
+    let mut qualifying: Vec<(i64, Vec<(String, Vec<String>)>)> = Vec::new();
+    let mut stats_index = 0usize;
+    let mut stats_no_trigger = 0usize;
+    let mut stats_too_few_mentions = 0usize;
+
+    for (chunk_id, entity_ids) in store.all_chunk_entity_pairs() {
+        if entity_ids.len() < 2 {
+            continue;
+        }
+        let Some(chunk) = chunk_map.get(&chunk_id) else { continue };
+
+        // Guard 1: skip index / table-of-contents pages
+        if is_index_chunk(&chunk.text) {
+            stats_index += 1;
+            continue;
+        }
+
+        // Guard 2: lexical trigger required
+        if !has_family_trigger(&chunk.text) {
+            stats_no_trigger += 1;
+            continue;
+        }
+
+        // Collect (canonical_name, aliases) for each entity in this chunk
+        let mut entities: Vec<(String, Vec<String>)> = entity_ids
+            .iter()
+            .filter_map(|&eid| store.get_entity(eid))
+            .map(|n| (n.name.clone(), n.aliases.clone()))
+            .collect();
+        entities.sort_by(|a, b| a.0.cmp(&b.0));
+
+        // Guard 3: ≥2 entity names/aliases must appear literally in the text
+        // This prevents the LLM from hallucinating relations between co-listed
+        // entities that happen to be in the same chunk via graph links but aren't
+        // both mentioned in the visible text.
+        let n_mentions = count_entity_mentions_in_text(&chunk.text, &entities);
+        if n_mentions < 2 {
+            stats_too_few_mentions += 1;
+            continue;
+        }
+
+        qualifying.push((chunk_id, entities));
+    }
+
+    // Sort by chunk_id for reproducibility, then sample
+    qualifying.sort_by_key(|(cid, _)| *cid);
+    let n_sample = ((qualifying.len() as f64 * sample).ceil() as usize).max(1);
+    let sampled = &qualifying[..n_sample.min(qualifying.len())];
+
+    println!(
+        "  Total chunks:         {total_chunks}\n\
+           Filtered (index):     {stats_index}\n\
+           Filtered (no trigger):{stats_no_trigger}\n\
+           Filtered (<2 mentions):{stats_too_few_mentions}\n\
+           Qualifying:           {}\n\
+           Sample ({}%):         {}\n",
+        qualifying.len(),
+        (sample * 100.0).round(),
+        sampled.len()
+    );
+
+    if sampled.is_empty() {
+        println!("  No qualifying chunks found.");
+        return Ok(());
+    }
+
+    // ── Build the review output ──────────────────────────────────────────────
+    let mut out = String::new();
+    out.push_str(&format!(
+        "# Family Relation Extraction — {}% sample\n\n",
+        (sample * 100.0).round()
+    ));
+    out.push_str(&format!(
+        "**Qualifying chunks (≥2 entities + trigger):** {}  \n\
+         **Sampled:** {}  \n\
+         **Model:** {}  \n\
+         **Commit:** {}\n\n---\n\n",
+        qualifying.len(),
+        sampled.len(),
+        model,
+        if commit { "yes" } else { "dry-run" }
+    ));
+
+    let mut total_extracted = 0usize;
+    let mut total_new = 0usize;
+
+    for (i, (chunk_id, entities)) in sampled.iter().enumerate() {
+        let chunk = match chunk_map.get(chunk_id) {
+            Some(c) => c,
+            None => continue,
+        };
+
+        // Build entity block: canonical name + top aliases
+        let entity_block: String = entities
+            .iter()
+            .map(|(name, aliases)| {
+                if aliases.is_empty() {
+                    format!("  - {name}")
+                } else {
+                    let shown: Vec<&str> = aliases.iter().map(|a| a.as_str()).take(4).collect();
+                    format!("  - {name}  (also: {})", shown.join(", "))
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let canonical_names: Vec<&str> = entities.iter().map(|(n, _)| n.as_str()).collect();
+
+        // Detect narrator entity: any entity whose aliases include "narrator", "author", or "I"
+        let narrator_name: Option<&str> = entities.iter().find_map(|(name, aliases)| {
+            let is_narrator = aliases.iter().any(|a| {
+                matches!(a.to_lowercase().as_str(), "narrator" | "author" | "i" | "the author" | "the narrator")
+            });
+            if is_narrator { Some(name.as_str()) } else { None }
+        });
+
+        // ── Call the LLM ────────────────────────────────────────────────────
+        let prompt = build_relation_prompt(&chunk.text, &entity_block, &canonical_names, narrator_name);
+        let relations_json = call_llm_for_relations(inference_url, model, &prompt).await?;
+
+        // ── Parse the response ───────────────────────────────────────────────
+        let extracted = parse_relation_response(&relations_json, &canonical_names);
+
+        // ── Write review section ─────────────────────────────────────────────
+        out.push_str(&format!(
+            "## Chunk {} / {}  (id={})\n\n",
+            i + 1,
+            sampled.len(),
+            chunk_id
+        ));
+        if let Some(doc) = chunk.section_name.as_deref() {
+            out.push_str(&format!("**Section:** {doc}  \n"));
+        }
+        out.push_str(&format!("**Doc:** {}  chunk #{}\n\n", chunk.doc_name, chunk.chunk_index));
+        out.push_str("**Entities in chunk:**\n");
+        out.push_str(&entity_block);
+        out.push_str("\n\n**Triggers found:** ");
+        let triggers_hit: Vec<&str> = FAMILY_TRIGGERS
+            .iter()
+            .filter(|&&t| chunk.text.to_lowercase().contains(t))
+            .copied()
+            .collect();
+        out.push_str(&triggers_hit.join(", "));
+        out.push_str("\n\n**Chunk text:**\n```\n");
+        out.push_str(chunk.text.trim());
+        out.push_str("\n```\n\n**LLM response (raw):**\n```json\n");
+        out.push_str(relations_json.trim());
+        out.push_str("\n```\n\n");
+
+        if extracted.is_empty() {
+            out.push_str("**Extracted relations:** none\n");
+        } else {
+            out.push_str("**Extracted relations:**\n");
+            for (from, rel, to) in &extracted {
+                out.push_str(&format!("- `{from}` **{rel}** `{to}`\n"));
+            }
+        }
+        out.push_str("\n---\n\n");
+
+        total_extracted += extracted.len();
+
+        // ── Commit to graph if requested ─────────────────────────────────────
+        if commit && !extracted.is_empty() {
+            for (from_name, rel_type, to_name) in &extracted {
+                let from_id = store
+                    .find_by_name_normalized(from_name)
+                    .map(|n| kwaai_rag::graph::entity_id(&n.name, &n.entity_type));
+                let to_id = store
+                    .find_by_name_normalized(to_name)
+                    .map(|n| kwaai_rag::graph::entity_id(&n.name, &n.entity_type));
+                if let (Some(fid), Some(tid)) = (from_id, to_id) {
+                    let before = store.get_relation_strength(fid, tid, rel_type);
+                    store.upsert_relation(fid, tid, rel_type, *chunk_id)?;
+                    let after = store.get_relation_strength(fid, tid, rel_type);
+                    if before.is_none() || (before.unwrap() - after.unwrap_or(0.0)).abs() > 0.01 {
+                        total_new += 1;
+                    }
+                }
+            }
+        }
+
+        print!("  [{}/{}] chunk {}  → {} relation(s)\r", i + 1, sampled.len(), chunk_id, extracted.len());
+        let _ = std::io::stdout().flush();
+    }
+    println!();
+
+    // ── Summary ──────────────────────────────────────────────────────────────
+    let summary = format!(
+        "\n## Summary\n\n\
+         | Metric | Value |\n\
+         |--------|-------|\n\
+         | Chunks processed | {} |\n\
+         | Relations extracted | {} |\n\
+         | Relations written to graph | {} |\n",
+        sampled.len(),
+        total_extracted,
+        if commit { total_new } else { 0 },
+    );
+    out.push_str(&summary);
+
+    println!("  Chunks processed:  {}", sampled.len());
+    println!("  Relations found:   {total_extracted}");
+    if commit {
+        println!("  Written to graph:  {total_new}");
+    }
+
+    // ── Write output ─────────────────────────────────────────────────────────
+    if let Some(path) = output {
+        std::fs::write(path, &out).with_context(|| format!("writing {}", path.display()))?;
+        println!("\n  ✅ Review written to: {}", path.display());
+    } else {
+        println!("\n{out}");
+    }
+
+    Ok(())
+}
+
+fn build_relation_prompt(
+    text: &str,
+    entity_block: &str,
+    canonical_names: &[&str],
+    narrator_name: Option<&str>,
+) -> String {
+    let names_csv = canonical_names.join(", ");
+    let narrator_line = match narrator_name {
+        Some(name) => format!(
+            "\nNARRATOR: \"{name}\" — in this text, the pronouns 'I', 'me', 'my', 'we' \
+             refer to this person. If a relation is stated using these pronouns \
+             (e.g. \"my cousin\", \"my mother\"), use \"{name}\" as one endpoint.\n"
+        ),
+        None => String::new(),
+    };
+    format!(
+        "You are extracting family relationships from a historical memoir passage.\n\
+         {narrator_line}\n\
+         The following persons MAY appear in this passage (some may not be named here):\n\
+         {entity_block}\n\
+         \n\
+         Task: Identify ONLY direct family relationships BETWEEN the persons listed above.\n\
+         \n\
+         CRITICAL RULES:\n\
+         - Use ONLY these relation types: spouse_of, parent_of, child_of, sibling_of, half_sibling_of\n\
+         - \"from\" and \"to\" MUST be exact canonical names from this list: {names_csv}\n\
+         - BOTH persons MUST be explicitly named OR clearly referred to via pronoun in the passage\n\
+         - Do NOT connect persons who are not both mentioned/referenced in the passage text\n\
+         - Do NOT guess or infer — only extract what is clearly and directly stated\n\
+         - Do NOT extract: colleague_of, friend_of, associate_of, or any non-family relation\n\
+         - Do NOT infer sibling_of just because two people share the same parent\n\
+         - If the same relation appears multiple times, output it once\n\
+         \n\
+         Return ONLY valid JSON — no explanation, no markdown, no code block:\n\
+         {{\"relations\":[{{\"from\":\"Canonical Name A\",\"relation\":\"spouse_of\",\"to\":\"Canonical Name B\"}}]}}\n\
+         \n\
+         If no relations are clearly stated between the listed persons, return: {{\"relations\":[]}}\n\
+         \n\
+         Passage:\n\
+         {text}"
+    )
+}
+
+async fn call_llm_for_relations(
+    inference_url: &str,
+    model: &str,
+    prompt: &str,
+) -> Result<String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()?;
+
+    #[derive(serde::Serialize)]
+    struct Req<'a> {
+        model: &'a str,
+        messages: Vec<Msg<'a>>,
+        stream: bool,
+        options: Opts,
+    }
+    #[derive(serde::Serialize)]
+    struct Msg<'a> {
+        role: &'a str,
+        content: &'a str,
+    }
+    #[derive(serde::Serialize)]
+    struct Opts {
+        temperature: f32,
+        num_ctx: u32,
+    }
+    #[derive(serde::Deserialize)]
+    struct Resp {
+        message: MsgResp,
+    }
+    #[derive(serde::Deserialize)]
+    struct MsgResp {
+        content: String,
+    }
+
+    let url = format!("{}/api/chat", inference_url.trim_end_matches('/'));
+    let body = Req {
+        model,
+        messages: vec![Msg { role: "user", content: prompt }],
+        stream: false,
+        options: Opts { temperature: 0.0, num_ctx: 8192 },
+    };
+
+    let resp: Resp = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .context("calling LLM")?
+        .json()
+        .await
+        .context("parsing LLM response")?;
+
+    Ok(resp.message.content)
+}
+
+fn parse_relation_response(
+    raw: &str,
+    valid_names: &[&str],
+) -> Vec<(String, String, String)> {
+    // Extract the JSON block (LLM sometimes wraps it in markdown)
+    let json_str = if let Some(start) = raw.find('{') {
+        let end = raw.rfind('}').map(|e| e + 1).unwrap_or(raw.len());
+        &raw[start..end]
+    } else {
+        return vec![];
+    };
+
+    #[derive(serde::Deserialize)]
+    struct Response {
+        relations: Vec<RelationItem>,
+    }
+    #[derive(serde::Deserialize)]
+    struct RelationItem {
+        from: String,
+        relation: String,
+        to: String,
+    }
+
+    let Ok(resp) = serde_json::from_str::<Response>(json_str) else {
+        return vec![];
+    };
+
+    const ALLOWED_RELS: &[&str] = &[
+        "spouse_of", "parent_of", "child_of", "sibling_of", "half_sibling_of",
+    ];
+
+    let valid_set: std::collections::HashSet<&str> = valid_names.iter().copied().collect();
+
+    resp.relations
+        .into_iter()
+        .filter(|r| {
+            // Both endpoints must be in the known entity list
+            valid_set.contains(r.from.as_str())
+                && valid_set.contains(r.to.as_str())
+                && r.from != r.to
+                && ALLOWED_RELS.contains(&r.relation.as_str())
+        })
+        .map(|r| (r.from, r.relation, r.to))
+        .collect()
 }
 
 // ── dream ─────────────────────────────────────────────────────────────────────

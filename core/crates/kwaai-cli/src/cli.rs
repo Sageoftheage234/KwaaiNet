@@ -1823,6 +1823,33 @@ pub enum GraphAction {
         min_hits: usize,
     },
 
+    /// Extract family relations between known co-occurring entities.
+    /// Finds chunks linked to ≥ 2 graph entities, applies a lexical-trigger filter
+    /// for family-relation keywords, then calls the LLM with a focused prompt that asks
+    /// only for spouse_of / parent_of / child_of / sibling_of between the listed entities.
+    /// Writes a human-readable review file. Use --commit to persist results to the graph.
+    ExtractRelations {
+        /// Inference URL (default: http://localhost:11434)
+        #[arg(long, default_value = "http://localhost:11434", value_name = "URL")]
+        inference_url: String,
+
+        /// Model for relation extraction
+        #[arg(long, default_value = "llama3.1:8b", value_name = "MODEL")]
+        model: String,
+
+        /// Fraction of qualifying chunks to process (0.01 = 1%, 1.0 = all)
+        #[arg(long, default_value = "0.01", value_name = "FRAC")]
+        sample: f64,
+
+        /// Write a review markdown file to this path (stdout if omitted)
+        #[arg(long, value_name = "FILE")]
+        output: Option<std::path::PathBuf>,
+
+        /// Actually persist extracted relations to the graph (default: dry-run only)
+        #[arg(long)]
+        commit: bool,
+    },
+
     /// Enforce relation integrity rules across the whole knowledge graph:
     ///   1. Remove familial relations (parent_of, spouse_of, sibling_of, …) where
     ///      either endpoint is not a Person entity.

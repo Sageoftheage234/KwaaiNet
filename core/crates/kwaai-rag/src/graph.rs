@@ -1134,6 +1134,13 @@ impl GraphStore {
         Ok(())
     }
 
+    /// Return the current strength of a specific relation, or None if it doesn't exist.
+    pub fn get_relation_strength(&self, src_id: i64, dst_id: i64, rel_type: &str) -> Option<f32> {
+        self.adj.get(&src_id)?.iter()
+            .find(|(nbr, rel, _)| *nbr == dst_id && rel == rel_type)
+            .map(|(_, _, s)| *s)
+    }
+
     pub fn chunks_for_entity(&self, entity_id: i64) -> &[i64] {
         self.entity_to_chunks
             .get(&entity_id)
