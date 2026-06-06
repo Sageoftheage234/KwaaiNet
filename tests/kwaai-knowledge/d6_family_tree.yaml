@@ -17,6 +17,7 @@ persons:
       - "J. Gool"
       - "Joosub Gool"
       - "Joosub Maulvi Hamid Gool"
+      - "Joosub Maulvi Hamid"
       - "Grandpa"
       - "grandfather"
       - "my grandpa"
@@ -64,6 +65,7 @@ persons:
 
   - canonical: "Mohamed Saaid Gool"
     aliases:
+      - "Uncle Aity Mohamed Saaid Gool"
       - "Aity (Mohamed Saaid Gool)"
       - "Uncle Aity"
       - "Aity"
