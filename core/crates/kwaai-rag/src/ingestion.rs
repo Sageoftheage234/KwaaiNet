@@ -166,6 +166,7 @@ pub async fn ingest_text(
                 section_name: c.section_name.clone(),
                 skip_extraction: c.skip_extraction,
                 section_note: c.section_note.clone(),
+                section_type: c.section_type.clone(),
             });
             ids.push(c.id);
         }
@@ -377,8 +378,13 @@ pub async fn extract_and_store_entities_pub(
         let text = if context_window > 0 || chunk_batch > 1 {
             let start = i.saturating_sub(context_window);
             let end = (batch_end + context_window).min(total);
+            // Only include chunks from the same section zone as the center chunk.
+            // This prevents context bleeding across section boundaries (e.g.
+            // Acknowledgements text leaking into the adjacent Dedication chunk).
+            let center_type = &chunk.section_type;
             chunks[start..end]
                 .iter()
+                .filter(|c| center_type.same_window_zone(&c.section_type))
                 .map(|c| c.text.as_str())
                 .collect::<Vec<_>>()
                 .join("\n\n[...]\n\n")
@@ -551,8 +557,10 @@ async fn extract_and_store_entities(
         let text = if context_window > 0 {
             let start = i.saturating_sub(context_window);
             let end = (i + context_window + 1).min(total);
+            let center_type = &chunk.section_type;
             chunks[start..end]
                 .iter()
+                .filter(|c| center_type.same_window_zone(&c.section_type))
                 .map(|c| c.text.as_str())
                 .collect::<Vec<_>>()
                 .join("\n\n[...]\n\n")
@@ -906,8 +914,10 @@ fn window_text(chunks: &[Chunk], center: usize, window: usize) -> String {
     }
     let start = center.saturating_sub(window);
     let end = (center + window + 1).min(chunks.len());
+    let center_type = &chunks[center].section_type;
     chunks[start..end]
         .iter()
+        .filter(|c| center_type.same_window_zone(&c.section_type))
         .map(|c| c.text.as_str())
         .collect::<Vec<_>>()
         .join("\n\n[...]\n\n")

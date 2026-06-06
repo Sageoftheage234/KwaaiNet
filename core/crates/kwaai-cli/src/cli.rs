@@ -1867,6 +1867,21 @@ pub enum GraphAction {
         no_llm: bool,
     },
 
+    /// Remove a specific relation from the knowledge graph.
+    /// Also removes the logical inverse (e.g. parent_of ↔ child_of) and
+    /// symmetric reverse (sibling_of, spouse_of stored in both directions).
+    RemoveRelation {
+        /// Name of the source entity
+        #[arg(long, value_name = "NAME")]
+        from: String,
+        /// Relation type (e.g. spouse_of, sibling_of, parent_of)
+        #[arg(long, value_name = "TYPE")]
+        relation: String,
+        /// Name of the target entity
+        #[arg(long, value_name = "NAME")]
+        to: String,
+    },
+
     /// Extract family relations between known co-occurring entities.
     /// Finds chunks linked to ≥ 2 graph entities, applies a lexical-trigger filter
     /// for family-relation keywords, then calls the LLM with a focused prompt that asks

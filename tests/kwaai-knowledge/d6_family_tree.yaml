@@ -398,9 +398,15 @@ relations:
   - { from: "Wahida Gool",                   to: "Hamid Ally",   type: "foster_parent_of" }
 
   # ─── Half-siblings (share JMH Gool as father, different mothers) ────────────
-  - { from: "Ayesha Rassool",     to: "Abdul Hamid Gool", type: "half_sibling_of" }
-  - { from: "Ayesha Rassool",     to: "Goolam Gool",      type: "half_sibling_of" }
-  - { from: "Ayesha Rassool",     to: "Jane Gool-Tabata", type: "half_sibling_of" }
-  - { from: "Mohamed Saaid Gool", to: "Abdul Hamid Gool", type: "half_sibling_of" }
-  - { from: "Mohamed Saaid Gool", to: "Goolam Gool",      type: "half_sibling_of" }
-  - { from: "Zohra Abdurahman",   to: "Abdul Hamid Gool", type: "half_sibling_of" }
+  - { from: "Ayesha Rassool",     to: "Abdul Hamid Gool",      type: "half_sibling_of" }
+  - { from: "Ayesha Rassool",     to: "Goolam Gool",           type: "half_sibling_of" }
+  - { from: "Ayesha Rassool",     to: "Jane Gool-Tabata",      type: "half_sibling_of" }
+  - { from: "Ayesha Rassool",     to: "Mohammed Hanief Gool",  type: "half_sibling_of" }
+  - { from: "Mohamed Saaid Gool", to: "Abdul Hamid Gool",      type: "half_sibling_of" }
+  - { from: "Mohamed Saaid Gool", to: "Goolam Gool",           type: "half_sibling_of" }
+  - { from: "Zohra Abdurahman",   to: "Abdul Hamid Gool",      type: "half_sibling_of" }
+
+  # ─── Newly extracted correct relations (from CC+EC 100% run 2026-06-06) ─────
+  - { from: "Mohandas Karamchand Gandhi", to: "Manilal Gandhi", type: "parent_of" }
+  - { from: "Louis Messaris",             to: "Tykie Messaris", type: "parent_of" }
+  - { from: "Omar Abrahams",              to: "Jameel",         type: "sibling_of" }

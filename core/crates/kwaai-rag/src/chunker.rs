@@ -58,6 +58,8 @@ pub struct Chunk {
     pub skip_extraction: bool,
     /// Narrator note from DocSchema — injected into extraction prompts for this chunk.
     pub section_note: Option<String>,
+    /// Semantic section type — used to enforce context-window boundaries.
+    pub section_type: crate::doc_schema::SectionType,
 }
 
 /// Deterministic stable chunk ID.
@@ -121,6 +123,7 @@ fn split_character(text: &str, doc_name: &str, cfg: &ChunkConfig) -> Vec<Chunk> 
                 section_name: None,
                 skip_extraction: false,
                 section_note: None,
+                section_type: crate::doc_schema::SectionType::Main,
             });
             index += 1;
         }
@@ -150,9 +153,10 @@ fn split_paragraph(
     let mut cur_section_name: Option<String> = None;
     let mut cur_skip = false;
     let mut cur_note: Option<String> = None;
+    let mut cur_section_type = crate::doc_schema::SectionType::Main;
 
-    // (text, section_name, skip, note) — content units only, in order.
-    let mut content_units: Vec<(String, Option<String>, bool, Option<String>)> = Vec::new();
+    // (text, section_name, skip, note, section_type) — content units only, in order.
+    let mut content_units: Vec<(String, Option<String>, bool, Option<String>, crate::doc_schema::SectionType)> = Vec::new();
 
     for (is_heading, unit_text) in &units {
         if *is_heading {
@@ -161,12 +165,14 @@ fn split_paragraph(
                     cur_section_name = Some(unit_text.clone());
                     cur_skip = sec.skip;
                     cur_note = sec.narrator_note.clone();
+                    cur_section_type = sec.section_type.clone();
                 } else {
                     // Unrecognised heading: update name, reset skip/note to
                     // neutral so chapters after a skip section aren't tainted.
                     cur_section_name = Some(unit_text.clone());
                     cur_skip = false;
                     cur_note = None;
+                    cur_section_type = crate::doc_schema::SectionType::Main;
                 }
             } else {
                 cur_section_name = Some(unit_text.clone());
@@ -177,6 +183,7 @@ fn split_paragraph(
                 cur_section_name.clone(),
                 cur_skip,
                 cur_note.clone(),
+                cur_section_type.clone(),
             ));
         }
     }
@@ -188,12 +195,12 @@ fn split_paragraph(
 
     let surr_half = cfg.chunk_size / 4;
     // Build plain chunk texts for surrounding computation.
-    let chunk_texts: Vec<&str> = packed.iter().map(|(t, _, _, _)| t.as_str()).collect();
+    let chunk_texts: Vec<&str> = packed.iter().map(|(t, _, _, _, _)| t.as_str()).collect();
 
     let mut result = Vec::new();
     let mut index = 0u32;
 
-    for (i, (text_str, sec_name, skip, note)) in packed.iter().enumerate() {
+    for (i, (text_str, sec_name, skip, note, sec_type)) in packed.iter().enumerate() {
         if text_str.chars().count() < cfg.min_chunk_len {
             continue;
         }
@@ -238,6 +245,7 @@ fn split_paragraph(
             section_name: sec_name.clone(),
             skip_extraction: *skip,
             section_note: note.clone(),
+            section_type: sec_type.clone(),
         });
         index += 1;
     }
@@ -247,51 +255,62 @@ fn split_paragraph(
 /// Pack content units into chunks up to `chunk_size`, carrying the section
 /// metadata of the FIRST unit that opens each packed chunk.
 fn pack_chunks_with_meta(
-    units: &[(String, Option<String>, bool, Option<String>)],
+    units: &[(String, Option<String>, bool, Option<String>, crate::doc_schema::SectionType)],
     cfg: &ChunkConfig,
-) -> Vec<(String, Option<String>, bool, Option<String>)> {
-    let mut result: Vec<(String, Option<String>, bool, Option<String>)> = Vec::new();
+) -> Vec<(String, Option<String>, bool, Option<String>, crate::doc_schema::SectionType)> {
+    type Meta = (Option<String>, bool, Option<String>, crate::doc_schema::SectionType);
+    let mut result: Vec<(String, Option<String>, bool, Option<String>, crate::doc_schema::SectionType)> = Vec::new();
     let mut parts: Vec<String> = Vec::new();
     let mut cur_len = 0usize;
-    // Metadata from the first unit that opened the current pack.
-    let mut cur_meta: (Option<String>, bool, Option<String>) = (None, false, None);
+    let mut cur_meta: Meta = (None, false, None, crate::doc_schema::SectionType::Main);
 
     let emit = |parts: &mut Vec<String>,
-                cur_meta: &(Option<String>, bool, Option<String>),
-                result: &mut Vec<(String, Option<String>, bool, Option<String>)>| {
+                cur_meta: &Meta,
+                result: &mut Vec<(String, Option<String>, bool, Option<String>, crate::doc_schema::SectionType)>| {
         if !parts.is_empty() {
             result.push((
                 parts.join("\n"),
                 cur_meta.0.clone(),
                 cur_meta.1,
                 cur_meta.2.clone(),
+                cur_meta.3.clone(),
             ));
         }
     };
 
-    for (unit_text, sec_name, skip, note) in units {
+    for (unit_text, sec_name, skip, note, sec_type) in units {
         let unit_len = unit_text.chars().count();
         let sep = if parts.is_empty() { 0 } else { 1 };
 
-        if parts.is_empty() || cur_len + sep + unit_len <= cfg.chunk_size {
+        // Section-boundary: never pack units from different section zones into the
+        // same chunk. This prevents Acknowledgements text bleeding into Dedication.
+        let same_zone = parts.is_empty() || cur_meta.3.same_window_zone(sec_type);
+
+        if same_zone && (parts.is_empty() || cur_len + sep + unit_len <= cfg.chunk_size) {
             if parts.is_empty() {
-                cur_meta = (sec_name.clone(), *skip, note.clone());
+                cur_meta = (sec_name.clone(), *skip, note.clone(), sec_type.clone());
             }
             cur_len += sep + unit_len;
             parts.push(unit_text.clone());
         } else {
             emit(&mut parts, &cur_meta, &mut result);
 
-            // Overlap prefix from tail of emitted chunk.
-            let prev_text = result.last().map(|(t, _, _, _)| t.as_str()).unwrap_or("");
-            let prev_chars: Vec<char> = prev_text.chars().collect();
-            let ol_start = prev_chars.len().saturating_sub(cfg.chunk_overlap);
-            let overlap: String = prev_chars[ol_start..].iter().collect();
+            // Overlap prefix from tail of emitted chunk — but only within the same zone.
+            let prev_zone_same = result.last()
+                .map(|(_, _, _, _, t)| t.same_window_zone(sec_type))
+                .unwrap_or(false);
+            let overlap = if prev_zone_same {
+                let prev_text = result.last().map(|(t, _, _, _, _)| t.as_str()).unwrap_or("");
+                let prev_chars: Vec<char> = prev_text.chars().collect();
+                let ol_start = prev_chars.len().saturating_sub(cfg.chunk_overlap);
+                prev_chars[ol_start..].iter().collect::<String>()
+            } else {
+                String::new()
+            };
 
             parts.clear();
             cur_len = 0;
-            // New pack inherits the section metadata of the unit that opens it.
-            cur_meta = (sec_name.clone(), *skip, note.clone());
+            cur_meta = (sec_name.clone(), *skip, note.clone(), sec_type.clone());
 
             if !overlap.is_empty() {
                 cur_len += overlap.chars().count() + 1;

@@ -502,15 +502,20 @@ pub(crate) fn inject_entity_descriptions(
                 .then(b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal))
         });
 
+        // 1. Name-matched candidates first (sorted by overlap, so JMH Gool beats Wahida Gool
+        //    for "Who was JMH Gool?" queries — both share "gool" but JMH also shares "jmh").
+        // 2. Fall back to non-name-matched at original thresholds so thematically-relevant
+        //    entities (e.g. Bibi Gool for Gandhi/Gool queries) still inject at 0.85+.
+        //    Raising this to 0.92 blocked too many helpful injections (-7.6pp regression).
         let candidate = nm
             .iter()
             .find(|(id, _)| desc_ok(*id, true))
             .or_else(|| {
-                // Non-name-matched: only if very high embedding confidence (> 0.92).
-                // Prevents topically-similar but wrong entities from being injected.
                 seed_hits
                     .iter()
-                    .filter(|(id, s)| !name_matched.contains(id) && *s > 0.92)
+                    .filter(|(_, s)| *s > 0.85)
+                    .chain(seed_hits.iter().filter(|(_, s)| *s > 0.7 && *s <= 0.85))
+                    .filter(|(id, _)| !name_matched.contains(id))
                     .find(|(id, _)| desc_ok(*id, false))
             });
         let Some((id, _)) = candidate else { return };
@@ -549,6 +554,7 @@ pub(crate) fn inject_entity_descriptions(
             section_name: None,
             skip_extraction: false,
             section_note: None,
+            section_type: crate::doc_schema::SectionType::Main,
         },
         score: 2.0,
         source_kb: None,

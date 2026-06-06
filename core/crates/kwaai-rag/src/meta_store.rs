@@ -43,6 +43,9 @@ pub struct ChunkMeta {
     /// Narrator note for this chunk's section — injected into extraction prompts.
     #[serde(default)]
     pub section_note: Option<String>,
+    /// Semantic section type — used for context-window boundary enforcement.
+    #[serde(default)]
+    pub section_type: crate::doc_schema::SectionType,
 }
 
 pub struct MetaStore {

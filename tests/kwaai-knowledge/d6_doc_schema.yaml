@@ -24,12 +24,21 @@ metadata:
 sections:
   - pattern: "CONTENTS"
     skip: true
+    section_type: table_of_contents
 
   - pattern: "Acknowledgements"
     skip: true
+    section_type: acknowledgements
+
+  - pattern: "Dedication"
+    skip: true
+    section_type: front_matter
+
+  - pattern: "Preface"
+    section_type: preface
 
   - pattern: "Editor's Note"
-    skip: false
+    section_type: editor_note
     narrator_note: >
       IMPORTANT: This section is the Editor's Note — it was written by the EDITOR,
       not by the memoir author Yousuf (Joe) Rassool. The pronoun "I" in this section
@@ -40,9 +49,12 @@ sections:
   - pattern: "INDEX"
     skip: true
     index_seeds: true
+    section_type: index
 
   - pattern: "APPENDIX"
     skip: true
+    section_type: appendix
 
   - pattern: "ENDNOTES"
     skip: true
+    section_type: end_notes

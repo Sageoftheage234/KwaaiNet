@@ -1135,6 +1135,39 @@ impl GraphStore {
     }
 
     /// Return the current strength of a specific relation, or None if it doesn't exist.
+    /// Delete a specific relation (and its logical inverse/symmetric counterpart) from the graph.
+    /// Returns true if the relation existed and was removed, false if it wasn't found.
+    pub fn delete_relation(&mut self, src_id: i64, dst_id: i64, rel_type: &str) -> Result<bool> {
+        let key = relation_key(src_id, dst_id, rel_type);
+        let wtxn = self.db.begin_write()?;
+        let mut removed = false;
+        {
+            let mut t = wtxn.open_table(RELATIONS_TABLE)?;
+            if t.remove(key.as_slice())?.is_some() { removed = true; }
+            // Also remove logical inverse (e.g. child_of ↔ parent_of)
+            if let Some(&inv) = FAMILIAL_INVERSE.iter().find(|(r, _)| *r == rel_type).map(|(_, i)| i) {
+                let inv_key = relation_key(dst_id, src_id, inv);
+                t.remove(inv_key.as_slice())?;
+            }
+            // Also remove symmetric reverse (e.g. sibling_of, spouse_of stored both directions)
+            if matches!(rel_type, "spouse_of" | "sibling_of" | "half_sibling_of" | "cousin_of") {
+                let sym_key = relation_key(dst_id, src_id, rel_type);
+                t.remove(sym_key.as_slice())?;
+            }
+        }
+        wtxn.commit()?;
+        if removed {
+            // Update in-memory adj
+            if let Some(edges) = self.adj.get_mut(&src_id) {
+                edges.retain(|(nbr, rel, _)| !(*nbr == dst_id && rel == rel_type));
+            }
+            if let Some(edges) = self.adj.get_mut(&dst_id) {
+                edges.retain(|(nbr, rel, _)| !(*nbr == src_id && rel == rel_type));
+            }
+        }
+        Ok(removed)
+    }
+
     pub fn get_relation_strength(&self, src_id: i64, dst_id: i64, rel_type: &str) -> Option<f32> {
         self.adj.get(&src_id)?.iter()
             .find(|(nbr, rel, _)| *nbr == dst_id && rel == rel_type)

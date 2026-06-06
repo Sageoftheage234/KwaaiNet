@@ -2,6 +2,55 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+/// Semantic type of a document section.
+///
+/// Used to enforce context-window boundaries (windows must not span section
+/// type changes) and to apply per-type retrieval policies.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SectionType {
+    /// Default: narrative body text (chapters, paragraphs).
+    #[default]
+    Main,
+    /// Title page, copyright page, dedication — front of book.
+    FrontMatter,
+    /// Table of contents.
+    TableOfContents,
+    /// Preface written by the author.
+    Preface,
+    /// Introduction section.
+    Introduction,
+    /// Named chapter.
+    Chapter,
+    /// Acknowledgements section.
+    Acknowledgements,
+    /// Editor's note or editorial commentary.
+    EditorNote,
+    /// Appendix material.
+    Appendix,
+    /// Bibliography or references.
+    Bibliography,
+    /// Index pages.
+    Index,
+    /// End-notes or foot-notes section.
+    EndNotes,
+    /// Image/figure/table caption text.
+    Caption,
+}
+
+impl SectionType {
+    /// Returns true when two section types are considered the same "zone"
+    /// for context-window purposes. Windows may NOT span a zone boundary.
+    ///
+    /// Rule: any two `Main`/`Chapter`/`Introduction`/`Preface` sections are
+    /// in the same zone; all other types are isolated (no cross-section windows).
+    pub fn same_window_zone(&self, other: &SectionType) -> bool {
+        use SectionType::*;
+        const NARRATIVE: &[SectionType] = &[Main, Chapter, Introduction, Preface];
+        NARRATIVE.contains(self) && NARRATIVE.contains(other)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SectionDef {
     /// Case-insensitive substring matched against paragraph text to detect this section heading.
@@ -15,6 +64,9 @@ pub struct SectionDef {
     /// injected into the graph as entity name seeds. Still skips LLM extraction.
     #[serde(default)]
     pub index_seeds: bool,
+    /// Semantic type of this section; controls cross-section window boundary enforcement.
+    #[serde(default)]
+    pub section_type: SectionType,
 }
 
 /// A document schema, optionally derived from schema.org typing.

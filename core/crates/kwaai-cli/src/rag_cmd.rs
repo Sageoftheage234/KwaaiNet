@@ -2411,6 +2411,7 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                         section_name: cm.section_name.clone(),
                         skip_extraction: cm.skip_extraction,
                         section_note: cm.section_note.clone(),
+                        section_type: cm.section_type.clone(),
                     })
                     .collect();
                 let ids: Vec<i64> = all_chunks.iter().map(|(id, _)| *id).collect();
@@ -3179,6 +3180,28 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                     min_hits,
                 )
                 .await?;
+            }
+
+            GraphAction::RemoveRelation { from, relation, to } => {
+                print_box_header(&format!("Graph: Remove Relation ({})", kb));
+                let mut store = GraphStore::open(&rag_cfg.data_dir(), tenant_id)
+                    .context("opening graph store")?;
+                let from_entity = store.find_by_name_normalized(&from)
+                    .map(|n| (n.id, n.name.clone(), n.entity_type.clone()));
+                let to_entity = store.find_by_name_normalized(&to)
+                    .map(|n| (n.id, n.name.clone(), n.entity_type.clone()));
+                match (from_entity, to_entity) {
+                    (Some((fid, fname, _)), Some((tid, tname, _))) => {
+                        let removed = store.delete_relation(fid, tid, &relation)?;
+                        if removed {
+                            println!("  ✅ Removed: '{}' --{}--> '{}'", fname, relation, tname);
+                        } else {
+                            println!("  ⚠️  Relation not found: '{}' --{}--> '{}'", fname, relation, tname);
+                        }
+                    }
+                    (None, _) => println!("  ❌ Entity not found: '{}'", from),
+                    (_, None) => println!("  ❌ Entity not found: '{}'", to),
+                }
             }
 
             GraphAction::Coref {
@@ -3996,13 +4019,22 @@ async fn cmd_coref(
             None => continue,
         };
 
-        // Build adjacent chunk IDs (±window, same section preferred)
+        // Build adjacent chunk IDs (±window), enforcing section-zone boundaries.
+        // Adjacent chunks from a different section zone (e.g. Acknowledgements
+        // next to Dedication) are excluded so their entities don't bleed into
+        // the wrong chunk's candidate antecedent set.
         let pos = sorted_chunk_ids.partition_point(|&id| id < chunk_id);
         let adj_start = pos.saturating_sub(window);
         let adj_end = (pos + window + 1).min(sorted_chunk_ids.len());
+        let center_section_type = &chunk.section_type;
         let adjacent: Vec<i64> = sorted_chunk_ids[adj_start..adj_end]
             .iter()
-            .filter(|&&id| id != chunk_id)
+            .filter(|&&id| {
+                id != chunk_id
+                    && chunk_map.get(&id)
+                        .map(|c| center_section_type.same_window_zone(&c.section_type))
+                        .unwrap_or(false)
+            })
             .copied()
             .collect();
 
