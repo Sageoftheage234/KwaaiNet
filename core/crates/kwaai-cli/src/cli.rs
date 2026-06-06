@@ -1859,6 +1859,12 @@ pub enum GraphAction {
         /// Persist resolved links to the graph (default: dry-run only)
         #[arg(long)]
         commit: bool,
+
+        /// Skip the LLM tier — run only rule-based resolution (Tier 1).
+        /// Much faster; suitable for full-corpus runs where alias_match and
+        /// gender_nearest provide most of the value.
+        #[arg(long)]
+        no_llm: bool,
     },
 
     /// Extract family relations between known co-occurring entities.

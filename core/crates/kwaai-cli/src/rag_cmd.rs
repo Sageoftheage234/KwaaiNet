@@ -3188,6 +3188,7 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                 window,
                 output,
                 commit,
+                no_llm,
             } => {
                 cmd_coref(
                     &rag_cfg.data_dir(),
@@ -3198,6 +3199,7 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                     window,
                     output.as_deref(),
                     commit,
+                    no_llm,
                 )
                 .await?;
             }
@@ -3916,6 +3918,7 @@ async fn cmd_coref(
     window: usize,
     output: Option<&std::path::Path>,
     commit: bool,
+    no_llm: bool,
 ) -> Result<()> {
     use std::collections::HashMap;
     use std::io::Write;
@@ -4053,35 +4056,35 @@ async fn cmd_coref(
             }
         }
 
-        // ── Tier 2: LLM-assisted for remaining unresolved pronouns ────────────
-        // Find pronouns in the text that Tier 1 didn't resolve
-        let tier1_surfaces: std::collections::HashSet<String> =
-            tier1.iter().map(|r| r.surface.to_lowercase()).collect();
-        let unresolved_pronouns = extract_unresolved_pronouns(&chunk.text, &tier1_surfaces);
-
+        // ── Tier 2: LLM-assisted (skipped when --no-llm) ─────────────────────
         let mut tier2: Vec<kwaai_rag::ner::CorefResolution> = Vec::new();
-        for pronoun in &unresolved_pronouns {
-            if seen_entities.len() >= candidates.len() { break; } // all candidates used
-            let window_text = extract_pronoun_window(&chunk.text, pronoun, 300);
-            let resolved = call_llm_for_coref(
-                inference_url,
-                model,
-                pronoun,
-                &window_text,
-                &candidates,
-            )
-            .await
-            .ok()
-            .flatten();
-            if let Some(entity_name) = resolved {
-                if seen_entities.insert(entity_name.clone()) {
-                    tier2.push(kwaai_rag::ner::CorefResolution {
-                        surface: pronoun.clone(),
-                        entity_name,
-                        offset: 0,
-                        confidence: 0.7,
-                        method: "llm",
-                    });
+        if !no_llm {
+            let tier1_surfaces: std::collections::HashSet<String> =
+                tier1.iter().map(|r| r.surface.to_lowercase()).collect();
+            let unresolved_pronouns = extract_unresolved_pronouns(&chunk.text, &tier1_surfaces);
+            for pronoun in &unresolved_pronouns {
+                if seen_entities.len() >= candidates.len() { break; }
+                let window_text = extract_pronoun_window(&chunk.text, pronoun, 300);
+                let resolved = call_llm_for_coref(
+                    inference_url,
+                    model,
+                    pronoun,
+                    &window_text,
+                    &candidates,
+                )
+                .await
+                .ok()
+                .flatten();
+                if let Some(entity_name) = resolved {
+                    if seen_entities.insert(entity_name.clone()) {
+                        tier2.push(kwaai_rag::ner::CorefResolution {
+                            surface: pronoun.clone(),
+                            entity_name,
+                            offset: 0,
+                            confidence: 0.7,
+                            method: "llm",
+                        });
+                    }
                 }
             }
         }
@@ -4219,17 +4222,38 @@ fn extract_unresolved_pronouns(
 
 fn extract_pronoun_window(text: &str, pronoun: &str, window_chars: usize) -> String {
     let lower = text.to_lowercase();
-    // Find first whole-word occurrence
-    let pos = lower.split_whitespace().enumerate().find_map(|(i, w)| {
-        let w = w.trim_matches(|c: char| !c.is_alphanumeric());
-        if w == pronoun {
-            Some(text.char_indices().nth(i).map(|(p, _)| p).unwrap_or(0))
-        } else {
-            None
-        }
-    }).unwrap_or(0);
-    let start = pos.saturating_sub(window_chars);
-    let end = (pos + window_chars).min(text.len());
+    // Find byte position of first whole-word occurrence via char_indices
+    let pos = lower.char_indices()
+        .scan(0usize, |word_start, (i, c)| {
+            if c.is_whitespace() { *word_start = i + c.len_utf8(); }
+            Some((i, *word_start))
+        })
+        .find_map(|(i, _)| {
+            let remaining = &lower[i..];
+            if remaining.starts_with(pronoun) {
+                let after = i + pronoun.len();
+                let boundary = after >= lower.len()
+                    || !lower[after..].starts_with(|c: char| c.is_alphanumeric());
+                if boundary { Some(i) } else { None }
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0);
+
+    // Snap start/end to valid char boundaries
+    let raw_start = pos.saturating_sub(window_chars);
+    let raw_end = (pos + pronoun.len() + window_chars).min(text.len());
+    let start = text.char_indices()
+        .map(|(i, _)| i)
+        .filter(|&i| i <= raw_start)
+        .last()
+        .unwrap_or(0);
+    let end = text.char_indices()
+        .map(|(i, _)| i)
+        .chain(std::iter::once(text.len()))
+        .find(|&i| i >= raw_end)
+        .unwrap_or(text.len());
     text[start..end].to_string()
 }
 
