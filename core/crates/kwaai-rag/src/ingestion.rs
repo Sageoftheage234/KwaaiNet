@@ -424,9 +424,13 @@ pub async fn extract_and_store_entities_pub(
                 }
             }
 
-            // Pass candidates to the pronoun resolver so it can use backward text scan
-            // as a fallback when the graph snapshot is empty (reset builds).
-            let pronoun_map = ner::resolve_pronouns(&text, &gender_context, &candidates);
+            // Pass only GLiNER-confirmed Person spans as backward-scan candidates.
+            // Gendered pronouns (he/she) must resolve to Person entities only — using
+            // the full candidates list caused Place names (e.g. "District Six") to be
+            // selected when they appeared closest before the pronoun in the text.
+            // GLiNER hints are Person-specific; when unavailable, backward scan is
+            // skipped and forward scan is used as before.
+            let pronoun_map = ner::resolve_pronouns(&text, &gender_context, &gliner_hints);
 
             // Merge resolved pronoun targets into candidates so the LLM sees them in
             // the classification list, not only in the KNOWN COREFERENCES preamble.

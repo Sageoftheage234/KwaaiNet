@@ -176,16 +176,18 @@ pub fn extract_proper_noun_candidates(text: &str) -> Vec<String> {
 /// the graph, pre-computed before any async work starts. Gender is `"Male"`,
 /// `"Female"`, or `None` (ambiguous).
 ///
-/// `candidates` is the proper-noun candidate list for this chunk, used as a
-/// fallback when `entities` is empty (e.g. on a fresh graph reset). The most
-/// recently mentioned candidate before the pronoun is used as the referent.
+/// `candidates` must contain **Person-entity names only** (e.g. GLiNER-confirmed
+/// spans). Gendered pronouns (he/she) can only refer to persons — passing the full
+/// proper-noun candidate list would cause Place or Organization names to be selected
+/// when they appear closest before the pronoun (e.g. "walked through District Six.
+/// He…" → wrong resolution to a Place). When `candidates` is empty the backward
+/// scan is skipped and the forward scan is tried instead.
 ///
 /// Resolution strategy per pronoun:
 /// 1. Scan `entities` from end to start (most recently known = most likely referent).
 /// 2. If no gender match in snapshot, scan `candidates` backward from the pronoun
-///    position (most recently mentioned proper noun in this chunk = most likely
-///    referent). Gender is not checked here — used as a heuristic when the snapshot
-///    is empty; the LLM can override via the full text context.
+///    position (most recently mentioned Person name in this chunk = most likely
+///    referent). Caller is responsible for supplying Person-only candidates.
 /// 3. If still unresolved, scan forward in the remaining text for the next
 ///    capitalised proper-noun sequence.
 ///
