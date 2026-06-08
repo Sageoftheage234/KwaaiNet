@@ -251,6 +251,18 @@ persons:
     aliases:
       - "Nasim"
 
+  - canonical: "Feyruz Rassool"
+    aliases:
+      - "Feyruz"
+
+  - canonical: "Reza Rassool"
+    aliases:
+      - "Reza"
+
+  - canonical: "Zarina Rassool"
+    aliases:
+      - "Zarina"
+
   # ─── Fostered relatives (the Ally/Noor line) ───────────────────────────────
 
   - canonical: "Gadija Noor"
@@ -381,6 +393,12 @@ relations:
   - { from: "Yousuf Rassool",          to: "Yasmin Rassool",  type: "sibling_of" }
   - { from: "Yousuf Rassool",          to: "Nasim Rassool",   type: "sibling_of" }
   - { from: "Yousuf Rassool",          to: "Nazima Rassool",  type: "spouse_of" }
+  - { from: "Yousuf Rassool",          to: "Feyruz Rassool",  type: "parent_of" }
+  - { from: "Yousuf Rassool",          to: "Reza Rassool",    type: "parent_of" }
+  - { from: "Yousuf Rassool",          to: "Zarina Rassool",  type: "parent_of" }
+  - { from: "Nazima Rassool",          to: "Feyruz Rassool",  type: "parent_of" }
+  - { from: "Nazima Rassool",          to: "Reza Rassool",    type: "parent_of" }
+  - { from: "Nazima Rassool",          to: "Zarina Rassool",  type: "parent_of" }
 
   # ─── Children of Abdul Hamid + Cissie ──────────────────────────────────────
   - { from: "Abdul Hamid Gool", to: "Shaheen Gool", type: "parent_of" }
