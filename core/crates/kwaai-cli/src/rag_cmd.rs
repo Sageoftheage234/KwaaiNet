@@ -606,10 +606,10 @@ async fn cmd_ingest(
                 context_window: 1,
                 gliner_client: None,
                 entity_centric: false,
-                    chunk_batch: 1,
-                    ec_refine_threshold: 0.0,
-                    ec_refine_budget: 50,
-                    ec_refine_only: false,
+                chunk_batch: 1,
+                ec_refine_threshold: 0.0,
+                ec_refine_budget: 50,
+                ec_refine_only: false,
             });
             print_info("Entity extraction enabled — knowledge graph will be updated");
         }
@@ -1723,7 +1723,7 @@ async fn cmd_rebuild(
                 chunk_batch: 1,
                 ec_refine_threshold: 0.0,
                 ec_refine_budget: 50,
-                    ec_refine_only: false,
+                ec_refine_only: false,
             },
             kb.clone(),
         )
@@ -2510,8 +2510,13 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                     println!("  Tier 1  {} exact-name duplicate(s):", exact.len());
                     if !dry_run {
                         for (alias_id, canonical_id) in &exact {
-                            if relation_blocks.contains(&kwaai_rag::graph::ord_pair(*alias_id, *canonical_id)) {
-                                let aname = store.get_entity(*alias_id).map(|n| n.name.clone()).unwrap_or_default();
+                            if relation_blocks
+                                .contains(&kwaai_rag::graph::ord_pair(*alias_id, *canonical_id))
+                            {
+                                let aname = store
+                                    .get_entity(*alias_id)
+                                    .map(|n| n.name.clone())
+                                    .unwrap_or_default();
                                 println!("    blocked (relation guard) '{}' skipped", aname);
                                 continue;
                             }
@@ -2563,9 +2568,12 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                             if let (Some(a), Some(b)) = (a, b) {
                                 let a_rels = store.neighbors_of(*alias_id).len();
                                 let b_rels = store.neighbors_of(*canonical_id).len();
-                                let guard = if relation_blocks.contains(&kwaai_rag::graph::ord_pair(*alias_id, *canonical_id)) {
+                                let guard = if relation_blocks
+                                    .contains(&kwaai_rag::graph::ord_pair(*alias_id, *canonical_id))
+                                {
                                     "  [BLOCKED:R1/R2]"
-                                } else if store.dedup_r3_high_risk_surname(*alias_id, *canonical_id) {
+                                } else if store.dedup_r3_high_risk_surname(*alias_id, *canonical_id)
+                                {
                                     "  [DEFERRED:R3]"
                                 } else {
                                     ""
@@ -2597,16 +2605,33 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                                 continue;
                             }
                             // R1/R2 hard block
-                            if relation_blocks.contains(&kwaai_rag::graph::ord_pair(*alias_id, *canonical_id)) {
-                                let aname = store.get_entity(*alias_id).map(|n| n.name.clone()).unwrap_or_default();
-                                let cname = store.get_entity(*canonical_id).map(|n| n.name.clone()).unwrap_or_default();
-                                println!("    blocked (R1/R2) '{}' ↔ '{}'  sim={:.3}", aname, cname, sim);
+                            if relation_blocks
+                                .contains(&kwaai_rag::graph::ord_pair(*alias_id, *canonical_id))
+                            {
+                                let aname = store
+                                    .get_entity(*alias_id)
+                                    .map(|n| n.name.clone())
+                                    .unwrap_or_default();
+                                let cname = store
+                                    .get_entity(*canonical_id)
+                                    .map(|n| n.name.clone())
+                                    .unwrap_or_default();
+                                println!(
+                                    "    blocked (R1/R2) '{}' ↔ '{}'  sim={:.3}",
+                                    aname, cname, sim
+                                );
                                 continue;
                             }
                             // R3 soft downgrade: high-risk surname without matching relation
                             if store.dedup_r3_high_risk_surname(*alias_id, *canonical_id) {
-                                let aname = store.get_entity(*alias_id).map(|n| n.name.clone()).unwrap_or_default();
-                                let cname = store.get_entity(*canonical_id).map(|n| n.name.clone()).unwrap_or_default();
+                                let aname = store
+                                    .get_entity(*alias_id)
+                                    .map(|n| n.name.clone())
+                                    .unwrap_or_default();
+                                let cname = store
+                                    .get_entity(*canonical_id)
+                                    .map(|n| n.name.clone())
+                                    .unwrap_or_default();
                                 println!("    deferred (R3:surname) '{}' ↔ '{}'  sim={:.3}  — review manually", aname, cname, sim);
                                 continue;
                             }
@@ -2719,14 +2744,20 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                             let a = store.get_entity(*alias_id);
                             let b = store.get_entity(*canonical_id);
                             if let (Some(a), Some(b)) = (a, b) {
-                                let guard = if relation_blocks.contains(&kwaai_rag::graph::ord_pair(*alias_id, *canonical_id)) {
+                                let guard = if relation_blocks
+                                    .contains(&kwaai_rag::graph::ord_pair(*alias_id, *canonical_id))
+                                {
                                     "  [BLOCKED:R1/R2]"
-                                } else if store.dedup_r3_high_risk_surname(*alias_id, *canonical_id) {
+                                } else if store.dedup_r3_high_risk_surname(*alias_id, *canonical_id)
+                                {
                                     "  [DEFERRED:R3]"
                                 } else {
                                     ""
                                 };
-                                println!("        \"{}\"  →  \"{}\"  [{}]{}", a.name, b.name, reason, guard);
+                                println!(
+                                    "        \"{}\"  →  \"{}\"  [{}]{}",
+                                    a.name, b.name, reason, guard
+                                );
                             }
                         }
                     } else if auto {
@@ -2735,15 +2766,26 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                                 continue;
                             }
                             // R1/R2 hard block
-                            if relation_blocks.contains(&kwaai_rag::graph::ord_pair(*alias_id, *canonical_id)) {
-                                let aname = store.get_entity(*alias_id).map(|n| n.name.clone()).unwrap_or_default();
+                            if relation_blocks
+                                .contains(&kwaai_rag::graph::ord_pair(*alias_id, *canonical_id))
+                            {
+                                let aname = store
+                                    .get_entity(*alias_id)
+                                    .map(|n| n.name.clone())
+                                    .unwrap_or_default();
                                 println!("    blocked (R1/R2) '{}' skipped  [{}]", aname, reason);
                                 continue;
                             }
                             // R3 soft downgrade for high-risk surnames
                             if store.dedup_r3_high_risk_surname(*alias_id, *canonical_id) {
-                                let aname = store.get_entity(*alias_id).map(|n| n.name.clone()).unwrap_or_default();
-                                let cname = store.get_entity(*canonical_id).map(|n| n.name.clone()).unwrap_or_default();
+                                let aname = store
+                                    .get_entity(*alias_id)
+                                    .map(|n| n.name.clone())
+                                    .unwrap_or_default();
+                                let cname = store
+                                    .get_entity(*canonical_id)
+                                    .map(|n| n.name.clone())
+                                    .unwrap_or_default();
                                 println!("    deferred (R3:surname) '{}' → '{}'  [{}]  — review manually", aname, cname, reason);
                                 continue;
                             }
@@ -3186,9 +3228,11 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                 print_box_header(&format!("Graph: Remove Relation ({})", kb));
                 let mut store = GraphStore::open(&rag_cfg.data_dir(), tenant_id)
                     .context("opening graph store")?;
-                let from_entity = store.find_by_name_normalized(&from)
+                let from_entity = store
+                    .find_by_name_normalized(&from)
                     .map(|n| (n.id, n.name.clone(), n.entity_type.clone()));
-                let to_entity = store.find_by_name_normalized(&to)
+                let to_entity = store
+                    .find_by_name_normalized(&to)
                     .map(|n| (n.id, n.name.clone(), n.entity_type.clone()));
                 match (from_entity, to_entity) {
                     (Some((fid, fname, _)), Some((tid, tname, _))) => {
@@ -3196,7 +3240,10 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                         if removed {
                             println!("  ✅ Removed: '{}' --{}--> '{}'", fname, relation, tname);
                         } else {
-                            println!("  ⚠️  Relation not found: '{}' --{}--> '{}'", fname, relation, tname);
+                            println!(
+                                "  ⚠️  Relation not found: '{}' --{}--> '{}'",
+                                fname, relation, tname
+                            );
                         }
                     }
                     (None, _) => println!("  ❌ Entity not found: '{}'", from),
@@ -3416,10 +3463,9 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                         .collect::<Vec<_>>()
                         .join(" ");
                     // Keep if name (or period-stripped variant) appears in any chunk text.
-                    if all_chunk_texts
-                        .iter()
-                        .any(|t| t.contains(name_lower.as_str()) || t.contains(name_normalized.as_str()))
-                    {
+                    if all_chunk_texts.iter().any(|t| {
+                        t.contains(name_lower.as_str()) || t.contains(name_normalized.as_str())
+                    }) {
                         continue;
                     }
                     // Ghost candidate: name not found in any source text.
@@ -3503,11 +3549,9 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                 #[cfg(feature = "storage")]
                 {
                     let (rag_cfg, tenant_id) = load_rag_config_for(&kb)?;
-                    let mut store = kwaai_rag::graph::GraphStore::open(
-                        &rag_cfg.data_dir(),
-                        tenant_id,
-                    )
-                    .context("opening graph store")?;
+                    let mut store =
+                        kwaai_rag::graph::GraphStore::open(&rag_cfg.data_dir(), tenant_id)
+                            .context("opening graph store")?;
 
                     // Build list of (canonical, alias) pairs to fix.
                     let pairs: Vec<(String, String)> = if let Some(path) = pairs_file {
@@ -3544,7 +3588,10 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                     }
                     println!();
                     println!("  {} alias(es) restored as stub entities.", total);
-                    println!("  Run `kwaainet rag graph reembed --kb {}` to restore embeddings.", kb);
+                    println!(
+                        "  Run `kwaainet rag graph reembed --kb {}` to restore embeddings.",
+                        kb
+                    );
                 }
             }
         }
@@ -3932,6 +3979,7 @@ async fn cmd_alias_scan(
 
 // ── coref ─────────────────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 async fn cmd_coref(
     data_dir: &std::path::Path,
     tenant_id: uuid::Uuid,
@@ -3950,34 +3998,34 @@ async fn cmd_coref(
 
     // Resolve p2p:// URLs the same way extract-relations does
     let mut _proxy_handles: Vec<tokio::task::JoinHandle<()>> = vec![];
-    let inference_url: String =
-        if inference_url.starts_with("p2p://") || inference_url.starts_with("mux://") {
-            use kwaai_p2p_daemon::{P2PClient, DEFAULT_SOCKET_NAME};
-            let sock = std::env::var("KWAAINET_SOCKET")
-                .unwrap_or_else(|_| DEFAULT_SOCKET_NAME.to_string());
-            #[cfg(unix)]
-            let addr = format!("/unix/{sock}");
-            #[cfg(not(unix))]
-            let addr = "/ip4/127.0.0.1/tcp/5005".to_string();
-            let p2p = std::sync::Arc::new(
-                P2PClient::connect(&addr)
-                    .await
-                    .context("connecting to p2pd for p2p:// URL resolution")?,
-            );
-            let (resolved, handles) =
-                crate::ollama_proxy::resolve_inference_urls(&[inference_url.to_string()], &p2p)
-                    .await?;
-            _proxy_handles = handles;
-            resolved.into_iter().next().unwrap_or_default()
-        } else {
-            inference_url.to_string()
-        };
+    let inference_url: String = if inference_url.starts_with("p2p://")
+        || inference_url.starts_with("mux://")
+    {
+        use kwaai_p2p_daemon::{P2PClient, DEFAULT_SOCKET_NAME};
+        let sock =
+            std::env::var("KWAAINET_SOCKET").unwrap_or_else(|_| DEFAULT_SOCKET_NAME.to_string());
+        #[cfg(unix)]
+        let addr = format!("/unix/{sock}");
+        #[cfg(not(unix))]
+        let addr = "/ip4/127.0.0.1/tcp/5005".to_string();
+        let p2p = std::sync::Arc::new(
+            P2PClient::connect(&addr)
+                .await
+                .context("connecting to p2pd for p2p:// URL resolution")?,
+        );
+        let (resolved, handles) =
+            crate::ollama_proxy::resolve_inference_urls(&[inference_url.to_string()], &p2p).await?;
+        _proxy_handles = handles;
+        resolved.into_iter().next().unwrap_or_default()
+    } else {
+        inference_url.to_string()
+    };
     let inference_url = inference_url.as_str();
 
     let meta = kwaai_rag::meta_store::MetaStore::open(data_dir, tenant_id)
         .context("opening meta store")?;
-    let mut store = kwaai_rag::graph::GraphStore::open(data_dir, tenant_id)
-        .context("opening graph store")?;
+    let mut store =
+        kwaai_rag::graph::GraphStore::open(data_dir, tenant_id).context("opening graph store")?;
 
     let all_chunks = meta.all_chunks().context("loading chunks")?;
     let total_chunks = all_chunks.len();
@@ -3989,7 +4037,8 @@ async fn cmd_coref(
     sorted_chunk_ids.sort_by_key(|id| chunk_map[id].chunk_index);
 
     // Sample chunks to process
-    let n_sample = ((total_chunks as f64 * sample).ceil() as usize).max(1)
+    let n_sample = ((total_chunks as f64 * sample).ceil() as usize)
+        .max(1)
         .min(total_chunks);
     let sampled_ids = &sorted_chunk_ids[..n_sample];
 
@@ -4031,7 +4080,8 @@ async fn cmd_coref(
             .iter()
             .filter(|&&id| {
                 id != chunk_id
-                    && chunk_map.get(&id)
+                    && chunk_map
+                        .get(&id)
                         .map(|c| center_section_type.same_window_zone(&c.section_type))
                         .unwrap_or(false)
             })
@@ -4045,10 +4095,8 @@ async fn cmd_coref(
         }
 
         // ── Tier 1a: definite description / alias matching ────────────────────
-        let desc_resolutions = kwaai_rag::ner::resolve_definite_descriptions(
-            &chunk.text,
-            &candidates,
-        );
+        let desc_resolutions =
+            kwaai_rag::ner::resolve_definite_descriptions(&chunk.text, &candidates);
 
         // ── Tier 1b: gender + nearest-Person pronoun resolution ───────────────
         // Only resolve pronouns to entities whose name/alias appears in the current
@@ -4074,10 +4122,8 @@ async fn cmd_coref(
             })
             .cloned()
             .collect();
-        let pronoun_resolutions = kwaai_rag::ner::resolve_pronouns_from_candidates(
-            &chunk.text,
-            &in_chunk_candidates,
-        );
+        let pronoun_resolutions =
+            kwaai_rag::ner::resolve_pronouns_from_candidates(&chunk.text, &in_chunk_candidates);
 
         // Merge Tier 1 results; deduplicate by entity_name (one link per entity per chunk)
         let mut tier1: Vec<kwaai_rag::ner::CorefResolution> = Vec::new();
@@ -4095,18 +4141,15 @@ async fn cmd_coref(
                 tier1.iter().map(|r| r.surface.to_lowercase()).collect();
             let unresolved_pronouns = extract_unresolved_pronouns(&chunk.text, &tier1_surfaces);
             for pronoun in &unresolved_pronouns {
-                if seen_entities.len() >= candidates.len() { break; }
+                if seen_entities.len() >= candidates.len() {
+                    break;
+                }
                 let window_text = extract_pronoun_window(&chunk.text, pronoun, 300);
-                let resolved = call_llm_for_coref(
-                    inference_url,
-                    model,
-                    pronoun,
-                    &window_text,
-                    &candidates,
-                )
-                .await
-                .ok()
-                .flatten();
+                let resolved =
+                    call_llm_for_coref(inference_url, model, pronoun, &window_text, &candidates)
+                        .await
+                        .ok()
+                        .flatten();
                 if let Some(entity_name) = resolved {
                     if seen_entities.insert(entity_name.clone()) {
                         tier2.push(kwaai_rag::ner::CorefResolution {
@@ -4131,14 +4174,14 @@ async fn cmd_coref(
         total_resolved += all_resolutions.len();
 
         // ── Write review section ─────────────────────────────────────────────
-        out.push_str(&format!(
-            "## Chunk {} (id={})\n\n",
-            i + 1, chunk_id
-        ));
+        out.push_str(&format!("## Chunk {} (id={})\n\n", i + 1, chunk_id));
         if let Some(sec) = chunk.section_name.as_deref() {
             out.push_str(&format!("**Section:** {sec}  \n"));
         }
-        out.push_str(&format!("**Doc:** {}  chunk #{}\n\n", chunk.doc_name, chunk.chunk_index));
+        out.push_str(&format!(
+            "**Doc:** {}  chunk #{}\n\n",
+            chunk.doc_name, chunk.chunk_index
+        ));
         out.push_str("**Candidates:**\n");
         for (name, aliases, gender) in &candidates {
             let g = gender.as_deref().unwrap_or("?");
@@ -4179,7 +4222,13 @@ async fn cmd_coref(
         }
 
         out.push_str("---\n\n");
-        print!("  [{}/{}] chunk {}  → {} resolved\r", i + 1, n_sample, chunk_id, all_resolutions.len());
+        print!(
+            "  [{}/{}] chunk {}  → {} resolved\r",
+            i + 1,
+            n_sample,
+            chunk_id,
+            all_resolutions.len()
+        );
         let _ = std::io::stdout().flush();
     }
     println!();
@@ -4196,7 +4245,11 @@ async fn cmd_coref(
         out.push_str("## Coref-Derived Dedup Candidates\n\n");
         out.push_str("Entity stubs that resolved to the same referent in multiple chunks:\n\n");
         for (entity_name, pairs) in &dedup_candidates {
-            out.push_str(&format!("- **{}**: {} chunk(s) added via coref\n", entity_name, pairs.len()));
+            out.push_str(&format!(
+                "- **{}**: {} chunk(s) added via coref\n",
+                entity_name,
+                pairs.len()
+            ));
         }
         out.push('\n');
     }
@@ -4217,7 +4270,9 @@ async fn cmd_coref(
 
     println!("  Chunks processed:   {n_sample}");
     println!("  Resolutions found:  {total_resolved}");
-    if commit { println!("  Links written:      {total_links_added}"); }
+    if commit {
+        println!("  Links written:      {total_links_added}");
+    }
     println!("  Dedup candidates:   {}", dedup_candidates.len());
 
     if let Some(path) = output {
@@ -4234,9 +4289,7 @@ fn extract_unresolved_pronouns(
     text: &str,
     already_resolved: &std::collections::HashSet<String>,
 ) -> Vec<String> {
-    const ALL_PRONOUNS: &[&str] = &[
-        "he", "him", "his", "she", "her", "they", "them", "their",
-    ];
+    const ALL_PRONOUNS: &[&str] = &["he", "him", "his", "she", "her", "they", "them", "their"];
     let lower = text.to_lowercase();
     ALL_PRONOUNS
         .iter()
@@ -4255,9 +4308,12 @@ fn extract_unresolved_pronouns(
 fn extract_pronoun_window(text: &str, pronoun: &str, window_chars: usize) -> String {
     let lower = text.to_lowercase();
     // Find byte position of first whole-word occurrence via char_indices
-    let pos = lower.char_indices()
+    let pos = lower
+        .char_indices()
         .scan(0usize, |word_start, (i, c)| {
-            if c.is_whitespace() { *word_start = i + c.len_utf8(); }
+            if c.is_whitespace() {
+                *word_start = i + c.len_utf8();
+            }
             Some((i, *word_start))
         })
         .find_map(|(i, _)| {
@@ -4266,7 +4322,11 @@ fn extract_pronoun_window(text: &str, pronoun: &str, window_chars: usize) -> Str
                 let after = i + pronoun.len();
                 let boundary = after >= lower.len()
                     || !lower[after..].starts_with(|c: char| c.is_alphanumeric());
-                if boundary { Some(i) } else { None }
+                if boundary {
+                    Some(i)
+                } else {
+                    None
+                }
             } else {
                 None
             }
@@ -4276,12 +4336,13 @@ fn extract_pronoun_window(text: &str, pronoun: &str, window_chars: usize) -> Str
     // Snap start/end to valid char boundaries
     let raw_start = pos.saturating_sub(window_chars);
     let raw_end = (pos + pronoun.len() + window_chars).min(text.len());
-    let start = text.char_indices()
+    let start = text
+        .char_indices()
         .map(|(i, _)| i)
-        .filter(|&i| i <= raw_start)
-        .last()
+        .rfind(|&i| i <= raw_start)
         .unwrap_or(0);
-    let end = text.char_indices()
+    let end = text
+        .char_indices()
         .map(|(i, _)| i)
         .chain(std::iter::once(text.len()))
         .find(|&i| i >= raw_end)
@@ -4342,8 +4403,12 @@ async fn call_llm_for_coref(
         return Ok(None);
     }
     // Validate against candidate list
-    let valid = names_list.iter().any(|&n| n == referent);
-    Ok(if valid { Some(referent.to_string()) } else { None })
+    let valid = names_list.contains(&referent);
+    Ok(if valid {
+        Some(referent.to_string())
+    } else {
+        None
+    })
 }
 
 // ── extract-relations ─────────────────────────────────────────────────────────
@@ -4353,15 +4418,32 @@ async fn call_llm_for_coref(
 /// "aunt", "uncle") also appear in index entries and are handled by the index
 /// filter separately.
 const FAMILY_TRIGGERS: &[&str] = &[
-    "wife", "husband", "married", "wed ", "spouse",
-    "son ", "daughter", "father", "mother", "parent",
-    "sister", "brother", "sibling",
-    "niece", "nephew", " cousin",
-    " aunt ", " uncle ",  // spaces prevent matching "Auntie" in index entries
-    "child of",           // "children of" removed — too often a metaphor ("children of District Six")
-    "born to", "gave birth",
-    "half-brother", "half-sister", "half-sibling",
-    "stepson", "stepdaughter",
+    "wife",
+    "husband",
+    "married",
+    "wed ",
+    "spouse",
+    "son ",
+    "daughter",
+    "father",
+    "mother",
+    "parent",
+    "sister",
+    "brother",
+    "sibling",
+    "niece",
+    "nephew",
+    " cousin",
+    " aunt ",
+    " uncle ",  // spaces prevent matching "Auntie" in index entries
+    "child of", // "children of" removed — too often a metaphor ("children of District Six")
+    "born to",
+    "gave birth",
+    "half-brother",
+    "half-sister",
+    "half-sibling",
+    "stepson",
+    "stepdaughter",
     "in-law",
 ];
 
@@ -4379,36 +4461,41 @@ fn is_index_chunk(text: &str) -> bool {
         return false;
     }
     // Count lines that end with digits (page numbers) or are mostly numeric
-    let num_heavy = lines.iter().filter(|l| {
-        let t = l.trim();
-        if t.is_empty() { return false; }
-        // Ends with ", NNN" or " NNN" or just a number
-        t.rsplit_once(|c: char| !c.is_ascii_digit())
-            .map(|(_, suffix)| suffix.len() >= 1 && suffix.len() <= 4)
-            .unwrap_or(false)
-    }).count();
+    let num_heavy = lines
+        .iter()
+        .filter(|l| {
+            let t = l.trim();
+            if t.is_empty() {
+                return false;
+            }
+            // Ends with ", NNN" or " NNN" or just a number
+            t.rsplit_once(|c: char| !c.is_ascii_digit())
+                .map(|(_, suffix)| !suffix.is_empty() && suffix.len() <= 4)
+                .unwrap_or(false)
+        })
+        .count();
     let ratio = num_heavy as f32 / lines.len() as f32;
-    ratio >= 0.35  // >35% of lines end with page numbers → index
+    ratio >= 0.35 // >35% of lines end with page numbers → index
 }
 
 /// Returns the count of entity names (or their aliases) that appear literally in the text.
 /// We use a simple case-insensitive substring match. Only entities with ≥1 word of ≥4 chars
 /// in their name are checked (to avoid noise from very short names like "Naz").
-fn count_entity_mentions_in_text(
-    text: &str,
-    entities: &[(String, Vec<String>)],
-) -> usize {
+fn count_entity_mentions_in_text(text: &str, entities: &[(String, Vec<String>)]) -> usize {
     let lower = text.to_lowercase();
-    entities.iter().filter(|(name, aliases)| {
-        let name_lc = name.to_lowercase();
-        if name_lc.split_whitespace().any(|w| w.len() >= 4) && lower.contains(&name_lc) {
-            return true;
-        }
-        aliases.iter().any(|a| {
-            let a_lc = a.to_lowercase();
-            a_lc.split_whitespace().any(|w| w.len() >= 4) && lower.contains(&a_lc)
+    entities
+        .iter()
+        .filter(|(name, aliases)| {
+            let name_lc = name.to_lowercase();
+            if name_lc.split_whitespace().any(|w| w.len() >= 4) && lower.contains(&name_lc) {
+                return true;
+            }
+            aliases.iter().any(|a| {
+                let a_lc = a.to_lowercase();
+                a_lc.split_whitespace().any(|w| w.len() >= 4) && lower.contains(&a_lc)
+            })
         })
-    }).count()
+        .count()
 }
 
 /// Extract sentences from `text` that contain a family trigger AND at least one
@@ -4418,13 +4505,11 @@ fn count_entity_mentions_in_text(
 /// A "sentence" is loosely defined as text delimited by `.`, `!`, `?`, or `\n`.
 /// We also include the previous sentence for context (a name may appear just
 /// before the sentence that contains the trigger).
-fn extract_focused_sentences(
-    text: &str,
-    entities: &[(String, Vec<String>)],
-) -> String {
+#[allow(dead_code)]
+fn extract_focused_sentences(text: &str, entities: &[(String, Vec<String>)]) -> String {
     // Split into rough sentences / clauses
     let raw_sents: Vec<&str> = text
-        .split(|c: char| matches!(c, '.' | '!' | '?' | '\n'))
+        .split(['.', '!', '?', '\n'])
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
         .collect();
@@ -4457,9 +4542,13 @@ fn extract_focused_sentences(
     for (i, s) in raw_sents.iter().enumerate() {
         if sent_has_trigger(s) && sent_has_entity(s) {
             // Include previous sentence for subject context
-            if i > 0 { keep_idxs.push(i - 1); }
+            if i > 0 {
+                keep_idxs.push(i - 1);
+            }
             keep_idxs.push(i);
-            if i + 1 < raw_sents.len() { keep_idxs.push(i + 1); }
+            if i + 1 < raw_sents.len() {
+                keep_idxs.push(i + 1);
+            }
         }
     }
     keep_idxs.dedup();
@@ -4476,6 +4565,8 @@ fn extract_focused_sentences(
         .join(". ")
 }
 
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::type_complexity)]
 async fn cmd_extract_relations(
     data_dir: &std::path::Path,
     tenant_id: uuid::Uuid,
@@ -4496,29 +4587,33 @@ async fn cmd_extract_relations(
 
     // Resolve p2p:// or mux:// URLs to local TCP proxies (same as dream/eval).
     let mut _proxy_handles: Vec<tokio::task::JoinHandle<()>> = vec![];
-    let inference_url: String =
-        if inference_url.starts_with("p2p://") || inference_url.starts_with("mux://") {
-            use kwaai_p2p_daemon::{P2PClient, DEFAULT_SOCKET_NAME};
-            let sock = std::env::var("KWAAINET_SOCKET")
-                .unwrap_or_else(|_| DEFAULT_SOCKET_NAME.to_string());
-            #[cfg(unix)]
-            let addr = format!("/unix/{sock}");
-            #[cfg(not(unix))]
-            let addr = "/ip4/127.0.0.1/tcp/5005".to_string();
-            let p2p = std::sync::Arc::new(
-                P2PClient::connect(&addr)
-                    .await
-                    .context("connecting to p2pd for p2p:// URL resolution")?,
-            );
-            let (resolved, handles) =
-                crate::ollama_proxy::resolve_inference_urls(&[inference_url.to_string()], &p2p)
-                    .await?;
-            _proxy_handles = handles;
-            println!("  P2P proxy: {} → {}", inference_url, resolved.first().map(|s| s.as_str()).unwrap_or("?"));
-            resolved.into_iter().next().unwrap_or_default()
-        } else {
-            inference_url.to_string()
-        };
+    let inference_url: String = if inference_url.starts_with("p2p://")
+        || inference_url.starts_with("mux://")
+    {
+        use kwaai_p2p_daemon::{P2PClient, DEFAULT_SOCKET_NAME};
+        let sock =
+            std::env::var("KWAAINET_SOCKET").unwrap_or_else(|_| DEFAULT_SOCKET_NAME.to_string());
+        #[cfg(unix)]
+        let addr = format!("/unix/{sock}");
+        #[cfg(not(unix))]
+        let addr = "/ip4/127.0.0.1/tcp/5005".to_string();
+        let p2p = std::sync::Arc::new(
+            P2PClient::connect(&addr)
+                .await
+                .context("connecting to p2pd for p2p:// URL resolution")?,
+        );
+        let (resolved, handles) =
+            crate::ollama_proxy::resolve_inference_urls(&[inference_url.to_string()], &p2p).await?;
+        _proxy_handles = handles;
+        println!(
+            "  P2P proxy: {} → {}",
+            inference_url,
+            resolved.first().map(|s| s.as_str()).unwrap_or("?")
+        );
+        resolved.into_iter().next().unwrap_or_default()
+    } else {
+        inference_url.to_string()
+    };
     let inference_url = inference_url.as_str();
 
     // --pull <MODEL>: pull a model on the (remote) endpoint and stream progress
@@ -4550,13 +4645,11 @@ async fn cmd_extract_relations(
                     if let (Some(completed), Some(total)) =
                         (v["completed"].as_u64(), v["total"].as_u64())
                     {
-                        let pct = if total > 0 { completed * 100 / total } else { 0 };
+                        let pct = (completed * 100).checked_div(total).unwrap_or(0);
                         if pct != last_pct || pct == 100 {
                             let gb_done = completed as f64 / 1e9;
                             let gb_total = total as f64 / 1e9;
-                            print!(
-                                "\r  [{pct:3}%]  {gb_done:.1}/{gb_total:.1} GB  {status}      "
-                            );
+                            print!("\r  [{pct:3}%]  {gb_done:.1}/{gb_total:.1} GB  {status}      ");
                             let _ = std::io::Write::flush(&mut std::io::stdout());
                             last_pct = pct;
                         }
@@ -4576,13 +4669,27 @@ async fn cmd_extract_relations(
             .timeout(std::time::Duration::from_secs(30))
             .build()?;
         let tags_url = format!("{}/api/tags", inference_url.trim_end_matches('/'));
-        let resp = client.get(&tags_url).send().await.context("calling /api/tags")?;
+        let resp = client
+            .get(&tags_url)
+            .send()
+            .await
+            .context("calling /api/tags")?;
         let raw: serde_json::Value = resp.json().await.context("parsing /api/tags")?;
-        let models = raw["models"].as_array().map(|a| a.as_slice()).unwrap_or(&[]);
-        println!("  {} model(s) available on {}:", models.len(), inference_url);
+        let models = raw["models"]
+            .as_array()
+            .map(|a| a.as_slice())
+            .unwrap_or(&[]);
+        println!(
+            "  {} model(s) available on {}:",
+            models.len(),
+            inference_url
+        );
         for m in models {
             let name = m["name"].as_str().unwrap_or("?");
-            let size = m["size"].as_u64().map(|s| format!("  {:.1}GB", s as f64 / 1e9)).unwrap_or_default();
+            let size = m["size"]
+                .as_u64()
+                .map(|s| format!("  {:.1}GB", s as f64 / 1e9))
+                .unwrap_or_default();
             println!("    • {name}{size}");
         }
         return Ok(());
@@ -4590,8 +4697,8 @@ async fn cmd_extract_relations(
 
     let meta = kwaai_rag::meta_store::MetaStore::open(data_dir, tenant_id)
         .context("opening meta store")?;
-    let mut store = kwaai_rag::graph::GraphStore::open(data_dir, tenant_id)
-        .context("opening graph store")?;
+    let mut store =
+        kwaai_rag::graph::GraphStore::open(data_dir, tenant_id).context("opening graph store")?;
 
     let all_chunks = meta.all_chunks().context("loading chunks")?;
     let total_chunks = all_chunks.len();
@@ -4609,7 +4716,9 @@ async fn cmd_extract_relations(
         if entity_ids.len() < 2 {
             continue;
         }
-        let Some(chunk) = chunk_map.get(&chunk_id) else { continue };
+        let Some(chunk) = chunk_map.get(&chunk_id) else {
+            continue;
+        };
 
         // Guard 1: skip index / table-of-contents pages
         if is_index_chunk(&chunk.text) {
@@ -4697,10 +4806,26 @@ async fn cmd_extract_relations(
         // that aren't honorifics/roles). These are ghost extractions like "My mother",
         // "Uncle Hanief", "The author" — they confuse the EC by appearing as endpoints.
         const ROLE_WORDS: &[&str] = &[
-            "my", "the", "his", "her", "our", "their", "your",
-            "uncle", "aunt", "mother", "father", "brother", "sister",
-            "grandpa", "grandma", "grandfather", "grandmother",
-            "narrator", "author", "writer",
+            "my",
+            "the",
+            "his",
+            "her",
+            "our",
+            "their",
+            "your",
+            "uncle",
+            "aunt",
+            "mother",
+            "father",
+            "brother",
+            "sister",
+            "grandpa",
+            "grandma",
+            "grandfather",
+            "grandmother",
+            "narrator",
+            "author",
+            "writer",
         ];
         let is_role_only = |name: &str| -> bool {
             let words: Vec<&str> = name.split_whitespace().collect();
@@ -4734,9 +4859,16 @@ async fn cmd_extract_relations(
         // Detect narrator entity: any entity whose aliases include "narrator", "author", or "I"
         let narrator_name: Option<&str> = entities.iter().find_map(|(name, aliases)| {
             let is_narrator = aliases.iter().any(|a| {
-                matches!(a.to_lowercase().as_str(), "narrator" | "author" | "i" | "the author" | "the narrator")
+                matches!(
+                    a.to_lowercase().as_str(),
+                    "narrator" | "author" | "i" | "the author" | "the narrator"
+                )
             });
-            if is_narrator { Some(name.as_str()) } else { None }
+            if is_narrator {
+                Some(name.as_str())
+            } else {
+                None
+            }
         });
 
         // ── Two-pass CC + EC extraction ──────────────────────────────────────
@@ -4769,7 +4901,6 @@ async fn cmd_extract_relations(
         };
         let cc_prompt = cc_prompt_str.as_str();
         let _ = cc_prompt; // suppress unused warning
-        let cc_quote = cc_quote;
 
         // Name-anchor guard: the CC quote must contain at least one token (≥4 chars)
         // from a canonical entity name, alias, or narrator name. Quotes like "my mother"
@@ -4783,7 +4914,9 @@ async fn cmd_extract_relations(
             for &n in &canonical_names {
                 tokens.push(n.to_lowercase());
                 for w in n.split_whitespace() {
-                    if w.len() >= 4 { tokens.push(w.to_lowercase()); }
+                    if w.len() >= 4 {
+                        tokens.push(w.to_lowercase());
+                    }
                 }
             }
             // Also include entity aliases
@@ -4791,14 +4924,18 @@ async fn cmd_extract_relations(
                 for a in aliases.iter() {
                     tokens.push(a.to_lowercase());
                     for w in a.split_whitespace() {
-                        if w.len() >= 4 { tokens.push(w.to_lowercase()); }
+                        if w.len() >= 4 {
+                            tokens.push(w.to_lowercase());
+                        }
                     }
                 }
             }
             if let Some(n) = narrator_name {
                 tokens.push(n.to_lowercase());
                 for w in n.split_whitespace() {
-                    if w.len() >= 4 { tokens.push(w.to_lowercase()); }
+                    if w.len() >= 4 {
+                        tokens.push(w.to_lowercase());
+                    }
                 }
             }
             tokens
@@ -4806,7 +4943,11 @@ async fn cmd_extract_relations(
         let cc_quote_anchored = cc_quote.as_ref().and_then(|q| {
             let ql = q.to_lowercase();
             let has_name = all_name_tokens.iter().any(|t| ql.contains(t.as_str()));
-            if has_name { Some(q.as_str()) } else { None }
+            if has_name {
+                Some(q.as_str())
+            } else {
+                None
+            }
         });
 
         // Code-level guard: if the CC quote only contains non-schema relation words
@@ -4814,11 +4955,23 @@ async fn cmd_extract_relations(
         // skip EC entirely. The 8b model ignores this instruction when embedded in the EC prompt.
         const NON_SCHEMA_RELS: &[&str] = &["aunt", "uncle", "nephew", "niece", "cousin"];
         const SCHEMA_REL_WORDS: &[&str] = &[
-            "wife", "husband", "married", "wed", "spouse",
-            "son", "daughter", "father", "mother", "parent",
-            "sibling", "brother", "sister", "born to", "gave birth",
+            "wife",
+            "husband",
+            "married",
+            "wed",
+            "spouse",
+            "son",
+            "daughter",
+            "father",
+            "mother",
+            "parent",
+            "sibling",
+            "brother",
+            "sister",
+            "born to",
+            "gave birth",
         ];
-        let quote_is_non_schema = cc_quote_anchored.map_or(false, |q| {
+        let quote_is_non_schema = cc_quote_anchored.is_some_and(|q| {
             let ql = q.to_lowercase();
             NON_SCHEMA_RELS.iter().any(|&r| ql.contains(r))
                 && !SCHEMA_REL_WORDS.iter().any(|&r| ql.contains(r))
@@ -4836,10 +4989,13 @@ async fn cmd_extract_relations(
                 if is_non_schema {
                     continue;
                 }
-                let ec_prompt = build_ec_prompt(window, &entity_block, &canonical_names, narrator_name);
+                let ec_prompt =
+                    build_ec_prompt(window, &entity_block, &canonical_names, narrator_name);
                 let ec_raw = call_llm_for_relations(inference_url, model, &ec_prompt).await?;
                 let rels = parse_relation_response(&ec_raw, &canonical_names);
-                if !all_ec.is_empty() { all_ec.push('\n'); }
+                if !all_ec.is_empty() {
+                    all_ec.push('\n');
+                }
                 all_ec.push_str(&format!("[trigger: {trigger}] "));
                 all_ec.push_str(&ec_raw);
                 all_rels.extend(rels);
@@ -4852,7 +5008,8 @@ async fn cmd_extract_relations(
             if quote_is_non_schema {
                 (String::from("[non-schema relation — EC skipped]"), vec![])
             } else {
-                let ec_prompt = build_ec_prompt(quote, &entity_block, &canonical_names, narrator_name);
+                let ec_prompt =
+                    build_ec_prompt(quote, &entity_block, &canonical_names, narrator_name);
                 let ec_raw = call_llm_for_relations(inference_url, model, &ec_prompt).await?;
                 let rels = parse_relation_response(&ec_raw, &canonical_names);
                 (ec_raw, rels)
@@ -4871,7 +5028,10 @@ async fn cmd_extract_relations(
         if let Some(doc) = chunk.section_name.as_deref() {
             out.push_str(&format!("**Section:** {doc}  \n"));
         }
-        out.push_str(&format!("**Doc:** {}  chunk #{}\n\n", chunk.doc_name, chunk.chunk_index));
+        out.push_str(&format!(
+            "**Doc:** {}  chunk #{}\n\n",
+            chunk.doc_name, chunk.chunk_index
+        ));
         out.push_str("**Entities in chunk:**\n");
         out.push_str(&entity_block);
         out.push_str("\n\n**Triggers found:** ");
@@ -4885,8 +5045,14 @@ async fn cmd_extract_relations(
         if rc_mode {
             out.push_str(&format!("\n\n**RC windows ({}):**\n", rc_windows.len()));
             for (trigger, window) in &rc_windows {
-                out.push_str(&format!("- trigger `{trigger}`: `{}`\n",
-                    window.chars().take(120).collect::<String>().replace('\n', " ")));
+                out.push_str(&format!(
+                    "- trigger `{trigger}`: `{}`\n",
+                    window
+                        .chars()
+                        .take(120)
+                        .collect::<String>()
+                        .replace('\n', " ")
+                ));
             }
             out.push_str("\n\n**RC EC pass (raw):**\n```\n");
             out.push_str(relations_json.trim());
@@ -4896,7 +5062,9 @@ async fn cmd_extract_relations(
             out.push_str(cc_raw.trim());
             out.push_str("\n```\n\n**CC quote:** ");
             match &cc_quote {
-                None => { out.push_str("none — EC pass skipped\n\n"); }
+                None => {
+                    out.push_str("none — EC pass skipped\n\n");
+                }
                 Some(q) => {
                     out.push_str(&format!("`{q}`  "));
                     if cc_quote_anchored.is_some() {
@@ -4946,8 +5114,14 @@ async fn cmd_extract_relations(
         }
 
         let cc_status = if cc_quote.is_some() { "EC→" } else { "skip" };
-        print!("  [{}/{}] chunk {} [CC:{}] → {} relation(s)\r",
-            i + 1, sampled.len(), chunk_id, cc_status, extracted.len());
+        print!(
+            "  [{}/{}] chunk {} [CC:{}] → {} relation(s)\r",
+            i + 1,
+            sampled.len(),
+            chunk_id,
+            cc_status,
+            extracted.len()
+        );
         let _ = std::io::stdout().flush();
     }
     println!();
@@ -5046,22 +5220,23 @@ fn extract_rc_windows(
             let window_start = text
                 .char_indices()
                 .map(|(i, _)| i)
-                .filter(|&i| i <= window_start)
-                .last()
+                .rfind(|&i| i <= window_start)
                 .unwrap_or(0);
             let window_end = text
                 .char_indices()
                 .map(|(i, _)| i)
                 .chain(std::iter::once(text.len()))
-                .filter(|&i| i >= window_end)
-                .next()
+                .find(|&i| i >= window_end)
                 .unwrap_or(text.len());
 
             let window = &text[window_start..window_end];
             let window_lower = window.to_lowercase();
 
             // Only proceed if at least one entity name token appears in this window
-            if name_tokens.iter().any(|t| window_lower.contains(t.as_str())) {
+            if name_tokens
+                .iter()
+                .any(|t| window_lower.contains(t.as_str()))
+            {
                 // Deduplicate by trigger+window content to avoid re-processing
                 let key = format!("{trigger}||{}", &window_lower[..window_lower.len().min(80)]);
                 if seen_windows.insert(key) {
@@ -5087,9 +5262,9 @@ fn build_cc_prompt(
 ) -> String {
     let names_csv = canonical_names.join(", ");
     let narrator_line = match narrator_name {
-        Some(name) => format!(
-            "\nNARRATOR: \"{name}\" — 'I', 'me', 'my' in this text refer to this person.\n"
-        ),
+        Some(name) => {
+            format!("\nNARRATOR: \"{name}\" — 'I', 'me', 'my' in this text refer to this person.\n")
+        }
         None => String::new(),
     };
     format!(
@@ -5155,9 +5330,7 @@ fn build_ec_prompt(
 ) -> String {
     let names_csv = canonical_names.join(", ");
     let narrator_line = match narrator_name {
-        Some(name) => format!(
-            "\nNARRATOR: \"{name}\" — 'I', 'me', 'my' refer to this person.\n"
-        ),
+        Some(name) => format!("\nNARRATOR: \"{name}\" — 'I', 'me', 'my' refer to this person.\n"),
         None => String::new(),
     };
     format!(
@@ -5182,6 +5355,7 @@ fn build_ec_prompt(
     )
 }
 
+#[allow(dead_code)]
 fn build_relation_prompt(
     text: &str,
     entity_block: &str,
@@ -5225,11 +5399,7 @@ fn build_relation_prompt(
     )
 }
 
-async fn call_llm_for_relations(
-    inference_url: &str,
-    model: &str,
-    prompt: &str,
-) -> Result<String> {
+async fn call_llm_for_relations(inference_url: &str, model: &str, prompt: &str) -> Result<String> {
     // Wrap with an explicit tokio timeout (120s) that fires even when the TCP connection
     // is still alive. The reqwest .timeout() alone is insufficient when the relay (p2p proxy)
     // holds the socket open while the remote 70b is generating — the TCP connection never
@@ -5287,9 +5457,15 @@ async fn call_llm_for_relations_inner(
     let url = format!("{}/api/chat", inference_url.trim_end_matches('/'));
     let body = Req {
         model,
-        messages: vec![Msg { role: "user", content: prompt }],
+        messages: vec![Msg {
+            role: "user",
+            content: prompt,
+        }],
         stream: false,
-        options: Opts { temperature: 0.0, num_ctx: 8192 },
+        options: Opts {
+            temperature: 0.0,
+            num_ctx: 8192,
+        },
     };
 
     // Network errors (relay stream resets, connection refused) → return empty result
@@ -5333,10 +5509,7 @@ async fn call_llm_for_relations_inner(
     Ok(resp.message.map(|m| m.content).unwrap_or_default())
 }
 
-fn parse_relation_response(
-    raw: &str,
-    valid_names: &[&str],
-) -> Vec<(String, String, String)> {
+fn parse_relation_response(raw: &str, valid_names: &[&str]) -> Vec<(String, String, String)> {
     // Extract the JSON block (LLM sometimes wraps it in markdown)
     let json_str = if let Some(start) = raw.find('{') {
         let end = raw.rfind('}').map(|e| e + 1).unwrap_or(raw.len());
@@ -5361,7 +5534,11 @@ fn parse_relation_response(
     };
 
     const ALLOWED_RELS: &[&str] = &[
-        "spouse_of", "parent_of", "child_of", "sibling_of", "half_sibling_of",
+        "spouse_of",
+        "parent_of",
+        "child_of",
+        "sibling_of",
+        "half_sibling_of",
     ];
 
     let valid_set: std::collections::HashSet<&str> = valid_names.iter().copied().collect();
@@ -5766,8 +5943,8 @@ async fn cmd_eval(
 
         // Progress file: default to {data_dir}/eval-progress.json so it can be
         // read without knowing the path (e.g. via `cat ~/.kwaainet/rag/D6/eval-progress.json`).
-        let progress_path = progress_file
-            .unwrap_or_else(|| rag_cfg.data_dir().join("eval-progress.json"));
+        let progress_path =
+            progress_file.unwrap_or_else(|| rag_cfg.data_dir().join("eval-progress.json"));
         let eval_start = std::time::Instant::now();
         let vs = Arc::new(open_local_vs(&rag_cfg.data_dir())?);
         let http = reqwest::Client::builder()
