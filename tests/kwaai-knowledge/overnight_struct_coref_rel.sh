@@ -61,7 +61,7 @@ log "Step 1: full rebuild (destroy → ingest → graph build → seed → dedup
 log "  PDF:        $PDF"
 log "  doc-schema: $DOC_SCHEMA"
 log "  seed-file:  $SEED_FILE"
-log "  entity-types: Person only (matches D6_person_full baseline)"
+log "  entity-types: Person,Place,Organization (optimal per CLAUDE.md)"
 log "  no-relations: yes (CC+EC pass runs separately with 70b)"
 write_progress "1-rebuild" "running" "destroy → ingest → graph build → seed → dedup"
 
@@ -70,9 +70,9 @@ kwaainet rag rebuild "$PDF" \
   --doc-schema "$DOC_SCHEMA" \
   --seed-file "$SEED_FILE" \
   --chunk-strategy paragraph \
-  --entity-types Person \
+  --entity-types Person,Place,Organization \
   --no-relations \
-  --workers 8 \
+  --workers 4 \
   --model llama3.1:8b \
   --inference-urls "$BUILD_INFERENCE_URLS" \
   --yes

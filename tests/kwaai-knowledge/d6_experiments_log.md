@@ -369,3 +369,128 @@ Decelerating gain (+1.4 → +0.3pp) — approaching plateau after 5 cycles. More
 | Recall | **56.0%** | 57.8% | 58.6% |
 
 Person-only graph at 5 dream cycles achieves 56.0% — within 2pp of the full-corpus best (58.6% at 31 cycles). This validates the Person-only pipeline and confirms dream enrichment is the primary driver of accuracy, not entity type breadth.
+
+## 2026-06-07 – D6_struct_coref_rel_20260607_122357
+
+- **Experiment:** Full rebuild with structure-aware ingestion + coref + CC/EC relations
+- **Before:** 1 entities, 0 relations, **53.3%** recall (D6_person_full baseline 2026-06-04)
+- **After:**  1047 entities, 188 relations, health=36.7%, **?** recall (?)
+- **Changes vs baseline:**
+  - SectionType boundaries in chunk packing, context windows, coref adjacency, CC/EC windows
+  - Coref pass (Tier 1: alias-match + gender-nearest, --no-llm, ±2 window)
+  - CC+EC relation extraction committed (70b Q3 on metro A6000, --commit)
+- **Eval output:** /Users/rezarassool/Source/KwaaiNet/tests/kwaai-knowledge/results/eval_D6_struct_coref_rel_20260607_122357.md
+- **Coref output:** /Users/rezarassool/Source/KwaaiNet/tests/kwaai-knowledge/results/coref_D6_struct_coref_rel_20260607_122357.md
+- **Relation output:** /Users/rezarassool/Source/KwaaiNet/tests/kwaai-knowledge/results/extract_rel_D6_struct_coref_rel_20260607_122357.md
+
+### Key delta questions
+```
+| Overall recall (token-overlap) | 57.3% (129/225) |
+| q09 | Who was the author's grandfather? | 2/9 (22%) | LEST WE FORGET -rev25.pdf | 23073ms |
+| q12 | Who was Cissie Gool? | 3/6 (50%) | [Graph: J. M. H. Gool], LEST WE FORGET -rev25.pdf | 39274ms |
+| q24 | Who were the children of J.M.H. Gool? | 0/7 (0%) | [Graph: Mr. Gool], LEST WE FORGET -rev25.pdf | 25792ms |
+| q26 | Who was Dr. Abdullah Abdurahman? | 6/6 (100%) | [Graph: Dr. Abdulla Abdurahman], LEST WE FORGET -rev25.pdf | 26350ms |
+| q32 | How was Cissie Gool related to J.M.H. Gool? | 4/5 (80%) | LEST WE FORGET -rev25.pdf, [Graph: Mr. Gool] | 30359ms |
+| q38 | Who was Cissie Gool's father? | 3/5 (60%) | LEST WE FORGET -rev25.pdf | 22471ms |
+```
+
+## 2026-06-08 – D6_struct_coref_rel_20260607_220927
+
+- **Experiment:** Full rebuild with structure-aware ingestion + coref + CC/EC relations
+- **Before:** 1047 entities, 188 relations, **53.3%** recall (D6_person_full baseline 2026-06-04)
+- **After:**  1023 entities, 188 relations, health=36.5%, **51.6%** recall (116/225)
+- **Changes vs baseline:**
+  - SectionType boundaries in chunk packing, context windows, coref adjacency, CC/EC windows
+  - Coref pass (Tier 1: alias-match + gender-nearest, --no-llm, ±2 window)
+  - CC+EC relation extraction committed (70b Q3 on metro A6000, --commit)
+- **Eval output:** /Users/rezarassool/Source/KwaaiNet/tests/kwaai-knowledge/results/eval_D6_struct_coref_rel_20260607_220927.md
+- **Coref output:** /Users/rezarassool/Source/KwaaiNet/tests/kwaai-knowledge/results/coref_D6_struct_coref_rel_20260607_220927.md
+- **Relation output:** /Users/rezarassool/Source/KwaaiNet/tests/kwaai-knowledge/results/extract_rel_D6_struct_coref_rel_20260607_220927.md
+
+### Key delta questions
+```
+| Overall recall (token-overlap) | 51.6% (116/225) |
+| q09 | Who was the author's grandfather? | 2/9 (22%) | LEST WE FORGET -rev25.pdf | 20677ms |
+| q12 | Who was Cissie Gool? | 2/6 (33%) | LEST WE FORGET -rev25.pdf, [Graph: Wahida Gool] | 28318ms |
+| q24 | Who were the children of J.M.H. Gool? | 2/7 (29%) | [Graph: Abdul Hamid Gool], LEST WE FORGET -rev25.pdf | 23936ms |
+| q26 | Who was Dr. Abdullah Abdurahman? | 6/6 (100%) | [Graph: Dr. Abdulla Abdurahman], LEST WE FORGET -rev25.pdf | 23989ms |
+| q32 | How was Cissie Gool related to J.M.H. Gool? | 3/5 (60%) | [Graph: Bibi Gool], LEST WE FORGET -rev25.pdf | 23475ms |
+| q38 | Who was Cissie Gool's father? | 1/5 (20%) | LEST WE FORGET -rev25.pdf | 21485ms |
+```
+
+### Analysis vs previous run (20260607_122357, 57.3%)
+
+**Result: REGRESSION — 51.6% vs 57.3% (-5.7pp, -13 keyword matches)**
+
+This run introduced the backward-candidate pronoun resolver (`ner.rs` commit `6015bc1`). The regression is likely caused by **backward_candidate resolving gendered pronouns to Place entities** (e.g., "He walked through District Six" → `'he' = 'District Six'`). When these wrong targets are merged into the candidates list and injected as KNOWN COREFERENCES, the LLM receives contradictory signals that reduce Person entity extraction precision.
+
+| Question | Prev | This | Delta | Notes |
+|----------|------|------|-------|-------|
+| q12 Cissie Gool | 50% | 33% | -17pp | Cissie cluster most affected |
+| q24 JMH children | 0% | 29% | +29pp | Genuine improvement |
+| q32 Cissie-JMH relation | 80% | 60% | -20pp | |
+| q38 Cissie's father | 60% | 20% | -40pp | |
+| q21 Author's mother | ? | 0% | — | Ayesha Rassool not retrieved |
+| q23 Author's siblings | ? | 0% | — | |
+
+**Root cause**: `backward_candidate()` picks the rightmost proper noun before the pronoun without entity-type filtering. In memoir text like "Yousuf walked through District Six. He remembered…", "District Six" appears later than "Yousuf" → the pronoun resolves to the wrong entity. The LLM then sees `KNOWN COREFERENCES: 'he' = 'District Six'` which is confusing.
+
+**Recommended fix**: Constrain `backward_candidate` to multi-word candidates only (single-word entries are more likely to be places), or revert to forward-scan-only for reset builds until a proper gender/type signal is available.
+```
+
+## 2026-06-08 – D6_struct_coref_rel_20260608_163617
+
+- **Experiment:** Full rebuild with structure-aware ingestion + coref + CC/EC relations
+- **Before:** 64 entities, 148 relations, **53.3%** recall (D6_person_full baseline 2026-06-04)
+- **After:**  1037 entities, 194 relations, health=36.5%, **52.0%** recall (117/225)
+- **Changes vs baseline:**
+  - SectionType boundaries in chunk packing, context windows, coref adjacency, CC/EC windows
+  - Coref pass (Tier 1: alias-match + gender-nearest, --no-llm, ±2 window)
+  - CC+EC relation extraction committed (70b Q3 on metro A6000, --commit)
+- **Eval output:** /Users/rezarassool/Source/KwaaiNet/tests/kwaai-knowledge/results/eval_D6_struct_coref_rel_20260608_163617.md
+- **Coref output:** /Users/rezarassool/Source/KwaaiNet/tests/kwaai-knowledge/results/coref_D6_struct_coref_rel_20260608_163617.md
+- **Relation output:** /Users/rezarassool/Source/KwaaiNet/tests/kwaai-knowledge/results/extract_rel_D6_struct_coref_rel_20260608_163617.md
+
+### Key delta questions
+```
+| Overall recall (token-overlap) | 52.0% (117/225) |
+| q09 | Who was the author's grandfather? | 3/9 (33%) | LEST WE FORGET -rev25.pdf | 20846ms |
+| q12 | Who was Cissie Gool? | 2/6 (33%) | LEST WE FORGET -rev25.pdf, [Graph: Dr. Abdul Hamid Gool] | 26765ms |
+| q24 | Who were the children of J.M.H. Gool? | 3/7 (43%) | [Graph: Dr. Abdul Hamid Gool], LEST WE FORGET -rev25.pdf | 26045ms |
+| q26 | Who was Dr. Abdullah Abdurahman? | 6/6 (100%) | [Graph: Dr. Abdulla Abdurahman], LEST WE FORGET -rev25.pdf | 27475ms |
+| q32 | How was Cissie Gool related to J.M.H. Gool? | 2/5 (40%) | [Graph: Adam Gool], LEST WE FORGET -rev25.pdf | 24583ms |
+| q38 | Who was Cissie Gool's father? | 3/5 (60%) | LEST WE FORGET -rev25.pdf | 25612ms |
+```
+
+### Analysis vs previous runs
+
+**Result: SLIGHT REGRESSION vs baseline (-1.3pp), MARGINAL IMPROVEMENT vs yesterday (+0.4pp)**
+
+| Run | Recall | Notes |
+|-----|--------|-------|
+| D6_person_full baseline (2026-06-04) | 53.3% | Person+Place+Org, no struct, no coref |
+| D6_struct_coref_rel_20260607_220927 | 51.6% (116/225) | First overnight, backward_candidate bug |
+| **D6_struct_coref_rel_20260608_163617** | **52.0% (117/225)** | This run |
+
+**Differences vs yesterday (20260607_220927)**:
+- Family tree seeded with Feyruz, Reza, Zarina Rassool + 6 parent_of edges (new in this run)
+- q02 (author's children) 100% ✓ — confirmed graph seed working
+- q38 (Cissie's father) improved 20% → 60% — unknown why
+- q32 (Cissie-JMH relation) regressed 60% → 40%
+
+**Root causes of persistent regression vs 53.3% baseline**:
+1. **47% graph-build timeout rate**: ~half the full-doc chunks return empty entity results over P2P relay with 8 workers. Graph entity coverage is low despite 1037 entities — many from index seeds, not document extraction.
+2. **Person-only entity types**: Place and Organization entities excluded. Reduces graph-boost for Place-heavy questions (q06 Buitencingle, q10 Kloof Nek, q14 District Six, q15 forced removals all at 25-50%).
+3. **backward_candidate pronoun resolver** (identified yesterday): still active, likely injecting wrong KNOWN COREFERENCES for place-named pronouns.
+
+**Weakest questions (≤25%)**:
+- q30 When did JMH arrive (17%) — very specific biographical fact, not in seeded relations
+- q36 Political organizations (17%) — broad org question, orgs not extracted
+- q05 Who was JMH Gool (25%) — Gool cluster still underpopulated despite family tree
+- q06 Buitencingle (25%) — Place, needs Place entity type re-enabled
+
+**Next steps**:
+1. Re-enable Person+Place+Organization entity types (was disabled to match person_full baseline)
+2. Fix backward_candidate: constrain to multi-word names or revert to forward-scan-only
+3. Reduce worker count (8→4) or add retry logic to reduce timeout rate
+4. Consider overnight eval with Place+Org re-enabled to isolate entity-type impact
