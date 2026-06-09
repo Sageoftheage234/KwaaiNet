@@ -1950,6 +1950,41 @@ pub enum GraphAction {
         doc_schema: std::path::PathBuf,
     },
 
+    /// Build LLM-generated paragraph summaries for all entities from their evidence chunks.
+    /// Iterates every qualifying entity, gathers all linked chunk text, calls the LLM to
+    /// write a concise 2–3 sentence description, and re-embeds the result.
+    /// Safe to re-run: overwrites existing descriptions with richer text-derived versions.
+    EnrichEntities {
+        /// Inference URL for the summarization LLM (default: http://localhost:11434)
+        #[arg(long, default_value = "http://localhost:11434", value_name = "URL")]
+        inference_url: String,
+
+        /// Comma-separated inference URLs for round-robin multi-endpoint dispatch.
+        /// Overrides --inference-url when set.
+        #[arg(long, value_name = "URLS")]
+        inference_urls: Option<String>,
+
+        /// Model name (default: llama3.1:8b)
+        #[arg(long, default_value = "llama3.1:8b", value_name = "MODEL")]
+        model: String,
+
+        /// Parallel LLM workers (default: 4)
+        #[arg(long, default_value = "4", value_name = "N")]
+        workers: usize,
+
+        /// Only enrich entities with at least this many mentions (default: 2)
+        #[arg(long, default_value = "2", value_name = "N")]
+        min_mentions: u32,
+
+        /// Comma-separated entity types to enrich (default: Person,Place,Organization)
+        #[arg(long, default_value = "Person,Place,Organization", value_name = "TYPES")]
+        entity_types: String,
+
+        /// Maximum number of entities to enrich in this run (default: all)
+        #[arg(long, value_name = "N")]
+        limit: Option<usize>,
+    },
+
     /// Export the knowledge graph to an Obsidian vault
     Export {
         /// Output directory for the vault (created if absent)

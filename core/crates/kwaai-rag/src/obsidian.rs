@@ -86,6 +86,11 @@ pub fn export_vault(graph: &GraphStore, out_dir: &Path, kb_name: &str) -> Result
     let app_json = r#"{"legacyEditor":false,"livePreview":true}"#;
     std::fs::write(out_dir.join(".obsidian").join("app.json"), app_json)?;
 
+    // Graph color groups: Person=coral, Place=sky-blue, Organization=sage-green
+    // rgb values are 24-bit integers: (R << 16) | (G << 8) | B
+    let graph_json = r#"{"colorGroups":[{"query":"tag:#Person","color":{"a":1,"rgb":16740419}},{"query":"tag:#Place","color":{"a":1,"rgb":4367861}},{"query":"tag:#Organization","color":{"a":1,"rgb":6732650}}]}"#;
+    std::fs::write(out_dir.join(".obsidian").join("graph.json"), graph_json)?;
+
     let mut stats = ExportStats::default();
     let exported_at = chrono_iso();
 

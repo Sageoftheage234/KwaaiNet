@@ -3529,6 +3529,28 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                 println!("  Run `rag eval` to measure accuracy impact.\n");
             }
 
+            GraphAction::EnrichEntities {
+                inference_url,
+                inference_urls,
+                model,
+                workers,
+                min_mentions,
+                entity_types,
+                limit,
+            } => {
+                return cmd_enrich_entities(
+                    inference_url,
+                    inference_urls,
+                    model,
+                    workers,
+                    min_mentions,
+                    entity_types,
+                    limit,
+                    kb,
+                )
+                .await;
+            }
+
             GraphAction::Export { output_dir } => {
                 return cmd_export(output_dir, kb).await;
             }
@@ -6452,6 +6474,89 @@ fn collect_files(
         }
     }
     Ok(())
+}
+
+// ── enrich-entities ────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_arguments)]
+async fn cmd_enrich_entities(
+    inference_url: String,
+    inference_urls: Option<String>,
+    model: String,
+    workers: usize,
+    min_mentions: u32,
+    entity_types: String,
+    limit: Option<usize>,
+    kb: String,
+) -> Result<()> {
+    #[cfg(not(feature = "storage"))]
+    bail!("RAG requires the 'storage' feature.");
+
+    #[cfg(feature = "storage")]
+    {
+        use kwaai_rag::enrich::{EnrichConfig, enrich_entity_descriptions};
+
+        let (rag_cfg, tenant_id) = load_rag_config_for(&kb)?;
+        let embed = EmbedClient::new(rag_cfg.embed_url.clone(), Some(rag_cfg.embed_model.clone()));
+
+        let effective_url = inference_urls
+            .as_deref()
+            .and_then(|u| u.split(',').next())
+            .map(|s| s.trim().to_string())
+            .unwrap_or(inference_url);
+
+        let types: Vec<String> = entity_types
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        let cfg = EnrichConfig {
+            entity_types: types,
+            min_mentions,
+            limit: limit.unwrap_or(usize::MAX),
+            workers,
+            ..Default::default()
+        };
+
+        print_box_header(&format!("Enrich Entity Descriptions ({})", kb));
+        print_info(&format!("  Inference URL: {}", effective_url));
+        print_info(&format!("  Model:         {}", model));
+        print_info(&format!("  Workers:       {}", workers));
+        print_info(&format!("  Min mentions:  {}", min_mentions));
+        print_info(&format!("  Entity types:  {}", entity_types));
+        if let Some(l) = limit {
+            print_info(&format!("  Limit:         {}", l));
+        }
+
+        let data_dir = rag_cfg.data_dir();
+        let report = enrich_entity_descriptions(
+            &cfg,
+            &model,
+            &effective_url,
+            &embed,
+            &data_dir,
+            tenant_id,
+            |done, total, label| {
+                if done % 10 == 0 || done == total {
+                    print_info(&format!("  [{done}/{total}] {label}"));
+                }
+            },
+        )
+        .await?;
+
+        print_success(&format!(
+            "Enrich complete — {} processed, {} updated, {} skipped (no evidence), {} errors",
+            report.entities_processed,
+            report.entities_updated,
+            report.entities_skipped_no_evidence,
+            report.errors.len(),
+        ));
+        for e in &report.errors {
+            print_warning(e);
+        }
+        Ok(())
+    }
 }
 
 // ── export ─────────────────────────────────────────────────────────────────────

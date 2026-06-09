@@ -6,6 +6,7 @@ pub mod document;
 pub mod dream;
 pub mod dream_tasks;
 pub mod embedder;
+pub mod enrich;
 pub mod eval_retrieve;
 pub mod family;
 pub mod gliner;

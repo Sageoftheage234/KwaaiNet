@@ -73,7 +73,13 @@ pub const RELATION_TYPES: &[&str] = &[
     "founded",
     "manages",
     "belongs_to",
+    "member_of",
+    "led",
     "endorses",
+    // Spatial / biographical
+    "lived_in",
+    "visited",
+    "built",
     // Structural
     "part_of",
     "contains",

@@ -30,6 +30,14 @@ pub struct PersonSeed {
     pub aliases: Vec<String>,
     #[serde(default)]
     pub description: String,
+    /// Entity type for this seed entry. Defaults to "Person" for backward compatibility.
+    /// Set to "Organization" or "Place" to seed non-person entities.
+    #[serde(default = "default_entity_type")]
+    pub entity_type: String,
+}
+
+fn default_entity_type() -> String {
+    "Person".to_string()
 }
 
 #[derive(Deserialize)]
@@ -85,7 +93,7 @@ pub async fn seed_family_tree(
         };
         let embedding = embed.embed_one(&embed_text).await.unwrap_or_default();
 
-        let eid = entity_id(&person.canonical, "Person");
+        let eid = entity_id(&person.canonical, &person.entity_type);
         let existing = graph.get_entity(eid).cloned();
 
         // Merge existing stored aliases with all YAML-declared aliases so that even
@@ -104,7 +112,7 @@ pub async fn seed_family_tree(
         let node = EntityNode {
             id: eid,
             name: person.canonical.clone(),
-            entity_type: "Person".to_string(),
+            entity_type: person.entity_type.clone(),
             description: if !desc.is_empty() {
                 desc
             } else {

@@ -322,6 +322,90 @@ persons:
       - "Dr. Tabata"
       - "B.M. Tabata"
 
+  # ─── Key organizations ───────────────────────────────────────────────────────
+
+  - canonical: "Non-European Unity Movement"
+    entity_type: Organization
+    aliases:
+      - "NEUM"
+      - "Non European Unity Movement"
+    description: >-
+      The Non-European Unity Movement (NEUM) was a South African political
+      movement founded in 1943 that united non-European political organisations
+      opposed to apartheid and racial discrimination. It advocated non-collaboration
+      with apartheid institutions and was closely connected to the All African
+      Convention and the Teachers League of South Africa.
+
+  - canonical: "Teachers League of South Africa"
+    entity_type: Organization
+    aliases:
+      - "TLSA"
+      - "Teachers' League of South Africa"
+    description: >-
+      The Teachers League of South Africa (TLSA) was a non-European teachers'
+      professional body that took a strong political stance against apartheid
+      education policies. Yousuf Rassool was an active member and involved in
+      its work.
+
+  - canonical: "New Era Fellowship"
+    entity_type: Organization
+    aliases:
+      - "NEF"
+    description: >-
+      The New Era Fellowship (NEF) was a Cape Town educational and cultural
+      organisation that held public lectures and discussions on political and
+      social issues. It was closely associated with the Non-European Unity
+      Movement and was attended by leading anti-apartheid intellectuals.
+
+  - canonical: "All African Convention"
+    entity_type: Organization
+    aliases:
+      - "AAC"
+      - "All-African Convention"
+    description: >-
+      The All African Convention (AAC) was a South African political body
+      formed in 1935 and affiliated with the Non-European Unity Movement.
+      It represented African political organisations opposed to the Hertzog
+      Bills and continued to oppose apartheid alongside the NEUM.
+
+  - canonical: "Hanaffi Quwatul Islam Mosque"
+    entity_type: Organization
+    aliases:
+      - "Quwatul Islam Mosque"
+      - "Loop Street Mosque"
+      - "Hanafi Mosque"
+      - "Hanaffi Mosque"
+    description: >-
+      The Hanaffi Quwatul Islam Mosque in Loop Street, Cape Town, was founded
+      by Haji Joosub Maulvi Hamid Gool and completed in 1898. It served the
+      Muslim community of District Six and the surrounding area.
+
+  # ─── Key places ───────────────────────────────────────────────────────────────
+
+  - canonical: "District Six"
+    entity_type: Place
+    aliases:
+      - "District 6"
+      - "the District"
+    description: >-
+      District Six was a vibrant, multi-cultural inner-city neighbourhood of
+      Cape Town, South Africa. It was home to the Rassool and Gool families
+      and thousands of other residents before the apartheid government forcibly
+      removed its population and demolished its homes under the Group Areas Act
+      in the 1970s and 1980s.
+
+  - canonical: "7 Buitencingle Street"
+    entity_type: Place
+    aliases:
+      - "Buitencingle Street"
+      - "the Buitencingle mansion"
+      - "7 Buitenkingle Street"
+    description: >-
+      7 Buitencingle Street was the grand 13-room mansion in District Six built
+      by Haji Joosub Maulvi Hamid Gool. It was the family home of the Gool
+      family and a gathering place for prominent visitors including Gandhi and
+      Dr. Abdullah Abdurahman.
+
 relations:
 
   # ─── JMH Gool's two marriages ──────────────────────────────────────────────
@@ -430,3 +514,23 @@ relations:
   - { from: "Mohandas Karamchand Gandhi", to: "Manilal Gandhi", type: "parent_of" }
   - { from: "Louis Messaris",             to: "Tykie Messaris", type: "parent_of" }
   - { from: "Omar Abrahams",              to: "Jameel",         type: "sibling_of" }
+
+  # ─── Person → Organization (membership / founding) ───────────────────────────
+  - { from: "Yousuf Rassool",              to: "Non-European Unity Movement", type: "member_of" }
+  - { from: "Yousuf Rassool",              to: "Teachers League of South Africa", type: "member_of" }
+  - { from: "Yousuf Rassool",              to: "New Era Fellowship",           type: "member_of" }
+  - { from: "Cissie Gool",                 to: "Non-European Unity Movement", type: "member_of" }
+  - { from: "I.B. Tabata",                 to: "Non-European Unity Movement", type: "member_of" }
+  - { from: "I.B. Tabata",                 to: "All African Convention",       type: "member_of" }
+  - { from: "Dr. Abdulla Abdurahman",      to: "Non-European Unity Movement", type: "associated_with" }
+  - { from: "Haji Joosub Maulvi Hamid Gool", to: "Hanaffi Quwatul Islam Mosque", type: "founded" }
+  - { from: "Abdul Hamid Gool",            to: "Non-European Unity Movement", type: "associated_with" }
+
+  # ─── Person → Place (residence / location) ───────────────────────────────────
+  - { from: "Yousuf Rassool",              to: "District Six",              type: "lived_in" }
+  - { from: "Ayesha Rassool",              to: "District Six",              type: "lived_in" }
+  - { from: "Peter Alexander Rassool",     to: "District Six",              type: "lived_in" }
+  - { from: "Haji Joosub Maulvi Hamid Gool", to: "7 Buitencingle Street",  type: "lived_in" }
+  - { from: "Haji Joosub Maulvi Hamid Gool", to: "District Six",           type: "lived_in" }
+  - { from: "Abdul Hamid Gool",            to: "District Six",              type: "lived_in" }
+  - { from: "Cissie Gool",                 to: "District Six",              type: "lived_in" }
