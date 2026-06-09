@@ -1448,7 +1448,7 @@ async fn extract_entity_centric(
 
     let calls = llm_calls.load(Ordering::Relaxed);
     let chars = context_chars.load(Ordering::Relaxed);
-    let avg_ctx = if calls > 0 { chars / calls } else { 0 };
+    let avg_ctx = chars.checked_div(calls).unwrap_or(0);
     let entity_count = store.lock().map(|g| g.node_count()).unwrap_or(0);
     info!(
         "entity-centric complete: {} calls, {} avg ctx chars, {} entities",
