@@ -3695,7 +3695,10 @@ entities or omit the fictional one entirely.\n\n\
     let body = serde_json::json!({
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
-        "stream": false,
+        // stream: true so Ollama sends headers immediately on first token.
+        // .send() returns in seconds (relay latency only) instead of blocking
+        // until the full generation completes, eliminating 90s send timeouts.
+        "stream": true,
         "options": {
             "temperature": 0.1,
             "num_predict": 1024,
@@ -3704,7 +3707,7 @@ entities or omit the fictional one entirely.\n\n\
     });
 
     let send_result = tokio::time::timeout(
-        std::time::Duration::from_secs(90),
+        std::time::Duration::from_secs(30), // relay overhead only — not generation time
         client.post(&url).json(&body).send(),
     )
     .await;
@@ -3715,7 +3718,7 @@ entities or omit the fictional one entirely.\n\n\
             return Ok((vec![], vec![]));
         }
         Err(_) => {
-            tracing::warn!("entity extraction send timed out after 90s");
+            tracing::warn!("entity extraction send timed out after 30s");
             return Ok((vec![], vec![]));
         }
     };
@@ -3725,11 +3728,12 @@ entities or omit the fictional one entirely.\n\n\
         return Ok((vec![], vec![]));
     }
 
-    let v: serde_json::Value =
-        match tokio::time::timeout(std::time::Duration::from_secs(120), resp.json()).await {
-            Ok(Ok(v)) => v,
+    // Read full streaming NDJSON body: each line is {"message":{"content":"..."},"done":bool}
+    let raw_text =
+        match tokio::time::timeout(std::time::Duration::from_secs(120), resp.text()).await {
+            Ok(Ok(t)) => t,
             Ok(Err(e)) => {
-                tracing::warn!("entity extraction parse error: {e}");
+                tracing::warn!("entity extraction body read error: {e}");
                 return Ok((vec![], vec![]));
             }
             Err(_) => {
@@ -3738,7 +3742,21 @@ entities or omit the fictional one entirely.\n\n\
             }
         };
 
-    let content = v["message"]["content"].as_str().unwrap_or("{}");
+    // Accumulate content tokens from each streaming chunk
+    let mut content_buf = String::new();
+    for line in raw_text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+            if let Some(c) = v["message"]["content"].as_str() {
+                content_buf.push_str(c);
+            }
+        }
+    }
+
+    let content = content_buf.trim();
     let cleaned = content
         .trim()
         .trim_start_matches("```json")
