@@ -2557,6 +2557,10 @@ impl GraphStore {
                     {
                         continue;
                     }
+                    // Gate: never merge across entity types (Person ≠ Place, etc.)
+                    if na.entity_type != nc.entity_type {
+                        continue;
+                    }
                     let key = ord_pair(alias, canonical);
                     if seen.insert(key) {
                         out.push((alias, canonical, "honorific"));
@@ -2622,6 +2626,10 @@ impl GraphStore {
                 if let Some(nc) = self.nodes.get(&canonical_id) {
                     if normalize_name(&node.name) == normalize_name(&nc.name) {
                         continue; // Tier 1 handles exact matches
+                    }
+                    // Gate: never merge across entity types (Person ≠ Place, etc.)
+                    if node.entity_type != nc.entity_type {
+                        continue;
                     }
                 }
                 let pair = ord_pair(eid, canonical_id);
@@ -3335,6 +3343,10 @@ impl GraphStore {
                     continue;
                 }
                 if normalize_name(&na.name) == normalize_name(&nb.name) {
+                    continue;
+                }
+                // Gate: never merge across entity types (Person ≠ Place, etc.)
+                if na.entity_type != nb.entity_type {
                     continue;
                 }
                 if let (Some(sa), Some(sb)) = (&na.schema_type, &nb.schema_type) {
