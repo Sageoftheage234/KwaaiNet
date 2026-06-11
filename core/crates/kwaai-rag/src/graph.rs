@@ -671,16 +671,21 @@ impl GraphStore {
                         })
                         .or_insert_with(|| new_fv.clone());
                 }
-                // Recompute description from merged fields, or keep the longer prose description.
+                // Recompute description from merged fields, then pick the richest candidate.
+                // Computed-from-fields was previously always preferred, but that caused short
+                // "Name — occupation: X" strings to overwrite rich YAML-seeded prose descriptions.
+                // Rule: pick the longest non-empty candidate across computed, incoming, existing.
                 let computed =
                     description_from_fields(&existing.name, &existing.entity_type, &merged_fields);
-                let best_desc = if !computed.is_empty() {
-                    computed
-                } else if node.description.len() > existing.description.len() {
-                    node.description.clone()
-                } else {
-                    existing.description.clone()
-                };
+                let best_desc = [
+                    computed,
+                    node.description.clone(),
+                    existing.description.clone(),
+                ]
+                .into_iter()
+                .filter(|d| !d.is_empty())
+                .max_by_key(|d| d.len())
+                .unwrap_or_default();
                 let best_emb = if best_desc == existing.description {
                     existing.embedding.clone()
                 } else {
@@ -1103,6 +1108,25 @@ impl GraphStore {
             }
         }
         Ok(out)
+    }
+
+    /// Returns true when the relation was planted by the family-tree seed (evidence_chunk_id == 0).
+    /// LLM-extracted-only relations have real chunk IDs; seeded relations always include 0.
+    pub fn is_relation_seeded(&self, src_id: i64, dst_id: i64, rel_type: &str) -> bool {
+        let key = relation_key(src_id, dst_id, rel_type);
+        let Ok(rtxn) = self.db.begin_read() else {
+            return false;
+        };
+        let Ok(table) = rtxn.open_table(RELATIONS_TABLE) else {
+            return false;
+        };
+        table
+            .get(key.as_slice())
+            .ok()
+            .flatten()
+            .and_then(|v| serde_json::from_slice::<RelationRecord>(v.value()).ok())
+            .map(|r| r.evidence_chunk_ids.contains(&0))
+            .unwrap_or(false)
     }
 
     /// For each `spouse_of` pair, identify the female entity (by gender field) and search

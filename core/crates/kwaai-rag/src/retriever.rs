@@ -286,16 +286,24 @@ fn resolve_author_relative(query: &str, anchor_id: i64, graph: &GraphStore) -> O
     let q = query.to_lowercase();
     let neighbors = graph.neighbors_of(anchor_id);
 
-    // Wife / spouse
+    // Wife / spouse — prefer seeded (family-tree) edges; fall back to first if none seeded.
+    // Without this, LLM-hallucinated spouse_of edges (e.g. "Wahida Gool spouse_of Yousuf")
+    // rank ahead of the curator-gold Nazima Rassool edge because they happen to come first.
     if q.contains("wife") || q.contains("spouse") {
-        return neighbors
+        let spouses: Vec<i64> = neighbors
             .iter()
-            .find(|(_, rel, _)| rel == "spouse_of")
-            .map(|(id, _, _)| *id);
+            .filter(|(_, rel, _)| rel == "spouse_of")
+            .map(|(id, _, _)| *id)
+            .collect();
+        return spouses
+            .iter()
+            .find(|&&id| graph.is_relation_seeded(anchor_id, id, "spouse_of"))
+            .or_else(|| spouses.first())
+            .copied();
     }
 
-    // Mother
-    if q.contains("mother") || q.contains(" mom") || q.contains("mama") {
+    // Mother — guard against "grandmother" matching here
+    if (q.contains("mother") && !q.contains("grandmother")) || q.contains(" mom") || q.contains("mama") {
         return neighbors
             .iter()
             .filter(|(_, rel, _)| rel == "child_of")
@@ -309,8 +317,8 @@ fn resolve_author_relative(query: &str, anchor_id: i64, graph: &GraphStore) -> O
             .map(|(id, _, _)| *id);
     }
 
-    // Father
-    if q.contains("father") || q.contains(" dad") || q.contains("papa") {
+    // Father — guard against "grandfather" matching here
+    if (q.contains("father") && !q.contains("grandfather")) || q.contains(" dad") || q.contains("papa") {
         return neighbors
             .iter()
             .filter(|(_, rel, _)| rel == "child_of")
