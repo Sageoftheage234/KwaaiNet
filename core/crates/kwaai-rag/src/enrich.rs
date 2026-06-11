@@ -1,8 +1,9 @@
-//! Entity description enrichment: build paragraph summaries from all evidence chunks.
+//! Entity metadata enrichment: build descriptions and extract structured metadata
+//! (gender, etc.) from all evidence chunks.
 //!
-//! `enrich_entity_descriptions()` iterates entities, collects all linked chunk text,
-//! calls an LLM to write a concise description, and persists + re-embeds the result.
-//! Think of it as a targeted dream pass focused solely on summary quality.
+//! Each qualifying entity gets all its linked chunk text gathered, then a single
+//! LLM call produces a JSON payload with `description` and (for Person entities)
+//! `gender`. Existing non-empty values are preserved unless `force` is true.
 
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -29,6 +30,10 @@ pub struct EnrichConfig {
     pub workers: usize,
     /// Max chunks to include as evidence per entity (default: 20).
     pub fetch_limit: usize,
+    /// If true, overwrite fields that already have a value (default: false).
+    pub force: bool,
+    /// If true (default), extract gender for Person entities from text evidence.
+    pub extract_gender: bool,
 }
 
 impl Default for EnrichConfig {
@@ -43,6 +48,8 @@ impl Default for EnrichConfig {
             limit: usize::MAX,
             workers: 4,
             fetch_limit: 20,
+            force: false,
+            extract_gender: true,
         }
     }
 }
@@ -52,22 +59,34 @@ pub struct EnrichReport {
     pub entities_processed: usize,
     pub entities_updated: usize,
     pub entities_skipped_no_evidence: usize,
+    /// Number of Person entities that had gender set or updated.
+    pub genders_set: usize,
     pub errors: Vec<String>,
 }
 
-// ── Work item ─────────────────────────────────────────────────────────────────
+// ── Internal types ─────────────────────────────────────────────────────────────
 
 struct WorkItem {
     id: i64,
     name: String,
     entity_type: String,
     current_desc: String,
+    current_gender: Option<String>,
+    /// Whether the entity needs description enrichment in this run.
+    need_desc: bool,
+    /// Whether the entity needs gender extraction in this run.
+    need_gender: bool,
     evidence_text: String,
 }
 
-// ── Public API ────────────────────────────────────────────────────────────────
+struct EnrichResult {
+    description: Option<String>,
+    gender: Option<String>,
+}
 
-/// Enrich entity descriptions for all qualifying entities in the knowledge base.
+// ── Public API ─────────────────────────────────────────────────────────────────
+
+/// Enrich entity metadata for all qualifying entities in the knowledge base.
 ///
 /// Progress callback receives `(done, total, label)`.
 pub async fn enrich_entity_descriptions(
@@ -81,11 +100,10 @@ pub async fn enrich_entity_descriptions(
 ) -> Result<EnrichReport> {
     let mut report = EnrichReport::default();
 
-    // ── Phase 1: build work items (evidence text loaded here) ─────────────────
+    // ── Phase 1: build work items ─────────────────────────────────────────────
     let work_items: Vec<WorkItem> = {
         let store = GraphStore::open(data_dir, tenant_id)?;
         let meta = MetaStore::open(data_dir, tenant_id)?;
-
         let mut items: Vec<WorkItem> = Vec::new();
 
         for node in store.all_entities() {
@@ -97,6 +115,17 @@ pub async fn enrich_entity_descriptions(
                 continue;
             }
             if node.mention_count < cfg.min_mentions {
+                continue;
+            }
+
+            let is_person = node.entity_type.eq_ignore_ascii_case("person");
+            let need_desc = cfg.force || node.description.is_empty();
+            let need_gender = cfg.extract_gender
+                && is_person
+                && (cfg.force || node.gender.is_none());
+
+            // Skip if nothing to do for this entity
+            if !need_desc && !need_gender {
                 continue;
             }
 
@@ -139,6 +168,9 @@ pub async fn enrich_entity_descriptions(
                 name: node.name.clone(),
                 entity_type: node.entity_type.clone(),
                 current_desc: node.description.clone(),
+                current_gender: node.gender.clone(),
+                need_desc,
+                need_gender,
                 evidence_text,
             });
 
@@ -160,7 +192,7 @@ pub async fn enrich_entity_descriptions(
     let model_arc = Arc::new(model.to_string());
     let counter = Arc::new(AtomicUsize::new(0));
 
-    let (tx, mut rx) = mpsc::channel::<(i64, Option<String>)>(total.max(1));
+    let (tx, mut rx) = mpsc::channel::<(i64, EnrichResult)>(total.max(1));
 
     for item in work_items {
         let permit = sem.clone().acquire_owned().await.expect("semaphore closed");
@@ -171,49 +203,70 @@ pub async fn enrich_entity_descriptions(
 
         tokio::spawn(async move {
             let _permit = permit;
-            let desc =
-                call_summarize(&item.name, &item.entity_type, &item.current_desc, &item.evidence_text, &url, &model_clone)
-                    .await;
+            let result = call_enrich(
+                &item.name,
+                &item.entity_type,
+                &item.current_desc,
+                item.current_gender.as_deref(),
+                &item.evidence_text,
+                &url,
+                &model_clone,
+                item.need_desc,
+                item.need_gender,
+            )
+            .await;
             counter.fetch_add(1, Ordering::Relaxed);
-            let _ = tx.send((item.id, desc)).await;
+            let _ = tx.send((item.id, result)).await;
         });
     }
     drop(tx);
 
-    let mut updates: Vec<(i64, String)> = Vec::new();
+    let mut updates: Vec<(i64, EnrichResult)> = Vec::new();
     let mut done = 0usize;
-    while let Some((eid, desc_opt)) = rx.recv().await {
+    while let Some((eid, result)) = rx.recv().await {
         done += 1;
         progress(done, total, "enriching");
-        if let Some(desc) = desc_opt {
-            updates.push((eid, desc));
+        if result.description.is_some() || result.gender.is_some() {
+            updates.push((eid, result));
         }
     }
 
     report.entities_processed = done;
 
     // ── Phase 3: write updates + re-embed ─────────────────────────────────────
-    let mut store = GraphStore::open(data_dir, tenant_id)
-        .context("open graph for writes")?;
+    let mut store = GraphStore::open(data_dir, tenant_id).context("open graph for writes")?;
 
-    for (eid, new_desc) in &updates {
+    for (eid, result) in &updates {
         let node = match store.get_entity(*eid).cloned() {
             Some(n) => n,
             None => continue,
         };
-        let embed_text =
-            GraphStore::entity_embed_text(&node.name, &node.aliases, new_desc);
+
+        let new_desc = result
+            .description
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&node.description);
+
+        let gender_updated = result.gender.is_some();
+        let new_gender = result.gender.clone().or_else(|| node.gender.clone());
+
+        let embed_text = GraphStore::entity_embed_text(&node.name, &node.aliases, new_desc);
         match embed.embed_batch(&[embed_text.as_str()]).await {
             Ok(embs) if !embs.is_empty() => {
                 let updated = crate::graph::EntityNode {
-                    description: new_desc.clone(),
+                    description: new_desc.to_string(),
                     embedding: embs.into_iter().next().unwrap(),
+                    gender: new_gender,
                     ..node
                 };
                 if let Err(e) = store.upsert_entity(updated) {
                     report.errors.push(format!("upsert entity {eid}: {e}"));
                 } else {
                     report.entities_updated += 1;
+                    if gender_updated {
+                        report.genders_set += 1;
+                    }
                 }
             }
             _ => {
@@ -225,16 +278,19 @@ pub async fn enrich_entity_descriptions(
     Ok(report)
 }
 
-// ── LLM summarization call ────────────────────────────────────────────────────
+// ── LLM call ──────────────────────────────────────────────────────────────────
 
-async fn call_summarize(
+async fn call_enrich(
     name: &str,
     entity_type: &str,
     current_desc: &str,
+    _current_gender: Option<&str>,
     evidence_text: &str,
     url: &str,
     model: &str,
-) -> Option<String> {
+    _need_desc: bool,
+    need_gender: bool,
+) -> EnrichResult {
     let type_label = match entity_type.to_lowercase().as_str() {
         "person" => "person",
         "place" | "location" => "place or location",
@@ -243,21 +299,92 @@ async fn call_summarize(
     };
 
     let existing_hint = if !current_desc.is_empty() {
-        format!("\nExisting summary: {current_desc}\n")
+        format!("\nExisting summary (may be refined): {current_desc}\n")
     } else {
         String::new()
     };
 
-    let prompt = format!(
-        "You are a knowledge extraction assistant working with a historical memoir.{existing_hint}\n\
-         Below are all excerpts from the document that mention \"{name}\" (a {type_label}):\n\n\
-         {evidence_text}\n\n\
-         Based ONLY on the excerpts above, write a concise 2–3 sentence description of \"{name}\" \
-         that captures: who or what they are, their significance in the story, and any key \
-         relationships or roles. Do NOT add information not present in the excerpts. \
-         Output ONLY the description paragraph."
-    );
+    let prompt = if need_gender {
+        // JSON-mode prompt for Person entities: description + gender
+        format!(
+            "You are a knowledge extraction assistant working with a historical memoir.{existing_hint}\n\
+             Below are all excerpts from the document that mention \"{name}\" (a {type_label}):\n\n\
+             {evidence_text}\n\n\
+             Based ONLY on the excerpts above, return ONLY a JSON object with these two fields \
+             (no other text, no markdown fences):\n\
+             {{\n  \"description\": \"<2-3 sentences: who {name} is, their significance, \
+             key relationships — text-grounded only>\",\n\
+               \"gender\": <\"Male\" | \"Female\" | null>\n\
+             }}\n\n\
+             For gender, look for DIRECT TEXTUAL EVIDENCE:\n\
+             - Pronouns: he/him/his/himself → \"Male\"; she/her/hers/herself → \"Female\"\n\
+             - Titles: Mr./Sir/Uncle → \"Male\"; Mrs./Miss/Madam/Aunt → \"Female\"\n\
+             - Role words: son/brother/father/grandson → \"Male\"; daughter/sister/mother/granddaughter → \"Female\"\n\
+             - Explicit statements: \"a man\", \"a woman\", \"the boy\", \"the girl\"\n\
+             Return null if the evidence is absent or ambiguous."
+        )
+    } else {
+        // Plain prose for non-Person entities or when only description is needed
+        format!(
+            "You are a knowledge extraction assistant working with a historical memoir.{existing_hint}\n\
+             Below are all excerpts from the document that mention \"{name}\" (a {type_label}):\n\n\
+             {evidence_text}\n\n\
+             Based ONLY on the excerpts above, write a concise 2–3 sentence description of \"{name}\" \
+             that captures: who or what they are, their significance in the story, and any key \
+             relationships or roles. Do NOT add information not present in the excerpts. \
+             Output ONLY the description paragraph."
+        )
+    };
 
+    match call_llm(&prompt, url, model, need_gender).await {
+        Some(text) if need_gender => parse_enrich_json(&text),
+        Some(text) if text.len() >= 20 => EnrichResult {
+            description: Some(text),
+            gender: None,
+        },
+        _ => EnrichResult {
+            description: None,
+            gender: None,
+        },
+    }
+}
+
+fn parse_enrich_json(text: &str) -> EnrichResult {
+    // Strip markdown code fences
+    let cleaned = text
+        .trim()
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+
+    // Find JSON object bounds (model sometimes prepends/appends stray text)
+    let start = cleaned.find('{').unwrap_or(0);
+    let end = cleaned.rfind('}').map(|i| i + 1).unwrap_or(cleaned.len());
+    let json_str = if end > start { &cleaned[start..end] } else { cleaned };
+
+    let v: serde_json::Value = match serde_json::from_str(json_str) {
+        Ok(v) => v,
+        Err(_) => return EnrichResult { description: None, gender: None },
+    };
+
+    let description = v["description"]
+        .as_str()
+        .map(|s| s.trim().to_string())
+        .filter(|s| s.len() >= 20);
+
+    let gender = v["gender"]
+        .as_str()
+        .and_then(|s| match s.trim().to_lowercase().as_str() {
+            "male" => Some("Male".to_string()),
+            "female" => Some("Female".to_string()),
+            _ => None,
+        });
+
+    EnrichResult { description, gender }
+}
+
+async fn call_llm(prompt: &str, url: &str, model: &str, json_mode: bool) -> Option<String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(120))
         .connect_timeout(std::time::Duration::from_secs(10))
@@ -265,12 +392,16 @@ async fn call_summarize(
         .ok()?;
 
     let full_url = format!("{}/v1/chat/completions", url.trim_end_matches('/'));
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.2,
-        "max_tokens": 300,
+        "temperature": 0.1,
+        "max_tokens": 400,
     });
+    // Ollama JSON mode — forces the response to be valid JSON
+    if json_mode {
+        body["format"] = serde_json::json!("json");
+    }
 
     let resp = tokio::time::timeout(
         std::time::Duration::from_secs(90),
@@ -298,9 +429,5 @@ async fn call_summarize(
         .trim()
         .to_string();
 
-    if text.len() < 20 {
-        None
-    } else {
-        Some(text)
-    }
+    if text.is_empty() { None } else { Some(text) }
 }

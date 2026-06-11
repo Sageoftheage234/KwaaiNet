@@ -1950,10 +1950,10 @@ pub enum GraphAction {
         doc_schema: std::path::PathBuf,
     },
 
-    /// Build LLM-generated paragraph summaries for all entities from their evidence chunks.
-    /// Iterates every qualifying entity, gathers all linked chunk text, calls the LLM to
-    /// write a concise 2–3 sentence description, and re-embeds the result.
-    /// Safe to re-run: overwrites existing descriptions with richer text-derived versions.
+    /// Build LLM-generated descriptions and extract structured metadata (gender, etc.) for all
+    /// entities from their evidence chunks. Person entities also get gender extracted from
+    /// textual evidence (pronouns, titles, role words). Safe to re-run: existing non-empty
+    /// values are preserved unless --force is set.
     EnrichEntities {
         /// Inference URL for the summarization LLM (default: http://localhost:11434)
         #[arg(long, default_value = "http://localhost:11434", value_name = "URL")]
@@ -1983,6 +1983,14 @@ pub enum GraphAction {
         /// Maximum number of entities to enrich in this run (default: all)
         #[arg(long, value_name = "N")]
         limit: Option<usize>,
+
+        /// Overwrite fields that already have a value (default: skip populated fields)
+        #[arg(long)]
+        force: bool,
+
+        /// Skip gender extraction for Person entities (default: extract gender)
+        #[arg(long)]
+        no_gender: bool,
     },
 
     /// Propose entity merges derived from marriage (spouse_of) relations.

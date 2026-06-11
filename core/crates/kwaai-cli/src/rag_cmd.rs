@@ -3579,6 +3579,8 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                 min_mentions,
                 entity_types,
                 limit,
+                force,
+                no_gender,
             } => {
                 return cmd_enrich_entities(
                     inference_url,
@@ -3588,6 +3590,8 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                     min_mentions,
                     entity_types,
                     limit,
+                    force,
+                    !no_gender,
                     kb,
                 )
                 .await;
@@ -6860,6 +6864,8 @@ async fn cmd_enrich_entities(
     min_mentions: u32,
     entity_types: String,
     limit: Option<usize>,
+    force: bool,
+    extract_gender: bool,
     kb: String,
 ) -> Result<()> {
     #[cfg(not(feature = "storage"))]
@@ -6889,17 +6895,21 @@ async fn cmd_enrich_entities(
             min_mentions,
             limit: limit.unwrap_or(usize::MAX),
             workers,
+            force,
+            extract_gender,
             ..Default::default()
         };
 
-        print_box_header(&format!("Enrich Entity Descriptions ({})", kb));
-        print_info(&format!("  Inference URL: {}", effective_url));
-        print_info(&format!("  Model:         {}", model));
-        print_info(&format!("  Workers:       {}", workers));
-        print_info(&format!("  Min mentions:  {}", min_mentions));
-        print_info(&format!("  Entity types:  {}", entity_types));
+        print_box_header(&format!("Enrich Entity Metadata ({})", kb));
+        print_info(&format!("  Inference URL:   {}", effective_url));
+        print_info(&format!("  Model:           {}", model));
+        print_info(&format!("  Workers:         {}", workers));
+        print_info(&format!("  Min mentions:    {}", min_mentions));
+        print_info(&format!("  Entity types:    {}", entity_types));
+        print_info(&format!("  Force overwrite: {}", force));
+        print_info(&format!("  Extract gender:  {}", extract_gender));
         if let Some(l) = limit {
-            print_info(&format!("  Limit:         {}", l));
+            print_info(&format!("  Limit:           {}", l));
         }
 
         // Resolve p2p:// or mux:// URLs to a local HTTP proxy before handing off to
@@ -6936,18 +6946,19 @@ async fn cmd_enrich_entities(
             &embed,
             &data_dir,
             tenant_id,
-            |done, total, label| {
+            |done, total, _label| {
                 if done % 10 == 0 || done == total {
-                    print_info(&format!("  [{done}/{total}] {label}"));
+                    print_info(&format!("  [{done}/{total}]"));
                 }
             },
         )
         .await?;
 
         print_success(&format!(
-            "Enrich complete — {} processed, {} updated, {} skipped (no evidence), {} errors",
+            "Enrich complete — {} processed, {} updated ({} genders set), {} skipped (no evidence), {} errors",
             report.entities_processed,
             report.entities_updated,
+            report.genders_set,
             report.entities_skipped_no_evidence,
             report.errors.len(),
         ));
