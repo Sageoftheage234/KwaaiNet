@@ -251,6 +251,7 @@ pub fn to_family_tree(payload: &NbPayload) -> crate::family::FamilyTree {
                 aliases: e.aliases.clone(),
                 description: desc,
                 entity_type: "Person".to_string(),
+                gender: None,
             }
         })
         .collect();

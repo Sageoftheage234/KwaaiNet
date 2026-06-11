@@ -11,6 +11,7 @@ persons:
   # ─── Patriarch ─────────────────────────────────────────────────────────────
 
   - canonical: "Haji Joosub Maulvi Hamid Gool"
+    gender: "Male"
     aliases:
       - "J.M.H. Gool"
       - "JMH Gool"
@@ -39,6 +40,7 @@ persons:
       Gandhi, Cecil Rhodes, and Dr. Abdullah Abdurahman personally.
 
   - canonical: "Bibi Gool"
+    gender: "Female"
     aliases:
       - "Bibi"
       - "Peari Beghum"
@@ -47,6 +49,7 @@ persons:
       Gool. She was mother to Ayesha (Lallie), Mohamed Saaid, and Zohra.
 
   - canonical: "Wahida Gool"
+    gender: "Female"
     aliases:
       - "Wahida Ta'al"
       - "Wahida"
@@ -59,14 +62,22 @@ persons:
   # ─── Branch 1: JMH + Bibi ──────────────────────────────────────────────────
 
   - canonical: "Ayesha Rassool"
+    gender: "Female"
     aliases:
       - "Lallie"
       - "Ayesha"
       - "Lallie Gool"
       - "Ayesha Gool"
       - "Ayesha Lallie Gool"
+    description: >-
+      Ayesha Lallie Gool was the author's mother, daughter of Haji Joosub
+      Maulvi Hamid Gool and his first wife Bibi Gool. She grew up in the
+      grand Gool mansion at 7 Buitencingle Street in District Six. She
+      married Peter Alexander Rassool (Peerbhai) and raised eight children:
+      Yousuf, Abdul, Fazil, Zain, Rasheda, Berina, Yasmin, and Nasim.
 
   - canonical: "Mohamed Saaid Gool"
+    gender: "Male"
     aliases:
       - "Uncle Aity Mohamed Saaid Gool"
       - "Aity (Mohamed Saaid Gool)"
@@ -74,6 +85,7 @@ persons:
       - "Aity"
 
   - canonical: "Zohra Abdurahman"
+    gender: "Female"
     aliases:
       - "Zohra (Auntie Jolly)"
       - "Auntie Jolly"
@@ -84,10 +96,12 @@ persons:
       - "Zohra Jolly Gool"
 
   - canonical: "Ahmed Abdurahman"
+    gender: "Male"
 
   # ─── Branch 2: JMH + Wahida ────────────────────────────────────────────────
 
   - canonical: "Abdul Hamid Gool"
+    gender: "Male"
     aliases:
       - "A.H. Gool"
       - "AH Gool"
@@ -110,6 +124,7 @@ persons:
       extended Gool family circle.
 
   - canonical: "Goolam Gool"
+    gender: "Male"
     aliases:
       - "Dr Goolam Gool"
       - "Dr. Goolam"
@@ -118,15 +133,18 @@ persons:
       - "Dr_ Goolam"
 
   - canonical: "Jane Gool-Tabata"
+    gender: "Female"
     aliases:
       - "Jane Gool"
       - "Janab"
 
   - canonical: "Minnie Gool"
+    gender: "Female"
     aliases:
       - "Amina Gool"
 
   - canonical: "Fatima Gool"
+    gender: "Female"
     aliases:
       - "Fatima"
       - "Fatima (Timmie)"
@@ -135,17 +153,20 @@ persons:
       - "Aunt Fatima"
 
   - canonical: "Mariam Gool"
+    gender: "Female"
     aliases:
       - "Margie"
       - "Mariam (Margie)"
 
   - canonical: "Zobeida Gool"
+    gender: "Female"
     aliases:
       - "Zobeida"
       - "Billy"
       - "Zobeida (Billy)"
 
   - canonical: "Mohammed Hanief Gool"
+    gender: "Male"
     aliases:
       - "Mohammed Hanief"
       - "Aboeta"
@@ -153,6 +174,7 @@ persons:
   # ─── Abdurahman family (connected by marriage) ─────────────────────────────
 
   - canonical: "Dr. Abdulla Abdurahman"
+    gender: "Male"
     aliases:
       - "Abdulla Abdurahman"
       - "Abdullah Abdurahman"
@@ -167,6 +189,7 @@ persons:
       and visited the Gool family mansion at Buitencingle Street.
 
   - canonical: "Cissie Gool"
+    gender: "Female"
     aliases:
       - "Cissie"
       - "Zainunnisa Cissie Gool"
@@ -185,12 +208,21 @@ persons:
   # ─── Rassool family ─────────────────────────────────────────────────────────
 
   - canonical: "Peter Alexander Rassool"
+    gender: "Male"
     aliases: []
+    description: >-
+      Peter Alexander Rassool was the author's father. He converted to Islam
+      and thereafter became known as Peerbhai (or Peru, as Ayesha called him).
+      He was circumcised as an adult, an event recounted in the memoir. He
+      married Ayesha Lallie Gool (daughter of J.M.H. Gool) and was the father
+      of Yousuf, Abdul, Fazil, Zain, Rasheda, Berina, Yasmin, and Nasim.
 
   - canonical: "Annie Rassool"
+    gender: "Female"
     aliases: []
 
   - canonical: "Yousuf Rassool"
+    gender: "Male"
     aliases:
       - "Joe Rassool"
       - "Yousuf (Joe) Rassool"
@@ -213,6 +245,7 @@ persons:
       has three children: Feyruz, Reza, and Zarina.
 
   - canonical: "Nazima Rassool"
+    gender: "Female"
     aliases:
       - "Nazima"
       - "Professor Nazima Rassool"
@@ -226,80 +259,96 @@ persons:
       a rich historical layer previously unrecorded by any historian.
 
   - canonical: "Abdul Rassool"
+    gender: "Male"
     aliases:
       - "Abdul"
       - "Doolie"
       - "Doolie Rassool"
 
   - canonical: "Fazil Rassool"
+    gender: "Male"
     aliases:
       - "Fazil"
 
   - canonical: "Zain Rassool"
+    gender: "Male"
     aliases:
       - "Zain"
 
   - canonical: "Rasheda Rassool"
+    gender: "Female"
     aliases:
       - "Rasheda"
 
   - canonical: "Berina Rassool"
+    gender: "Female"
     aliases:
       - "Berina"
 
   - canonical: "Yasmin Rassool"
+    gender: "Female"
     aliases:
       - "Yasmin"
       - "Jessie"
       - "Jessie Rassool"
 
   - canonical: "Nasim Rassool"
+    gender: "Female"
     aliases:
       - "Nasim"
 
   - canonical: "Feyruz Rassool"
+    gender: "Female"
     aliases:
       - "Feyruz"
 
   - canonical: "Reza Rassool"
+    gender: "Male"
     aliases:
       - "Reza"
 
   - canonical: "Zarina Rassool"
+    gender: "Female"
     aliases:
       - "Zarina"
 
   # ─── Fostered relatives (the Ally/Noor line) ───────────────────────────────
 
   - canonical: "Gadija Noor"
+    gender: "Female"
     aliases:
       - "Gadija"
       - "Auntie Dij"
 
   - canonical: "Hanief Ally"
+    gender: "Male"
     aliases:
       - "Uncle Hanief"
       - "Sayed Hanief Ally"
       - "Hanief"
 
   - canonical: "Toetie Ally"
+    gender: "Female"
     aliases:
       - "Toetie"
       - "Auntie Toetie"
 
   - canonical: "Hamid Ally"
+    gender: "Male"
     aliases:
       - "Midi"
 
   # ─── Hassen Mall (friend of the narrator) ──────────────────────────────────
 
   - canonical: "Hassen Mall"
+    gender: "Male"
     aliases:
       - "Hassen"
 
   # ─── Mohandas Karamchand Gandhi (historical figure) ────────────────────────
 
   - canonical: "Mohandas Karamchand Gandhi"
+    gender: "Male"
     aliases:
       - "MK Gandhi"
       - "M.K. Gandhi"
@@ -321,6 +370,7 @@ persons:
   # ─── I.B. Tabata (Jane's husband) ──────────────────────────────────────────
 
   - canonical: "I.B. Tabata"
+    gender: "Male"
     aliases:
       - "Tabata"
       - "I. Tabata"

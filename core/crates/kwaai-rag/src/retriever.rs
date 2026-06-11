@@ -302,34 +302,58 @@ fn resolve_author_relative(query: &str, anchor_id: i64, graph: &GraphStore) -> O
             .copied();
     }
 
-    // Mother — guard against "grandmother" matching here
+    // Mother — guard against "grandmother" matching here.
+    // Use trusted_parent_ids (DB-direct) to avoid bidirectional adj artifacts where
+    // Yousuf's own children appear as child_of neighbours due to inverse edge storage.
+    // Prefer seeded (family-tree) edges; fall back to any female parent.
     if (q.contains("mother") && !q.contains("grandmother")) || q.contains(" mom") || q.contains("mama") {
-        return neighbors
+        let parents = graph.trusted_parent_ids(anchor_id);
+        return parents
             .iter()
-            .filter(|(_, rel, _)| rel == "child_of")
-            .find(|(id, _, _)| {
-                graph
-                    .get_entity(*id)
-                    .and_then(|e| e.gender.clone())
-                    .as_deref()
-                    == Some("Female")
+            .find(|&&id| {
+                graph.is_relation_seeded(anchor_id, id, "child_of")
+                    && graph
+                        .get_entity(id)
+                        .and_then(|e| e.gender.clone())
+                        .as_deref()
+                        == Some("Female")
             })
-            .map(|(id, _, _)| *id);
+            .or_else(|| {
+                parents.iter().find(|&&id| {
+                    graph
+                        .get_entity(id)
+                        .and_then(|e| e.gender.clone())
+                        .as_deref()
+                        == Some("Female")
+                })
+            })
+            .copied();
     }
 
-    // Father — guard against "grandfather" matching here
+    // Father — guard against "grandfather" matching here.
+    // Same trusted_parent_ids approach: prefer seeded, fall back to any male parent.
     if (q.contains("father") && !q.contains("grandfather")) || q.contains(" dad") || q.contains("papa") {
-        return neighbors
+        let parents = graph.trusted_parent_ids(anchor_id);
+        return parents
             .iter()
-            .filter(|(_, rel, _)| rel == "child_of")
-            .find(|(id, _, _)| {
-                graph
-                    .get_entity(*id)
-                    .and_then(|e| e.gender.clone())
-                    .as_deref()
-                    == Some("Male")
+            .find(|&&id| {
+                graph.is_relation_seeded(anchor_id, id, "child_of")
+                    && graph
+                        .get_entity(id)
+                        .and_then(|e| e.gender.clone())
+                        .as_deref()
+                        == Some("Male")
             })
-            .map(|(id, _, _)| *id);
+            .or_else(|| {
+                parents.iter().find(|&&id| {
+                    graph
+                        .get_entity(id)
+                        .and_then(|e| e.gender.clone())
+                        .as_deref()
+                        == Some("Male")
+                })
+            })
+            .copied();
     }
 
     // Grandfather / grandpa — prefer entities with an explicit "grandfather" alias seeded by
@@ -347,20 +371,15 @@ fn resolve_author_relative(query: &str, anchor_id: i64, graph: &GraphStore) -> O
                 return Some(e.id);
             }
         }
-        // Pass 2: graph traversal fallback (noisy but best-effort)
-        let parents: Vec<i64> = neighbors
-            .iter()
-            .filter(|(_, rel, _)| rel == "child_of")
-            .map(|(id, _, _)| *id)
-            .collect();
+        // Pass 2: trusted DB traversal fallback (avoids bidirectional adj artifacts)
+        let parents: Vec<i64> = graph.trusted_parent_ids(anchor_id).into_iter().collect();
         for parent_id in &parents {
-            for (gp_id, rel, _) in graph.neighbors_of(*parent_id) {
-                if rel == "child_of"
-                    && graph
-                        .get_entity(gp_id)
-                        .and_then(|e| e.gender.clone())
-                        .as_deref()
-                        == Some("Male")
+            for gp_id in graph.trusted_parent_ids(*parent_id) {
+                if graph
+                    .get_entity(gp_id)
+                    .and_then(|e| e.gender.clone())
+                    .as_deref()
+                    == Some("Male")
                 {
                     return Some(gp_id);
                 }

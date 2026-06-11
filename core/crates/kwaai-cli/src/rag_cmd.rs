@@ -3161,15 +3161,21 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                 .await?;
 
                 println!();
+                let purge_note = if stats.relations_purged > 0 {
+                    format!(", {} hallucinated parent/child edges purged", stats.relations_purged)
+                } else {
+                    String::new()
+                };
                 print_success(&format!(
                     "Seed complete — {} canonical entities upserted, {} aliases merged \
                      ({} relations re-pointed), {} family relations planted, {} aliases \
-                     not found in graph",
+                     not found in graph{}",
                     stats.entities_upserted,
                     stats.aliases_merged,
                     stats.relations_merged,
                     stats.relations_upserted,
                     stats.aliases_not_found,
+                    purge_note,
                 ));
                 println!(
                     "  Graph after:  {} entities, {} relations",

@@ -34,6 +34,9 @@ pub struct PersonSeed {
     /// Set to "Organization" or "Place" to seed non-person entities.
     #[serde(default = "default_entity_type")]
     pub entity_type: String,
+    /// Explicit gender override ("Male" / "Female"). When set, takes precedence over any
+    /// gender inferred from the entity description, ensuring reliable father/mother resolution.
+    pub gender: Option<String>,
 }
 
 fn default_entity_type() -> String {
@@ -57,6 +60,8 @@ pub struct SeedStats {
     pub relations_merged: usize,
     pub relations_upserted: usize,
     pub aliases_not_found: usize,
+    /// Non-seeded parent_of/child_of edges purged because ground-truth parentage was seeded.
+    pub relations_purged: usize,
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -131,7 +136,7 @@ pub async fn seed_family_tree(
             aliases: merged_aliases,
             schema_type: existing.as_ref().and_then(|e| e.schema_type.clone()),
             evidence: Vec::new(),
-            gender: existing.as_ref().and_then(|e| e.gender.clone()),
+            gender: person.gender.clone().or_else(|| existing.as_ref().and_then(|e| e.gender.clone())),
             fields: existing
                 .as_ref()
                 .map(|e| e.fields.clone())
@@ -184,6 +189,16 @@ pub async fn seed_family_tree(
             }
         }
     }
+
+    // ── Pass 3: purge LLM-hallucinated parent/child edges ────────────────────
+    // For any entity whose parents are now established by seed, remove any
+    // competing non-seeded child_of/parent_of edges (hallucinations from LLM
+    // relation extraction runs).
+    let purged = graph.purge_unseeded_parent_relations()?;
+    if purged > 0 {
+        progress(&format!("purged {purged} unseeded parent/child edges that conflict with seed"));
+    }
+    stats.relations_purged = purged;
 
     Ok(stats)
 }

@@ -3168,7 +3168,7 @@ impl GraphStore {
     /// Reads `child_of(id, parent)` records directly from the DB rather than from adj,
     /// because adj stores both directions of asymmetric relations with the same label,
     /// which would incorrectly include backward `child_of` entries from the inverse storage.
-    fn trusted_parent_ids(&self, id: i64) -> HashSet<i64> {
+    pub fn trusted_parent_ids(&self, id: i64) -> HashSet<i64> {
         let Ok(rtxn) = self.db.begin_read() else {
             return HashSet::new();
         };
@@ -3187,6 +3187,83 @@ impl GraphStore {
             }
         }
         parents
+    }
+
+    /// Remove non-seeded `child_of`/`parent_of` edges for entities whose
+    /// parentage is established by the family-tree seed (evidence_chunk_id == 0).
+    ///
+    /// When the YAML seed has planted `A child_of B`, any LLM-extracted `A child_of C`
+    /// for unrelated C is almost certainly a hallucination.  This pass purges those
+    /// edges (and their auto-created inverses) in bulk, then rebuilds the in-memory adj.
+    ///
+    /// Returns the number of erroneous forward edges removed.
+    pub fn purge_unseeded_parent_relations(&mut self) -> Result<usize> {
+        let all_rels: Vec<RelationRecord> = {
+            let rtxn = self.db.begin_read()?;
+            let table = rtxn.open_table(RELATIONS_TABLE)?;
+            table
+                .iter()?
+                .filter_map(|r| r.ok())
+                .filter_map(|(_, v)| serde_json::from_slice::<RelationRecord>(v.value()).ok())
+                .filter(|r| r.relation_type == "child_of" || r.relation_type == "parent_of")
+                .collect()
+        };
+
+        // Entities whose parentage / children are established by seed
+        let mut child_of_seeded: HashSet<i64> = HashSet::new();
+        let mut parent_of_seeded: HashSet<i64> = HashSet::new();
+        for rel in &all_rels {
+            if rel.evidence_chunk_ids.contains(&0) {
+                match rel.relation_type.as_str() {
+                    "child_of" => {
+                        child_of_seeded.insert(rel.src_id);
+                    }
+                    "parent_of" => {
+                        parent_of_seeded.insert(rel.src_id);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let mut keys_to_delete: Vec<Vec<u8>> = Vec::new();
+        let mut removed = 0usize;
+        for rel in &all_rels {
+            if rel.evidence_chunk_ids.contains(&0) {
+                continue; // seeded — keep
+            }
+            let purge = match rel.relation_type.as_str() {
+                "child_of" => child_of_seeded.contains(&rel.src_id),
+                "parent_of" => parent_of_seeded.contains(&rel.src_id),
+                _ => false,
+            };
+            if purge {
+                removed += 1;
+                keys_to_delete.push(relation_key(rel.src_id, rel.dst_id, &rel.relation_type));
+                // Also purge the stored inverse (parent_of ↔ child_of)
+                if let Some(&inv) = FAMILIAL_INVERSE
+                    .iter()
+                    .find(|(r, _)| *r == rel.relation_type.as_str())
+                    .map(|(_, i)| i)
+                {
+                    keys_to_delete.push(relation_key(rel.dst_id, rel.src_id, inv));
+                }
+            }
+        }
+
+        if !keys_to_delete.is_empty() {
+            let wtxn = self.db.begin_write()?;
+            {
+                let mut t = wtxn.open_table(RELATIONS_TABLE)?;
+                for k in &keys_to_delete {
+                    let _ = t.remove(k.as_slice()); // ignore not-found for inverses
+                }
+            }
+            wtxn.commit()?;
+            self.rebuild_in_memory()?;
+        }
+
+        Ok(removed)
     }
 
     /// Tier 4: Role-pronoun neighbour-containment dedup.
