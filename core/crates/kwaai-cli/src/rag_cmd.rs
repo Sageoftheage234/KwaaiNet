@@ -2489,9 +2489,11 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                     let t1 = store.find_dedup_candidates_exact();
                     let t2 = store.find_dedup_candidates(threshold);
                     let t3 = store.find_dedup_candidates_name_structure();
+                    let t4a = store.find_dedup_candidates_unique_surname();
                     t1.into_iter()
                         .chain(t2.into_iter().map(|(a, b, _)| (a, b)))
                         .chain(t3.into_iter().map(|(a, b, _)| (a, b)))
+                        .chain(t4a.into_iter().map(|(a, b, _)| (a, b)))
                         .collect()
                 };
                 let relation_blocks = store.find_dedup_relation_blocks(&all_candidates);
@@ -2886,16 +2888,121 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                 }
                 println!();
 
-                // ── Tier 4: neighbour containment (review only) ───────────
+                // ── Tier 4a: unique-surname dedup ─────────────────────────
+                // "Mr Kies" → "Benjamin Maximilian Kies" when Kies is the only
+                // entity in the graph with that surname.  Safe to auto-merge.
+                let unique_surname = store.find_dedup_candidates_unique_surname();
+                if unique_surname.is_empty() {
+                    println!("  Tier 4a no unique-surname candidates");
+                } else {
+                    println!(
+                        "  Tier 4a {} unique-surname candidate(s):",
+                        unique_surname.len()
+                    );
+                    if dry_run {
+                        println!();
+                        for (alias_id, canonical_id, reason) in &unique_surname {
+                            let a = store.get_entity(*alias_id);
+                            let b = store.get_entity(*canonical_id);
+                            if let (Some(a), Some(b)) = (a, b) {
+                                let guard = if relation_blocks.contains(
+                                    &kwaai_rag::graph::ord_pair(*alias_id, *canonical_id),
+                                ) {
+                                    "  [BLOCKED:R1/R2]"
+                                } else {
+                                    ""
+                                };
+                                println!(
+                                    "        \"{}\"  →  \"{}\"  [{}]{}",
+                                    a.name, b.name, reason, guard
+                                );
+                            }
+                        }
+                    } else if auto {
+                        for (alias_id, canonical_id, reason) in &unique_surname {
+                            if store.get_entity(*alias_id).is_none() {
+                                continue;
+                            }
+                            if relation_blocks.contains(&kwaai_rag::graph::ord_pair(
+                                *alias_id,
+                                *canonical_id,
+                            )) {
+                                let aname = store
+                                    .get_entity(*alias_id)
+                                    .map(|n| n.name.clone())
+                                    .unwrap_or_default();
+                                println!("    blocked (R1/R2) '{}'  [{}]", aname, reason);
+                                continue;
+                            }
+                            let aname = store
+                                .get_entity(*alias_id)
+                                .map(|n| n.name.clone())
+                                .unwrap_or_default();
+                            let cname = store
+                                .get_entity(*canonical_id)
+                                .map(|n| n.name.clone())
+                                .unwrap_or_default();
+                            store.merge_entity_into(*alias_id, *canonical_id)?;
+                            println!("    merged '{}' → '{}'  [{}]", aname, cname, reason);
+                            total_merged += 1;
+                            need_rebuild = true;
+                        }
+                    } else {
+                        println!("  [y=merge, n=skip, q=quit]\n");
+                        let mut quit = false;
+                        for (alias_id, canonical_id, reason) in &unique_surname {
+                            if quit || store.get_entity(*alias_id).is_none() {
+                                continue;
+                            }
+                            let a = match store.get_entity(*alias_id).cloned() {
+                                Some(e) => e,
+                                None => continue,
+                            };
+                            let b = match store.get_entity(*canonical_id).cloned() {
+                                Some(e) => e,
+                                None => continue,
+                            };
+                            println!("  \"{}\"  →  \"{}\"  [{}]", a.name, b.name, reason);
+                            loop {
+                                use std::io::Write;
+                                print!("  Merge? [y/n/q] ");
+                                std::io::stdout().flush()?;
+                                let mut line = String::new();
+                                std::io::stdin().read_line(&mut line)?;
+                                match line.trim() {
+                                    "y" | "Y" => {
+                                        store.merge_entity_into(*alias_id, *canonical_id)?;
+                                        println!("    ✓ merged\n");
+                                        total_merged += 1;
+                                        need_rebuild = true;
+                                        break;
+                                    }
+                                    "n" | "N" => {
+                                        println!("    skipped\n");
+                                        break;
+                                    }
+                                    "q" | "Q" => {
+                                        quit = true;
+                                        break;
+                                    }
+                                    _ => println!("    please enter y, n, or q"),
+                                }
+                            }
+                        }
+                    }
+                }
+                println!();
+
+                // ── Tier 5: neighbour containment (review only) ───────────
                 // Alias must have ≤ 15 neighbours and ≥ 60% of them covered by
                 // the canonical's neighbour set.  Never auto-merged — too noisy
                 // in memoir-style texts; always shown for human review.
                 let containment_cands = store.find_dedup_candidates_neighbor_containment(0.60, 3);
                 if containment_cands.is_empty() {
-                    println!("  Tier 4  no neighbour-containment candidates");
+                    println!("  Tier 5  no neighbour-containment candidates");
                 } else {
                     println!(
-                        "  Tier 4  {} containment candidate(s) (review only):",
+                        "  Tier 5  {} containment candidate(s) (review only):",
                         containment_cands.len()
                     );
                     println!();

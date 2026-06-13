@@ -3266,7 +3266,119 @@ impl GraphStore {
         Ok(removed)
     }
 
-    /// Tier 4: Role-pronoun neighbour-containment dedup.
+    /// Tier 4a: Unique-surname dedup.
+    ///
+    /// Catches "Mr Kies", "Mrs Gool", or bare "Kies" where the entity name reduces
+    /// to a **single surname token** after stripping honorifics, AND exactly one
+    /// other entity in the graph shares that surname as the last token of their
+    /// stripped name (or any alias).  Because the surname is unambiguous in the
+    /// graph, the merge is safe without any embedding or neighbour check.
+    ///
+    /// Returns `(alias_id, canonical_id, "unique_surname")`.
+    ///
+    /// Gates:
+    /// - Same entity_type on both ends.
+    /// - Surname token ≥ 3 characters (avoids single-initial references).
+    /// - The canonical must have > 1 stripped token (it is a full name, not
+    ///   another bare-surname entity).
+    /// - Existing description divergence blocks the merge.
+    pub fn find_dedup_candidates_unique_surname(&self) -> Vec<(i64, i64, &'static str)> {
+        // ── Step 1: build surname (last stripped token) → entity_ids map ─────
+        // We index every entity by the last meaningful token of every name form
+        // it carries (canonical + aliases), so "Ben Kies" → "kies",
+        // "Benjamin Maximilian Kies" → "kies", alias "B.M. Kies" → "kies".
+        let mut surname_map: HashMap<String, Vec<i64>> = HashMap::new();
+        for (&id, node) in &self.nodes {
+            let mut surnames_for_entity: std::collections::HashSet<String> = Default::default();
+            let all_names = std::iter::once(node.name.as_str())
+                .chain(node.aliases.iter().map(|a| a.as_str()));
+            for name in all_names {
+                let sk = stripped_key(name);
+                if let Some(last) = sk.split_whitespace().last() {
+                    if last.len() >= 3 {
+                        surnames_for_entity.insert(last.to_string());
+                    }
+                }
+            }
+            for surname in surnames_for_entity {
+                surname_map.entry(surname).or_default().push(id);
+            }
+        }
+        // Deduplicate entity lists (an entity can contribute the same surname via
+        // multiple aliases — we only want it counted once per surname).
+        for ids in surname_map.values_mut() {
+            ids.sort_unstable();
+            ids.dedup();
+        }
+
+        // ── Step 2: find surname-only reference entities ──────────────────────
+        let mut out: Vec<(i64, i64, &'static str)> = Vec::new();
+        let mut seen: HashSet<(i64, i64)> = HashSet::new();
+
+        for (&alias_id, node) in &self.nodes {
+            let sk = stripped_key(&node.name);
+            let tokens: Vec<&str> = sk.split_whitespace().collect();
+
+            // Must reduce to exactly 1 token after honorific stripping.
+            if tokens.len() != 1 {
+                continue;
+            }
+            let surname = tokens[0];
+            if surname.len() < 3 {
+                continue;
+            }
+
+            // Look up all entities carrying this surname.
+            let candidates = match surname_map.get(surname) {
+                Some(v) => v,
+                None => continue,
+            };
+
+            // Collect other entities with this surname (exclude self).
+            let others: Vec<i64> = candidates
+                .iter()
+                .copied()
+                .filter(|&id| id != alias_id)
+                .collect();
+
+            // Exactly one other entity → unambiguous match.
+            if others.len() != 1 {
+                continue;
+            }
+            let canonical_id = others[0];
+
+            let canonical = match self.nodes.get(&canonical_id) {
+                Some(n) => n,
+                None => continue,
+            };
+
+            // Gate: same entity type.
+            if node.entity_type != canonical.entity_type {
+                continue;
+            }
+
+            // Gate: canonical must be a full name (> 1 stripped token), not
+            // another bare-surname entity — avoids merging two bare surnames.
+            let canonical_sk = stripped_key(&canonical.name);
+            if canonical_sk.split_whitespace().count() <= 1 {
+                continue;
+            }
+
+            // Gate: description divergence blocks the merge.
+            if self.dedup_desc_diverges(alias_id, canonical_id) {
+                continue;
+            }
+
+            let key = ord_pair(alias_id, canonical_id);
+            if seen.insert(key) {
+                out.push((alias_id, canonical_id, "unique_surname"));
+            }
+        }
+
+        out
+    }
+
+    /// Tier 5 (was Tier 4): Role-pronoun neighbour-containment dedup.
     ///
     /// Targets entities whose name is a **role or pronoun description** ("Grandpa",
     /// "my uncle", "the Head", "grandmother") rather than a proper name.  Such
