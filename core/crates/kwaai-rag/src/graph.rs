@@ -3378,6 +3378,197 @@ impl GraphStore {
         out
     }
 
+    /// Tier 4b: Middle-name-drop dedup.
+    ///
+    /// Catches the memoir pattern where a character is introduced with their full
+    /// name including middle names ("Victor Arthur Wessels") and later referred to
+    /// as first+last ("Victor Wessels") or bare first name ("Victor").
+    ///
+    /// Two sub-rules:
+    ///
+    /// **Rule B1 — first+last match**: entity A has exactly 2 stripped tokens
+    /// `[First] [Last]`; entity B has ≥ 3 stripped tokens whose first and last
+    /// tokens match A's.  Safe when the (first, last) pair is **unique** in the
+    /// graph (only one entity carries those bookend names).
+    ///
+    /// **Rule B2 — bare first name**: entity A has exactly 1 stripped token that
+    /// matches the *first* token of exactly one other entity with ≥ 2 stripped
+    /// tokens.  More conservative: also requires the alias entity to have no
+    /// description (unenriched) OR both entities share ≥ 1 graph neighbour.
+    ///
+    /// Returns `(alias_id, canonical_id, reason)` where reason is
+    /// `"first_last_drop"` or `"bare_firstname"`.
+    pub fn find_dedup_candidates_middle_drop(&self) -> Vec<(i64, i64, &'static str)> {
+        let mut seen: HashSet<(i64, i64)> = HashSet::new();
+        let mut out: Vec<(i64, i64, &'static str)> = Vec::new();
+
+        // Pre-compute stripped tokens for every entity (canonical only — aliases
+        // are deliberately excluded to keep the uniqueness gate tight).
+        let stripped: HashMap<i64, Vec<String>> = self
+            .nodes
+            .iter()
+            .map(|(&id, n)| {
+                let tokens: Vec<String> = stripped_key(&n.name)
+                    .split_whitespace()
+                    .map(|s| s.to_string())
+                    .collect();
+                (id, tokens)
+            })
+            .collect();
+
+        // ── B1: (first, last) index ───────────────────────────────────────────
+        // Maps (first_token, last_token) → all entity IDs that carry those
+        // bookend tokens (canonical + aliases).
+        let mut fl_map: HashMap<(String, String), Vec<i64>> = HashMap::new();
+        for (&id, node) in &self.nodes {
+            let all_names = std::iter::once(node.name.as_str())
+                .chain(node.aliases.iter().map(|a| a.as_str()));
+            let mut seen_for_entity: std::collections::HashSet<(String, String)> =
+                Default::default();
+            for name in all_names {
+                let sk = stripped_key(name);
+                let toks: Vec<&str> = sk.split_whitespace().collect();
+                if toks.len() < 2 {
+                    continue;
+                }
+                let key = (toks[0].to_string(), toks[toks.len() - 1].to_string());
+                if seen_for_entity.insert(key.clone()) {
+                    fl_map.entry(key).or_default().push(id);
+                }
+            }
+        }
+        for ids in fl_map.values_mut() {
+            ids.sort_unstable();
+            ids.dedup();
+        }
+
+        // ── B1: find 2-token entities whose (first, last) is unique ───────────
+        for (&alias_id, alias_toks) in &stripped {
+            if alias_toks.len() != 2 {
+                continue;
+            }
+            let first = &alias_toks[0];
+            let last = &alias_toks[1];
+            // Single-letter initials ("A. Gool") are too ambiguous to auto-merge.
+            if first.len() < 2 || last.len() < 2 {
+                continue;
+            }
+            let key = (first.clone(), last.clone());
+            let candidates = match fl_map.get(&key) {
+                Some(v) => v,
+                None => continue,
+            };
+            // Others = entities that also carry (first, last) but have ≥ 3 stripped tokens
+            // (the alias itself also appears in the map if it contributed the same pair).
+            let others: Vec<i64> = candidates
+                .iter()
+                .copied()
+                .filter(|&id| {
+                    id != alias_id
+                        && stripped
+                            .get(&id)
+                            .map(|t| t.len() >= 3)
+                            .unwrap_or(false)
+                })
+                .collect();
+            if others.len() != 1 {
+                continue; // ambiguous or no full-name match
+            }
+            let canonical_id = others[0];
+            let alias_node = match self.nodes.get(&alias_id) {
+                Some(n) => n,
+                None => continue,
+            };
+            let canonical_node = match self.nodes.get(&canonical_id) {
+                Some(n) => n,
+                None => continue,
+            };
+            // Gates
+            if alias_node.entity_type != canonical_node.entity_type {
+                continue;
+            }
+            if self.dedup_desc_diverges(alias_id, canonical_id) {
+                continue;
+            }
+            let k = ord_pair(alias_id, canonical_id);
+            if seen.insert(k) {
+                out.push((alias_id, canonical_id, "first_last_drop"));
+            }
+        }
+
+        // ── B2: bare first name ───────────────────────────────────────────────
+        // Build first_token → entity IDs (for entities with ≥ 2 tokens).
+        let mut first_map: HashMap<String, Vec<i64>> = HashMap::new();
+        for (&id, toks) in &stripped {
+            if toks.len() >= 2 {
+                first_map.entry(toks[0].clone()).or_default().push(id);
+            }
+        }
+        for ids in first_map.values_mut() {
+            ids.sort_unstable();
+            ids.dedup();
+        }
+
+        for (&alias_id, alias_toks) in &stripped {
+            if alias_toks.len() != 1 {
+                continue; // handled by Tier 4a (surname) or not applicable
+            }
+            let first = &alias_toks[0];
+            if first.len() < 3 {
+                continue;
+            }
+            let candidates = match first_map.get(first) {
+                Some(v) => v,
+                None => continue,
+            };
+            let others: Vec<i64> = candidates
+                .iter()
+                .copied()
+                .filter(|&id| id != alias_id)
+                .collect();
+            if others.len() != 1 {
+                continue; // common first name — ambiguous
+            }
+            let canonical_id = others[0];
+            let alias_node = match self.nodes.get(&alias_id) {
+                Some(n) => n,
+                None => continue,
+            };
+            let canonical_node = match self.nodes.get(&canonical_id) {
+                Some(n) => n,
+                None => continue,
+            };
+            if alias_node.entity_type != canonical_node.entity_type {
+                continue;
+            }
+            if self.dedup_desc_diverges(alias_id, canonical_id) {
+                continue;
+            }
+            // Extra gate for bare first names: require at least 1 shared neighbour
+            // OR the alias is unenriched (no description yet).
+            let alias_unenriched = alias_node.description.is_empty();
+            let shares_neighbour = {
+                let an: std::collections::HashSet<i64> = self
+                    .neighbors_of(alias_id)
+                    .into_iter()
+                    .map(|(id, _, _)| id)
+                    .collect();
+                self.neighbors_of(canonical_id)
+                    .into_iter()
+                    .any(|(id, _, _)| an.contains(&id))
+            };
+            if !alias_unenriched && !shares_neighbour {
+                continue;
+            }
+            let k = ord_pair(alias_id, canonical_id);
+            if seen.insert(k) {
+                out.push((alias_id, canonical_id, "bare_firstname"));
+            }
+        }
+
+        out
+    }
+
     /// Tier 5 (was Tier 4): Role-pronoun neighbour-containment dedup.
     ///
     /// Targets entities whose name is a **role or pronoun description** ("Grandpa",

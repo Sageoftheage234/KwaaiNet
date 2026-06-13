@@ -2490,10 +2490,12 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                     let t2 = store.find_dedup_candidates(threshold);
                     let t3 = store.find_dedup_candidates_name_structure();
                     let t4a = store.find_dedup_candidates_unique_surname();
+                    let t4b = store.find_dedup_candidates_middle_drop();
                     t1.into_iter()
                         .chain(t2.into_iter().map(|(a, b, _)| (a, b)))
                         .chain(t3.into_iter().map(|(a, b, _)| (a, b)))
                         .chain(t4a.into_iter().map(|(a, b, _)| (a, b)))
+                        .chain(t4b.into_iter().map(|(a, b, _)| (a, b)))
                         .collect()
                 };
                 let relation_blocks = store.find_dedup_relation_blocks(&all_candidates);
@@ -2951,6 +2953,112 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                         println!("  [y=merge, n=skip, q=quit]\n");
                         let mut quit = false;
                         for (alias_id, canonical_id, reason) in &unique_surname {
+                            if quit || store.get_entity(*alias_id).is_none() {
+                                continue;
+                            }
+                            let a = match store.get_entity(*alias_id).cloned() {
+                                Some(e) => e,
+                                None => continue,
+                            };
+                            let b = match store.get_entity(*canonical_id).cloned() {
+                                Some(e) => e,
+                                None => continue,
+                            };
+                            println!("  \"{}\"  →  \"{}\"  [{}]", a.name, b.name, reason);
+                            loop {
+                                use std::io::Write;
+                                print!("  Merge? [y/n/q] ");
+                                std::io::stdout().flush()?;
+                                let mut line = String::new();
+                                std::io::stdin().read_line(&mut line)?;
+                                match line.trim() {
+                                    "y" | "Y" => {
+                                        store.merge_entity_into(*alias_id, *canonical_id)?;
+                                        println!("    ✓ merged\n");
+                                        total_merged += 1;
+                                        need_rebuild = true;
+                                        break;
+                                    }
+                                    "n" | "N" => {
+                                        println!("    skipped\n");
+                                        break;
+                                    }
+                                    "q" | "Q" => {
+                                        quit = true;
+                                        break;
+                                    }
+                                    _ => println!("    please enter y, n, or q"),
+                                }
+                            }
+                        }
+                    }
+                }
+                println!();
+
+                // ── Tier 4b: middle-name-drop dedup ───────────────────────
+                // "Victor Wessels" → "Victor Walter Wesley Wessels" when the
+                // (first, last) pair is unique.  Also catches bare first names
+                // with a shared graph neighbour as confirmation.
+                let middle_drop = store.find_dedup_candidates_middle_drop();
+                if middle_drop.is_empty() {
+                    println!("  Tier 4b no middle-name-drop candidates");
+                } else {
+                    println!(
+                        "  Tier 4b {} middle-name-drop candidate(s):",
+                        middle_drop.len()
+                    );
+                    if dry_run {
+                        println!();
+                        for (alias_id, canonical_id, reason) in &middle_drop {
+                            let a = store.get_entity(*alias_id);
+                            let b = store.get_entity(*canonical_id);
+                            if let (Some(a), Some(b)) = (a, b) {
+                                let guard = if relation_blocks.contains(
+                                    &kwaai_rag::graph::ord_pair(*alias_id, *canonical_id),
+                                ) {
+                                    "  [BLOCKED:R1/R2]"
+                                } else {
+                                    ""
+                                };
+                                println!(
+                                    "        \"{}\"  →  \"{}\"  [{}]{}",
+                                    a.name, b.name, reason, guard
+                                );
+                            }
+                        }
+                    } else if auto {
+                        for (alias_id, canonical_id, reason) in &middle_drop {
+                            if store.get_entity(*alias_id).is_none() {
+                                continue;
+                            }
+                            if relation_blocks.contains(&kwaai_rag::graph::ord_pair(
+                                *alias_id,
+                                *canonical_id,
+                            )) {
+                                let aname = store
+                                    .get_entity(*alias_id)
+                                    .map(|n| n.name.clone())
+                                    .unwrap_or_default();
+                                println!("    blocked (R1/R2) '{}'  [{}]", aname, reason);
+                                continue;
+                            }
+                            let aname = store
+                                .get_entity(*alias_id)
+                                .map(|n| n.name.clone())
+                                .unwrap_or_default();
+                            let cname = store
+                                .get_entity(*canonical_id)
+                                .map(|n| n.name.clone())
+                                .unwrap_or_default();
+                            store.merge_entity_into(*alias_id, *canonical_id)?;
+                            println!("    merged '{}' → '{}'  [{}]", aname, cname, reason);
+                            total_merged += 1;
+                            need_rebuild = true;
+                        }
+                    } else {
+                        println!("  [y=merge, n=skip, q=quit]\n");
+                        let mut quit = false;
+                        for (alias_id, canonical_id, reason) in &middle_drop {
                             if quit || store.get_entity(*alias_id).is_none() {
                                 continue;
                             }
