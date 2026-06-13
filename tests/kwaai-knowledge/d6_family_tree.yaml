@@ -432,6 +432,24 @@ persons:
       - "Dr. Tabata"
       - "B.M. Tabata"
 
+  # ─── Benjamin Maximilian Kies (TLSA leader, political figure) ──────────────
+
+  - canonical: "Benjamin Maximilian Kies"
+    gender: "Male"
+    aliases:
+      - "Ben Kies"
+      - "B.M. Kies"
+      - "BM.Kies"
+      - "BMKies"
+      - "BM Kies"
+      - "B. M. Kies"
+      - "Kies"
+    description: >-
+      Benjamin Maximilian Kies (Ben Kies) was a prominent Cape Town teacher,
+      political activist, and intellectual closely associated with the Teachers
+      League of South Africa (TLSA) and the Non-European Unity Movement (NEUM).
+      He was a leading advocate of the non-collaboration policy against apartheid.
+
   # ─── Key organizations ───────────────────────────────────────────────────────
 
   - canonical: "Non-European Unity Movement"
