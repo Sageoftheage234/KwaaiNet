@@ -600,11 +600,74 @@ pub(crate) fn inject_entity_descriptions(
         return;
     }
 
+    // Append outgoing relations as grouped summary sentences so the LLM can answer
+    // "who were the children of X?" queries directly from graph facts without
+    // needing to synthesize across many individual per-target statements.
+    // Format: "The children of Name are: A, B, C." (one sentence per relation type)
+    let relations_suffix = {
+        let mut statements: Vec<String> = Vec::new();
+        if let Ok(rels) = graph.outgoing_relations(inject_id) {
+            // Group by relation type, deduplicate and cap at 12 targets.
+            let mut by_type: std::collections::BTreeMap<String, Vec<String>> =
+                std::collections::BTreeMap::new();
+            for (dst_id, rel_type, _strength, _evid) in rels {
+                if let Some(dst) = graph.get_entity(dst_id) {
+                    by_type
+                        .entry(rel_type)
+                        .or_default()
+                        .push(dst.name.clone());
+                }
+            }
+            for (rel_type, mut targets) in by_type {
+                targets.dedup();
+                targets.truncate(12);
+                let list = targets.join(", ");
+                // Produce a natural-language summary sentence per relation type so
+                // the 8b LLM can quote it directly rather than synthesising fragments.
+                let sentence = match rel_type.as_str() {
+                    "parent_of" => format!(
+                        "The children of {} are: {}.",
+                        entity.name, list
+                    ),
+                    "child_of" => format!("{} is the child of {}.", entity.name, list),
+                    "spouse_of" => format!(
+                        "{} was married to {}.",
+                        entity.name, list
+                    ),
+                    "sibling_of" => format!(
+                        "The siblings of {} include: {}.",
+                        entity.name, list
+                    ),
+                    "grandparent_of" => format!(
+                        "The grandchildren of {} include: {}.",
+                        entity.name, list
+                    ),
+                    "grandchild_of" => format!(
+                        "{} is the grandchild of {}.",
+                        entity.name, list
+                    ),
+                    other => format!(
+                        "{} {} {}.",
+                        entity.name,
+                        other.replace('_', " "),
+                        list
+                    ),
+                };
+                statements.push(sentence);
+            }
+        }
+        if statements.is_empty() {
+            String::new()
+        } else {
+            format!("\n\nKnown relationships: {}", statements.join(" "))
+        }
+    };
+
     let synthetic = RetrievedChunk {
         chunk_meta: ChunkMeta {
             doc_name: format!("[Graph: {}]", entity.name),
             chunk_index: 0,
-            text: format!("{}: {}", entity.name, entity.description),
+            text: format!("{}: {}{}", entity.name, entity.description, relations_suffix),
             surrounding: String::new(),
             page_num: None,
             ingested_at: String::new(),
