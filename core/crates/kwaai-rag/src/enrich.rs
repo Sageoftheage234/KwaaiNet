@@ -304,6 +304,7 @@ pub async fn enrich_entity_descriptions(
 
 // ── LLM call ──────────────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 async fn call_enrich(
     name: &str,
     entity_type: &str,
