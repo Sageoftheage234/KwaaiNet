@@ -315,7 +315,10 @@ fn resolve_author_relative(query: &str, anchor_id: i64, graph: &GraphStore) -> O
     // Use trusted_parent_ids (DB-direct) to avoid bidirectional adj artifacts where
     // Yousuf's own children appear as child_of neighbours due to inverse edge storage.
     // Prefer seeded (family-tree) edges; fall back to any female parent.
-    if (q.contains("mother") && !q.contains("grandmother")) || q.contains(" mom") || q.contains("mama") {
+    if (q.contains("mother") && !q.contains("grandmother"))
+        || q.contains(" mom")
+        || q.contains("mama")
+    {
         let parents = graph.trusted_parent_ids(anchor_id);
         return parents
             .iter()
@@ -341,7 +344,10 @@ fn resolve_author_relative(query: &str, anchor_id: i64, graph: &GraphStore) -> O
 
     // Father — guard against "grandfather" matching here.
     // Same trusted_parent_ids approach: prefer seeded, fall back to any male parent.
-    if (q.contains("father") && !q.contains("grandfather")) || q.contains(" dad") || q.contains("papa") {
+    if (q.contains("father") && !q.contains("grandfather"))
+        || q.contains(" dad")
+        || q.contains("papa")
+    {
         let parents = graph.trusted_parent_ids(anchor_id);
         return parents
             .iter()
@@ -612,10 +618,7 @@ pub(crate) fn inject_entity_descriptions(
                 std::collections::BTreeMap::new();
             for (dst_id, rel_type, _strength, _evid) in rels {
                 if let Some(dst) = graph.get_entity(dst_id) {
-                    by_type
-                        .entry(rel_type)
-                        .or_default()
-                        .push(dst.name.clone());
+                    by_type.entry(rel_type).or_default().push(dst.name.clone());
                 }
             }
             for (rel_type, mut targets) in by_type {
@@ -625,33 +628,15 @@ pub(crate) fn inject_entity_descriptions(
                 // Produce a natural-language summary sentence per relation type so
                 // the 8b LLM can quote it directly rather than synthesising fragments.
                 let sentence = match rel_type.as_str() {
-                    "parent_of" => format!(
-                        "The children of {} are: {}.",
-                        entity.name, list
-                    ),
+                    "parent_of" => format!("The children of {} are: {}.", entity.name, list),
                     "child_of" => format!("{} is the child of {}.", entity.name, list),
-                    "spouse_of" => format!(
-                        "{} was married to {}.",
-                        entity.name, list
-                    ),
-                    "sibling_of" => format!(
-                        "The siblings of {} include: {}.",
-                        entity.name, list
-                    ),
-                    "grandparent_of" => format!(
-                        "The grandchildren of {} include: {}.",
-                        entity.name, list
-                    ),
-                    "grandchild_of" => format!(
-                        "{} is the grandchild of {}.",
-                        entity.name, list
-                    ),
-                    other => format!(
-                        "{} {} {}.",
-                        entity.name,
-                        other.replace('_', " "),
-                        list
-                    ),
+                    "spouse_of" => format!("{} was married to {}.", entity.name, list),
+                    "sibling_of" => format!("The siblings of {} include: {}.", entity.name, list),
+                    "grandparent_of" => {
+                        format!("The grandchildren of {} include: {}.", entity.name, list)
+                    }
+                    "grandchild_of" => format!("{} is the grandchild of {}.", entity.name, list),
+                    other => format!("{} {} {}.", entity.name, other.replace('_', " "), list),
                 };
                 statements.push(sentence);
             }
@@ -667,7 +652,10 @@ pub(crate) fn inject_entity_descriptions(
         chunk_meta: ChunkMeta {
             doc_name: format!("[Graph: {}]", entity.name),
             chunk_index: 0,
-            text: format!("{}: {}{}", entity.name, entity.description, relations_suffix),
+            text: format!(
+                "{}: {}{}",
+                entity.name, entity.description, relations_suffix
+            ),
             surrounding: String::new(),
             page_num: None,
             ingested_at: String::new(),

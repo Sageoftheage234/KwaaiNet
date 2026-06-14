@@ -39,11 +39,7 @@ pub struct EnrichConfig {
 impl Default for EnrichConfig {
     fn default() -> Self {
         Self {
-            entity_types: vec![
-                "Person".into(),
-                "Place".into(),
-                "Organization".into(),
-            ],
+            entity_types: vec!["Person".into(), "Place".into(), "Organization".into()],
             min_mentions: 2,
             limit: usize::MAX,
             workers: 4,
@@ -126,9 +122,8 @@ pub async fn enrich_entity_descriptions(
 
             let is_person = node.entity_type.eq_ignore_ascii_case("person");
             let need_desc = cfg.force || node.description.is_empty();
-            let need_gender = cfg.extract_gender
-                && is_person
-                && (cfg.force || node.gender.is_none());
+            let need_gender =
+                cfg.extract_gender && is_person && (cfg.force || node.gender.is_none());
 
             // Skip if nothing to do for this entity
             if !need_desc && !need_gender {
@@ -170,14 +165,21 @@ pub async fn enrich_entity_descriptions(
             }
 
             let url_idx = items.len() % inference_urls.len().max(1);
-            let inference_url = inference_urls
-                .get(url_idx)
-                .cloned()
-                .unwrap_or_default();
+            let inference_url = inference_urls.get(url_idx).cloned().unwrap_or_default();
             // Filter out generic pronoun aliases so the LLM hint is signal, not noise.
             const PRONOUN_ALIASES: &[&str] = &[
-                "i", "he", "she", "they", "him", "her", "his", "the author", "the narrator",
-                "narrator", "author", "the writer",
+                "i",
+                "he",
+                "she",
+                "they",
+                "him",
+                "her",
+                "his",
+                "the author",
+                "the narrator",
+                "narrator",
+                "author",
+                "the writer",
             ];
             let meaningful_aliases: Vec<String> = node
                 .aliases
@@ -335,10 +337,7 @@ async fn call_enrich(
     let alias_hint = if aliases.is_empty() {
         String::new()
     } else {
-        format!(
-            " (also referred to as: {})",
-            aliases.join(", ")
-        )
+        format!(" (also referred to as: {})", aliases.join(", "))
     };
 
     let prompt = if need_gender {
@@ -398,11 +397,20 @@ fn parse_enrich_json(text: &str) -> EnrichResult {
     // Find JSON object bounds (model sometimes prepends/appends stray text)
     let start = cleaned.find('{').unwrap_or(0);
     let end = cleaned.rfind('}').map(|i| i + 1).unwrap_or(cleaned.len());
-    let json_str = if end > start { &cleaned[start..end] } else { cleaned };
+    let json_str = if end > start {
+        &cleaned[start..end]
+    } else {
+        cleaned
+    };
 
     let v: serde_json::Value = match serde_json::from_str(json_str) {
         Ok(v) => v,
-        Err(_) => return EnrichResult { description: None, gender: None },
+        Err(_) => {
+            return EnrichResult {
+                description: None,
+                gender: None,
+            }
+        }
     };
 
     let description = v["description"]
@@ -418,7 +426,10 @@ fn parse_enrich_json(text: &str) -> EnrichResult {
             _ => None,
         });
 
-    EnrichResult { description, gender }
+    EnrichResult {
+        description,
+        gender,
+    }
 }
 
 async fn call_llm(prompt: &str, url: &str, model: &str, json_mode: bool) -> Option<String> {
@@ -465,13 +476,11 @@ async fn call_llm_once(prompt: &str, url: &str, model: &str, json_mode: bool) ->
         return None;
     }
 
-    let v: serde_json::Value = tokio::time::timeout(
-        std::time::Duration::from_secs(120),
-        resp.json(),
-    )
-    .await
-    .ok()?
-    .ok()?;
+    let v: serde_json::Value =
+        tokio::time::timeout(std::time::Duration::from_secs(120), resp.json())
+            .await
+            .ok()?
+            .ok()?;
 
     let text = v["choices"][0]["message"]["content"]
         .as_str()
@@ -479,5 +488,9 @@ async fn call_llm_once(prompt: &str, url: &str, model: &str, json_mode: bool) ->
         .trim()
         .to_string();
 
-    if text.is_empty() { None } else { Some(text) }
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
 }

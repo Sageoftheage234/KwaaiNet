@@ -653,8 +653,8 @@ impl GraphStore {
         // entity even when the query word hasn't been normalized.
         self.alias_token_index.clear();
         for (&id, node) in &self.nodes {
-            let name_forms = std::iter::once(node.name.as_str())
-                .chain(node.aliases.iter().map(|a| a.as_str()));
+            let name_forms =
+                std::iter::once(node.name.as_str()).chain(node.aliases.iter().map(|a| a.as_str()));
             for form in name_forms {
                 for token in form.split_whitespace() {
                     let raw = token.to_lowercase();
@@ -1238,8 +1238,11 @@ impl GraphStore {
                 if node.entity_type.to_lowercase() != "person" {
                     continue;
                 }
-                let node_tokens: Vec<String> =
-                    node.name.split_whitespace().map(|w| w.to_lowercase()).collect();
+                let node_tokens: Vec<String> = node
+                    .name
+                    .split_whitespace()
+                    .map(|w| w.to_lowercase())
+                    .collect();
                 let node_first = node_tokens.first().map(|s| s.as_str()).unwrap_or("");
                 if node_first != first_name {
                     continue;
@@ -3336,8 +3339,8 @@ impl GraphStore {
         let mut surname_map: HashMap<String, Vec<i64>> = HashMap::new();
         for (&id, node) in &self.nodes {
             let mut surnames_for_entity: std::collections::HashSet<String> = Default::default();
-            let all_names = std::iter::once(node.name.as_str())
-                .chain(node.aliases.iter().map(|a| a.as_str()));
+            let all_names =
+                std::iter::once(node.name.as_str()).chain(node.aliases.iter().map(|a| a.as_str()));
             for name in all_names {
                 let sk = stripped_key(name);
                 if let Some(last) = sk.split_whitespace().last() {
@@ -3467,8 +3470,8 @@ impl GraphStore {
         // bookend tokens (canonical + aliases).
         let mut fl_map: HashMap<(String, String), Vec<i64>> = HashMap::new();
         for (&id, node) in &self.nodes {
-            let all_names = std::iter::once(node.name.as_str())
-                .chain(node.aliases.iter().map(|a| a.as_str()));
+            let all_names =
+                std::iter::once(node.name.as_str()).chain(node.aliases.iter().map(|a| a.as_str()));
             let mut seen_for_entity: std::collections::HashSet<(String, String)> =
                 Default::default();
             for name in all_names {
@@ -3510,11 +3513,7 @@ impl GraphStore {
                 .iter()
                 .copied()
                 .filter(|&id| {
-                    id != alias_id
-                        && stripped
-                            .get(&id)
-                            .map(|t| t.len() >= 3)
-                            .unwrap_or(false)
+                    id != alias_id && stripped.get(&id).map(|t| t.len() >= 3).unwrap_or(false)
                 })
                 .collect();
             if others.len() != 1 {
@@ -4611,9 +4610,9 @@ fn has_disambiguation_token(name: &str) -> bool {
 /// Tokenise a description into significant words (≥4 chars, not stop words).
 fn desc_sig_words(desc: &str) -> impl Iterator<Item = String> + '_ {
     const DESC_STOP: &[&str] = &[
-        "that", "this", "with", "from", "have", "been", "were", "they", "their", "also",
-        "well", "known", "very", "when", "some", "many", "most", "more", "than", "into",
-        "about", "after", "which", "would", "could", "should", "other", "over",
+        "that", "this", "with", "from", "have", "been", "were", "they", "their", "also", "well",
+        "known", "very", "when", "some", "many", "most", "more", "than", "into", "about", "after",
+        "which", "would", "could", "should", "other", "over",
     ];
     desc.split(|c: char| !c.is_alphabetic())
         .filter(|w| w.len() >= 4)
