@@ -27,14 +27,14 @@ LOG_FILE="$REPO/tests/kwaai-knowledge/d6_experiments_log.md"
 # metro-win  (A5000): 8b
 # jerome             : 8b
 METRO_WIN="p2p://12D3KooWLMizEbViSoL4WGJUMsLVRyLccyymosX36MDKdbYgGFzE"
-JEROME="p2p://12D3KooWDyPJBavUudh6dWitszGL2FSrEgy32SJY5qiSrATapGgd"
 LOCAL="http://localhost:11434"
 
-# Enrich + extract-relations use 8b → metro-win + jerome + local (round-robin)
-INF_URLS_8B="$METRO_WIN,$JEROME,$LOCAL"
+# Enrich uses local only — p2p machines (metro-win, jerome) hit 30-min stream reset mid-enrich
+# OLLAMA_NUM_PARALLEL=4 handles all 4 workers concurrently on localhost
+INF_URLS_8B="$LOCAL"
 RE_MODEL="llama3.1:8b"
 ENRICH_MODEL="llama3.1:8b"
-EXTRACT_SAMPLE="0.10"
+EXTRACT_SAMPLE="0.25"
 
 # ── Derived ───────────────────────────────────────────────────────────────────
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
@@ -140,7 +140,8 @@ kwaainet rag graph extract-relations --kb "$KB" \
   --output "$EXTRACT_OUT"
 
 KNOWN_CORRECT="Nazima|Feyruz|Reza|Zarina|Abdul Rassool|Fazil|Zain|Rasheda|Berina|Yasmin|Nasim"
-FALSE_RELS=$(grep "Yousuf Rassool.*spouse_of\|Yousuf Rassool.*sibling_of\|Yousuf Rassool.*parent_of" \
+# Count only markdown "- \`...\`" lines (not the raw JSON lines) to avoid double-counting the same relation
+FALSE_RELS=$(grep "^\- \`Yousuf Rassool\`.*\*\*\(spouse_of\|sibling_of\|parent_of\)\*\*" \
   "$EXTRACT_OUT" 2>/dev/null | grep -vE "$KNOWN_CORRECT" | wc -l | tr -d ' ' || echo 0)
 log "  extract-relations complete — false relations: $FALSE_RELS"
 
@@ -177,7 +178,7 @@ ENRICH_UPDATED=$(grep "Enrich complete" "$EVAL_OUT" 2>/dev/null \
   echo "- **Sample:** \`--sample ${EXTRACT_SAMPLE}\`"
   echo "- **RE model:** ${RE_MODEL}"
   echo "- **Enrich model:** ${ENRICH_MODEL}"
-  echo "- **Machines:** metro-win (A5000) + jerome + local (8b, round-robin)"
+  echo "- **Machines:** local only (8b, OLLAMA_NUM_PARALLEL=4)"
   echo "- **Ordering:** seed → dedup → coref → dedup → enrich → extract-rel → dedup"
   echo ""
   echo "| Metric | Value |"
