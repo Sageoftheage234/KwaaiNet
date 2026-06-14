@@ -1548,10 +1548,14 @@ async fn refine_low_confidence_entities(
 
     let mut improved = 0usize;
     let mut confidence_delta_sum = 0f32;
-    let initial_entity_count = cfg.store.lock().unwrap_or_else(|e| {
-        warn!("graph store mutex was poisoned; recovering inner value");
-        e.into_inner()
-    }).node_count();
+    let initial_entity_count = cfg
+        .store
+        .lock()
+        .unwrap_or_else(|e| {
+            warn!("graph store mutex was poisoned; recovering inner value");
+            e.into_inner()
+        })
+        .node_count();
 
     // Sequential refinement (EC calls are already expensive; no need to parallelize at budget=50).
     for (target_id, entity_name, _entity_type, evidence, old_conf) in &targets {
@@ -1712,10 +1716,14 @@ async fn refine_low_confidence_entities(
         }
     }
 
-    let final_entity_count = cfg.store.lock().unwrap_or_else(|e| {
-        warn!("graph store mutex was poisoned; recovering inner value");
-        e.into_inner()
-    }).node_count();
+    let final_entity_count = cfg
+        .store
+        .lock()
+        .unwrap_or_else(|e| {
+            warn!("graph store mutex was poisoned; recovering inner value");
+            e.into_inner()
+        })
+        .node_count();
     let new_entities = final_entity_count.saturating_sub(initial_entity_count);
     let avg_delta = if improved > 0 {
         confidence_delta_sum / improved as f32

@@ -2907,9 +2907,9 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                             let a = store.get_entity(*alias_id);
                             let b = store.get_entity(*canonical_id);
                             if let (Some(a), Some(b)) = (a, b) {
-                                let guard = if relation_blocks.contains(
-                                    &kwaai_rag::graph::ord_pair(*alias_id, *canonical_id),
-                                ) {
+                                let guard = if relation_blocks
+                                    .contains(&kwaai_rag::graph::ord_pair(*alias_id, *canonical_id))
+                                {
                                     "  [BLOCKED:R1/R2]"
                                 } else {
                                     ""
@@ -2925,10 +2925,9 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                             if store.get_entity(*alias_id).is_none() {
                                 continue;
                             }
-                            if relation_blocks.contains(&kwaai_rag::graph::ord_pair(
-                                *alias_id,
-                                *canonical_id,
-                            )) {
+                            if relation_blocks
+                                .contains(&kwaai_rag::graph::ord_pair(*alias_id, *canonical_id))
+                            {
                                 let aname = store
                                     .get_entity(*alias_id)
                                     .map(|n| n.name.clone())
@@ -3013,9 +3012,9 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                             let a = store.get_entity(*alias_id);
                             let b = store.get_entity(*canonical_id);
                             if let (Some(a), Some(b)) = (a, b) {
-                                let guard = if relation_blocks.contains(
-                                    &kwaai_rag::graph::ord_pair(*alias_id, *canonical_id),
-                                ) {
+                                let guard = if relation_blocks
+                                    .contains(&kwaai_rag::graph::ord_pair(*alias_id, *canonical_id))
+                                {
                                     "  [BLOCKED:R1/R2]"
                                 } else {
                                     ""
@@ -3031,10 +3030,9 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                             if store.get_entity(*alias_id).is_none() {
                                 continue;
                             }
-                            if relation_blocks.contains(&kwaai_rag::graph::ord_pair(
-                                *alias_id,
-                                *canonical_id,
-                            )) {
+                            if relation_blocks
+                                .contains(&kwaai_rag::graph::ord_pair(*alias_id, *canonical_id))
+                            {
                                 let aname = store
                                     .get_entity(*alias_id)
                                     .map(|n| n.name.clone())
@@ -3377,7 +3375,10 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
 
                 println!();
                 let purge_note = if stats.relations_purged > 0 {
-                    format!(", {} hallucinated parent/child edges purged", stats.relations_purged)
+                    format!(
+                        ", {} hallucinated parent/child edges purged",
+                        stats.relations_purged
+                    )
                 } else {
                     String::new()
                 };
@@ -4467,8 +4468,7 @@ async fn cmd_coref(
 
         // Get candidate antecedents from graph (Person, Place, Organization)
         let candidates = store.coref_candidates_for_chunk(chunk_id, &adjacent);
-        let place_candidates =
-            store.coref_typed_candidates_for_chunk(chunk_id, &adjacent, "place");
+        let place_candidates = store.coref_typed_candidates_for_chunk(chunk_id, &adjacent, "place");
         let org_candidates =
             store.coref_typed_candidates_for_chunk(chunk_id, &adjacent, "organization");
         if candidates.is_empty() && place_candidates.is_empty() && org_candidates.is_empty() {
@@ -4551,10 +4551,12 @@ async fn cmd_coref(
                 .iter()
                 .filter(|(name, aliases)| {
                     let nl = name.to_lowercase();
-                    nl.split_whitespace().any(|w| w.len() >= 4 && chunk_lower.contains(w))
+                    nl.split_whitespace()
+                        .any(|w| w.len() >= 4 && chunk_lower.contains(w))
                         || aliases.iter().any(|a| {
                             let al = a.to_lowercase();
-                            al.split_whitespace().any(|w| w.len() >= 4 && chunk_lower.contains(w))
+                            al.split_whitespace()
+                                .any(|w| w.len() >= 4 && chunk_lower.contains(w))
                         })
                 })
                 .cloned()
@@ -4571,8 +4573,7 @@ async fn cmd_coref(
             if !no_llm && !in_chunk_places.is_empty() {
                 let resolved_surfaces: std::collections::HashSet<String> =
                     tier1.iter().map(|r| r.surface.to_lowercase()).collect();
-                for pronoun in
-                    &extract_unresolved_spatial_pronouns(&chunk.text, &resolved_surfaces)
+                for pronoun in &extract_unresolved_spatial_pronouns(&chunk.text, &resolved_surfaces)
                 {
                     let window_text = extract_pronoun_window(&chunk.text, pronoun, 300);
                     let resolved = call_llm_for_place_coref(
@@ -4950,7 +4951,11 @@ async fn call_llm_for_place_coref(
         return Ok(None);
     }
     let valid = names_list.contains(&referent);
-    Ok(if valid { Some(referent.to_string()) } else { None })
+    Ok(if valid {
+        Some(referent.to_string())
+    } else {
+        None
+    })
 }
 
 // ── extract-relations ─────────────────────────────────────────────────────────
@@ -5613,9 +5618,15 @@ async fn cmd_extract_relations(
             if quote_is_non_schema {
                 (String::from("[non-schema relation — EC skipped]"), vec![])
             } else if quote_lacks_schema {
-                (String::from("[no schema relation word in CC quote — EC skipped]"), vec![])
+                (
+                    String::from("[no schema relation word in CC quote — EC skipped]"),
+                    vec![],
+                )
             } else if quote_insufficient_endpoints {
-                (String::from("[CC quote has fewer than 2 identifiable endpoints — EC skipped]"), vec![])
+                (
+                    String::from("[CC quote has fewer than 2 identifiable endpoints — EC skipped]"),
+                    vec![],
+                )
             } else {
                 let ec_prompt =
                     build_ec_prompt(quote, &entity_block, &canonical_names, narrator_name);
@@ -5708,7 +5719,12 @@ async fn cmd_extract_relations(
         // when the target is not a Person — catches 8b model confusions like
         // "Yousuf Rassool parent_of Barnato Board" (a building).
         const PERSON_ONLY_RELS: &[&str] = &[
-            "parent_of", "sibling_of", "spouse_of", "child_of", "married_to", "born_to",
+            "parent_of",
+            "sibling_of",
+            "spouse_of",
+            "child_of",
+            "married_to",
+            "born_to",
         ];
         if commit && !extracted.is_empty() {
             for (from_name, rel_type, to_name) in &extracted {
@@ -5717,10 +5733,12 @@ async fn cmd_extract_relations(
 
                 // Filter: person-only relation types require both ends to be Person.
                 if PERSON_ONLY_RELS.contains(&rel_type.as_str()) {
-                    let from_is_person = from_node.as_ref()
+                    let from_is_person = from_node
+                        .as_ref()
                         .map(|n| n.entity_type.eq_ignore_ascii_case("person"))
                         .unwrap_or(false);
-                    let to_is_person = to_node.as_ref()
+                    let to_is_person = to_node
+                        .as_ref()
                         .map(|n| n.entity_type.eq_ignore_ascii_case("person"))
                         .unwrap_or(false);
                     if !from_is_person || !to_is_person {
@@ -5731,7 +5749,8 @@ async fn cmd_extract_relations(
                     }
                 }
 
-                let from_id = from_node.map(|n| kwaai_rag::graph::entity_id(&n.name, &n.entity_type));
+                let from_id =
+                    from_node.map(|n| kwaai_rag::graph::entity_id(&n.name, &n.entity_type));
                 let to_id = to_node.map(|n| kwaai_rag::graph::entity_id(&n.name, &n.entity_type));
                 if let (Some(fid), Some(tid)) = (from_id, to_id) {
                     let before = store.get_relation_strength(fid, tid, rel_type);
@@ -7110,7 +7129,7 @@ async fn cmd_enrich_entities(
 
     #[cfg(feature = "storage")]
     {
-        use kwaai_rag::enrich::{EnrichConfig, enrich_entity_descriptions};
+        use kwaai_rag::enrich::{enrich_entity_descriptions, EnrichConfig};
 
         let (rag_cfg, tenant_id) = load_rag_config_for(&kb)?;
         let embed = EmbedClient::new(rag_cfg.embed_url.clone(), Some(rag_cfg.embed_model.clone()));
@@ -7118,7 +7137,12 @@ async fn cmd_enrich_entities(
         // Collect all comma-separated URLs; fall back to the positional arg.
         let raw_urls: Vec<String> = inference_urls
             .as_deref()
-            .map(|s| s.split(',').map(|u| u.trim().to_string()).filter(|u| !u.is_empty()).collect())
+            .map(|s| {
+                s.split(',')
+                    .map(|u| u.trim().to_string())
+                    .filter(|u| !u.is_empty())
+                    .collect()
+            })
             .unwrap_or_else(|| vec![inference_url]);
 
         let types: Vec<String> = entity_types
@@ -7152,28 +7176,29 @@ async fn cmd_enrich_entities(
         // Resolve p2p:// or mux:// URLs to local HTTP proxy endpoints before handing
         // off to enrich (which uses raw reqwest and cannot handle non-HTTP schemes).
         let mut _proxy_handles: Vec<tokio::task::JoinHandle<()>> = vec![];
-        let resolved_urls: Vec<String> =
-            if raw_urls.iter().any(|u| u.starts_with("p2p://") || u.starts_with("mux://")) {
-                use kwaai_p2p_daemon::{P2PClient, DEFAULT_SOCKET_NAME};
-                let sock = std::env::var("KWAAINET_SOCKET")
-                    .unwrap_or_else(|_| DEFAULT_SOCKET_NAME.to_string());
-                #[cfg(unix)]
-                let addr = format!("/unix/{sock}");
-                #[cfg(not(unix))]
-                let addr = "/ip4/127.0.0.1/tcp/5005".to_string();
-                let p2p = std::sync::Arc::new(
-                    P2PClient::connect(&addr)
-                        .await
-                        .context("connecting to p2pd for p2p:// URL resolution")?,
-                );
-                let (resolved, handles) =
-                    crate::ollama_proxy::resolve_inference_urls(&raw_urls, &p2p)
-                        .await?;
-                _proxy_handles = handles;
-                resolved
-            } else {
-                raw_urls
-            };
+        let resolved_urls: Vec<String> = if raw_urls
+            .iter()
+            .any(|u| u.starts_with("p2p://") || u.starts_with("mux://"))
+        {
+            use kwaai_p2p_daemon::{P2PClient, DEFAULT_SOCKET_NAME};
+            let sock = std::env::var("KWAAINET_SOCKET")
+                .unwrap_or_else(|_| DEFAULT_SOCKET_NAME.to_string());
+            #[cfg(unix)]
+            let addr = format!("/unix/{sock}");
+            #[cfg(not(unix))]
+            let addr = "/ip4/127.0.0.1/tcp/5005".to_string();
+            let p2p = std::sync::Arc::new(
+                P2PClient::connect(&addr)
+                    .await
+                    .context("connecting to p2pd for p2p:// URL resolution")?,
+            );
+            let (resolved, handles) =
+                crate::ollama_proxy::resolve_inference_urls(&raw_urls, &p2p).await?;
+            _proxy_handles = handles;
+            resolved
+        } else {
+            raw_urls
+        };
 
         let data_dir = rag_cfg.data_dir();
         let report = enrich_entity_descriptions(

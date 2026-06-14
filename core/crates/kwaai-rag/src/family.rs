@@ -136,7 +136,10 @@ pub async fn seed_family_tree(
             aliases: merged_aliases,
             schema_type: existing.as_ref().and_then(|e| e.schema_type.clone()),
             evidence: Vec::new(),
-            gender: person.gender.clone().or_else(|| existing.as_ref().and_then(|e| e.gender.clone())),
+            gender: person
+                .gender
+                .clone()
+                .or_else(|| existing.as_ref().and_then(|e| e.gender.clone())),
             fields: existing
                 .as_ref()
                 .map(|e| e.fields.clone())
@@ -196,7 +199,9 @@ pub async fn seed_family_tree(
     // relation extraction runs).
     let purged = graph.purge_unseeded_parent_relations()?;
     if purged > 0 {
-        progress(&format!("purged {purged} unseeded parent/child edges that conflict with seed"));
+        progress(&format!(
+            "purged {purged} unseeded parent/child edges that conflict with seed"
+        ));
     }
     stats.relations_purged = purged;
 

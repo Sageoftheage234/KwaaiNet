@@ -457,24 +457,31 @@ pub fn resolve_place_pronouns_from_candidates(
         let before_text = words[..idx].join(" ").to_lowercase();
         // Resolve to the candidate with the rightmost mention before this pronoun
         let best = in_chunk_candidates.iter().max_by_key(|(name, aliases)| {
-            let np = name.to_lowercase().split_whitespace()
+            let np = name
+                .to_lowercase()
+                .split_whitespace()
                 .filter(|w| w.len() >= 4)
                 .filter_map(|w| before_text.rfind(w))
                 .max()
                 .unwrap_or(0);
-            let ap = aliases.iter().flat_map(|a| {
-                let al = a.to_lowercase();
-                al.split_whitespace()
-                    .filter(|w| w.len() >= 4)
-                    .filter_map(|w| before_text.rfind(w))
-                    .collect::<Vec<_>>()
-            }).max().unwrap_or(0);
+            let ap = aliases
+                .iter()
+                .flat_map(|a| {
+                    let al = a.to_lowercase();
+                    al.split_whitespace()
+                        .filter(|w| w.len() >= 4)
+                        .filter_map(|w| before_text.rfind(w))
+                        .collect::<Vec<_>>()
+                })
+                .max()
+                .unwrap_or(0);
             np.max(ap)
         });
         if let Some((name, _)) = best {
             // Guard: entity must actually appear before this pronoun
             let nl = name.to_lowercase();
-            let mentioned = nl.split_whitespace()
+            let mentioned = nl
+                .split_whitespace()
                 .filter(|w| w.len() >= 4)
                 .any(|w| before_text.contains(w));
             if mentioned {
@@ -492,8 +499,11 @@ pub fn resolve_place_pronouns_from_candidates(
 
     // Definite place descriptions: alias matching (uses all window candidates)
     for &(surface, alias_pat) in PLACE_DEFINITE_DESCRIPTIONS {
-        let Some(offset) = text_lower.find(surface) else { continue; };
-        let matched = in_chunk_candidates.iter()
+        let Some(offset) = text_lower.find(surface) else {
+            continue;
+        };
+        let matched = in_chunk_candidates
+            .iter()
             .find(|(_, aliases)| aliases.iter().any(|a| a.to_lowercase() == alias_pat));
         if let Some((name, _)) = matched {
             results.push(CorefResolution {
@@ -519,8 +529,11 @@ pub fn resolve_org_descriptions_from_candidates(
     let text_lower = text.to_lowercase();
     let mut results = Vec::new();
     for &(surface, alias_pat) in ORG_DEFINITE_DESCRIPTIONS {
-        let Some(offset) = text_lower.find(surface) else { continue; };
-        let matched = candidates.iter()
+        let Some(offset) = text_lower.find(surface) else {
+            continue;
+        };
+        let matched = candidates
+            .iter()
             .find(|(_, aliases)| aliases.iter().any(|a| a.to_lowercase() == alias_pat));
         if let Some((name, _)) = matched {
             results.push(CorefResolution {

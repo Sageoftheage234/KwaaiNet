@@ -1977,7 +1977,11 @@ pub enum GraphAction {
         min_mentions: u32,
 
         /// Comma-separated entity types to enrich (default: Person,Place,Organization)
-        #[arg(long, default_value = "Person,Place,Organization", value_name = "TYPES")]
+        #[arg(
+            long,
+            default_value = "Person,Place,Organization",
+            value_name = "TYPES"
+        )]
         entity_types: String,
 
         /// Maximum number of entities to enrich in this run (default: all)
