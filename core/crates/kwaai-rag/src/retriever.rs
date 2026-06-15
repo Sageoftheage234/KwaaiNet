@@ -497,29 +497,9 @@ fn resolve_author_relative(query: &str, anchor_id: i64, graph: &GraphStore) -> O
         return None;
     }
 
-    // Siblings
-    if q.contains("sibling") || q.contains("brother") || q.contains("sister") {
-        let want_gender = if q.contains("sister") {
-            Some("Female")
-        } else if q.contains("brother") {
-            Some("Male")
-        } else {
-            None
-        };
-        return neighbors
-            .iter()
-            .filter(|(_, rel, _)| rel == "sibling_of")
-            .find(|(id, _, _)| {
-                want_gender.is_none_or(|g| {
-                    graph
-                        .get_entity(*id)
-                        .and_then(|e| e.gender.clone())
-                        .as_deref()
-                        == Some(g)
-                })
-            })
-            .map(|(id, _, _)| *id);
-    }
+    // Siblings: do NOT resolve to a single entity — the author entity's
+    // build_relations_suffix already lists all siblings. Resolving to one
+    // sibling triggers Replace mode which hides the rest.
 
     None
 }
