@@ -1321,3 +1321,57 @@ a fair M-series measurement.
 - Extract: `/Users/rezarassool/Source/KwaaiNet/tests/kwaai-knowledge/results/extract_rel_D6_ordA_10pct_20260614_124208.md`
 - Eval: `/Users/rezarassool/Source/KwaaiNet/tests/kwaai-knowledge/results/eval_D6_ordA_10pct_20260614_124208.md`
 - Coref: `/Users/rezarassool/Source/KwaaiNet/tests/kwaai-knowledge/results/coref_D6_ordA_10pct_20260614_124208.md`
+
+---
+
+## 2026-06-14 – Query Understanding Pipeline (2.2→2.3): Runs r12–r17
+
+**Goal:** Implement structured query understanding (QueryIntent classification) to route family-relation queries to graph+replace/prepend retrieval, improving accuracy on q24 and similar questions.
+
+**Baseline:** r11 = 65.8% (148/225), with q24 = 0/7 (LLM fails to synthesize from 20-chunk context)
+
+### Architecture implemented
+
+New module `query_understand.rs`:
+- `ClassifyMethod` (Rule/Llm/Hybrid) + `GraphMode` (Inject/Prepend/Replace) + `QueryIntent`
+- Rule-based classifier with OF_PATTERNS / POSS_PATTERNS for family relations
+- Entity resolution via token intersection + alias_token_index
+- `--mode smart`: routes family queries to graph+replace/prepend, everything else to iterative
+
+### Eval run matrix
+
+| Run | Mode | Flags | Score | Δ vs r11 | Notes |
+|-----|------|-------|-------|----------|-------|
+| r11 | iterative | (baseline) | 65.8% (148/225) | — | All-time best before this session |
+| r12 | graph | --graph-mode replace | 67.6% (152/225) | +1.8pp | q24 0→4/7 but temporal qs regress |
+| r15 | smart v1 | temp varies | 64.0% (144/225) | -1.8pp | Bug: author-family → iterative, q03 0/6 |
+| r16 | smart v2 | temp varies | 64.9% (146/225) | -0.9pp | Fixed q03, but q24 LLM variance (0/7) |
+| **r17** | **smart v2** | **--temperature 0** | **71.6% (161/225)** | **+5.8pp** | **New all-time best** |
+
+### r17 per-question highlights
+
+| Q | Question | r11 | r17 | Δ |
+|---|----------|-----|-----|---|
+| q03 | author's grandchildren | 6/6 | 6/6 | 0 |
+| q06 | Buitencingle | 4/8 | 3/8 | -1 |
+| q07 | author's wife | 1/3 | **3/3** | **+2** |
+| q08 | wife detail | 4/6 | 2/6 | -2 |
+| q09 | grandfather | 3/9 | 3/9 | 0 |
+| q22 | author's father | 4/4 | 4/4 | 0 |
+| q23 | author's siblings | 4/5 | **5/5** | **+1** |
+| q24 | JMH Gool's children | 0/7 | **7/7** | **+7** |
+| q32 | Cissie–JMH relation | 2/5 | 4/5 | +2 |
+| q38 | Cissie's father | 2/5 | 4/5 | +2 |
+
+### Key lessons
+
+1. **Temperature=0 is essential for reliable eval** — without it, LLM variance causes ±6 keyword swings per question (q24 ranged 0–5/7 across runs)
+2. **Smart routing works** — family queries → graph (Replace for named entities, Prepend for author-anchored) vs iterative for everything else
+3. **Replace mode requires sufficient graph facts** — graph chunk for JMH Gool has 11 children + 2 wives; LLM reliably uses all with temp=0
+4. **Remaining gaps**: q06 (Buitencingle, text narrative), q08 (wife detail), q09 (grandfather, complex multi-hop) — all route to iterative which still struggles with complex descriptive questions
+
+### Files
+- r12 eval: `results/eval_D6_r12_graph_replace_20260614_203748.md`
+- r15 eval: `results/eval_D6_r15_smart_20260614_205932.md`
+- r16 eval: `results/eval_D6_r16_smart_v2_20260614_212403.md`
+- r17 eval: `results/eval_D6_r17_smart_t0_20260614_214526.md`

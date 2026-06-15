@@ -237,6 +237,7 @@ async fn do_chat(state: &RagState, req: ChatRequest) -> Result<serde_json::Value
             hyde_inference_url: None,
             hyde_model: None,
             hyde_alpha: None,
+            ..Default::default()
         };
 
         let retrieval_start = std::time::Instant::now();
@@ -405,6 +406,7 @@ async fn do_search(
             hyde_inference_url: None,
             hyde_model: None,
             hyde_alpha: None,
+            ..Default::default()
         };
         let chunks = match state.storage_url.as_deref() {
             Some("local") => {

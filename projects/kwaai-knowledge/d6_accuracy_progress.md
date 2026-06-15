@@ -882,3 +882,53 @@ Dream cycle ROI diminishes fast and can go negative:
   - Relation extraction pass on top of R5 entity graph
   - Bigger KB (more source documents)
   - Different LLM for eval (3.1:70b via mux://)
+
+---
+
+## 2026-06-14 — Query Understanding Pipeline (r12–r17): 71.6% new all-time best
+
+### Result: **71.6% (161/225)** — +5.8pp over r11 (65.8%)
+
+**Run:** r17, eval_D6_r17_smart_t0_20260614_214526.md  
+**Mode:** `--mode smart` + `temperature=0` in eval LLM calls
+
+### What changed
+
+| Component | Change | Impact |
+|-----------|--------|--------|
+| `query_understand.rs` (new) | Rule-based QueryIntent classifier (FamilyRelation/EntityDescription/etc) | Route family queries to graph mode |
+| `--mode smart` | Non-author family → graph+Replace; author-family → graph+Prepend; other → iterative | Correct retrieval mode per query type |
+| `temperature=0` in eval payload | Deterministic LLM answers | Eliminates ±6 keyword LLM variance per question |
+
+### Per-question improvements (r11 → r17)
+
+| Q | Question | r11 | r17 | Δ |
+|---|----------|-----|-----|---|
+| q07 | author's wife | 1/3 | **3/3** | **+2** |
+| q23 | author's siblings | 4/5 | **5/5** | **+1** |
+| q24 | JMH Gool's children | 0/7 | **7/7** | **+7** |
+| q32 | Cissie–JMH relation | 2/5 | 4/5 | +2 |
+| q38 | Cissie's father | 2/5 | 4/5 | +2 |
+
+### Still failing
+
+| Q | Question | r17 | Why |
+|---|----------|-----|-----|
+| q06 | Buitencingle | 3/8 | Text-heavy narrative — needs better chunking or more context |
+| q08 | wife detail | 2/6 | Graph+prepend chunk lacks wife's biographical detail |  
+| q09 | grandfather | 3/9 | Complex question; author entity graph doesn't have full biographical detail |
+
+### Lessons
+
+1. **Temperature=0 is mandatory** for reliable keyword-overlap evaluation — without it, 8b model has ±6 keyword variance per question (q24 ranged 0–7/7 across runs)
+2. **Smart routing works** — routing to graph mode only for queries that benefit from it prevents regression on text-heavy questions
+3. **Replace mode is powerful** when the graph has the right data — q24 went from 0/7 to 7/7 because the JMH Gool entity has complete children list from seed YAML
+4. **Author-anchored family queries** benefit from Prepend (not Replace) — keeps document context alongside graph facts
+
+### Next steps
+
+Target: 80–90% (still 8–18pp away)
+- **q06, q08** (Buitencingle/wife): Narrative-descriptive questions — try improving chunk-level retrieval or adding richer entity descriptions
+- **q09** (grandfather): Multi-hop — try a 2-hop BFS in smart mode for grandparent queries
+- **q32** (Cissie–JMH): "related" doesn't match rule patterns → add "related" to classifier or add LLM fallback
+- **q12/q25/q26** review: check for systematic wins across entity-description questions

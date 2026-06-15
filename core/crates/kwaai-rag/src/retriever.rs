@@ -85,6 +85,15 @@ pub struct RetrieveConfig {
     /// Only applies when `hyde_inference_url` and `hyde_model` are set.
     /// When `None`, defaults to 1.0 (pure HyDE, original behaviour).
     pub hyde_alpha: Option<f32>,
+    /// How to integrate graph query results into the LLM context.
+    /// `Inject` (default) keeps existing behaviour; `Prepend` and `Replace` use
+    /// the structured 2.2→2.3 pipeline (understand_query → build_graph_facts).
+    pub graph_mode: crate::query_understand::GraphMode,
+    /// Method for classifying the query intent in step 2.2.
+    pub query_classify: crate::query_understand::ClassifyMethod,
+    /// When true, use 2-hop BFS for grandparent/grandchild queries instead of
+    /// single-hop direct edge lookup.
+    pub query_multi_hop: bool,
 }
 
 impl Default for RetrieveConfig {
@@ -96,6 +105,9 @@ impl Default for RetrieveConfig {
             hyde_inference_url: None,
             hyde_model: None,
             hyde_alpha: None,
+            graph_mode: crate::query_understand::GraphMode::Inject,
+            query_classify: crate::query_understand::ClassifyMethod::Rule,
+            query_multi_hop: false,
         }
     }
 }
@@ -265,7 +277,69 @@ pub async fn retrieve_graph_anchored(
     // 6. RRF fusion: graph chunks + vector chunks.
     let merged = rrf_merge(&graph_chunks, &vector_chunks, cfg.top_k * 2);
     let mut results = assemble_results(merged, cfg, meta)?;
-    inject_entity_descriptions(query, &seed_hits, &name_matched_ids, graph, &mut results);
+
+    match cfg.graph_mode {
+        crate::query_understand::GraphMode::Inject => {
+            inject_entity_descriptions(query, &seed_hits, &name_matched_ids, graph, &mut results);
+        }
+        crate::query_understand::GraphMode::Prepend
+        | crate::query_understand::GraphMode::Replace => {
+            let infer_url = cfg.hyde_inference_url.as_deref();
+            let infer_model = cfg.hyde_model.as_deref();
+            let qs = crate::query_understand::understand_query(
+                query,
+                cfg.query_classify.clone(),
+                infer_url,
+                infer_model,
+            )
+            .await;
+
+            let entity_id = crate::query_understand::resolve_target_entity(&qs, graph);
+
+            if let Some(eid) = entity_id {
+                if let Some(entity) = graph.get_entity(eid) {
+                    let relations_suffix = build_relations_suffix(entity, eid, graph);
+                    let text = format!(
+                        "[Graph Query Result]\n{}: {}{}",
+                        entity.name, entity.description, relations_suffix
+                    );
+                    let synthetic =
+                        make_synthetic_chunk(format!("[Graph: {}]", entity.name), text, 3.0);
+
+                    let is_replace = cfg.graph_mode == crate::query_understand::GraphMode::Replace
+                        && matches!(
+                            qs.intent,
+                            crate::query_understand::QueryIntent::FamilyRelation { .. }
+                        )
+                        && !qs.anchor_is_author
+                        && crate::query_understand::count_intent_facts(&qs, eid, graph) >= 1;
+
+                    if is_replace {
+                        results = vec![synthetic];
+                    } else {
+                        results.insert(0, synthetic);
+                    }
+                } else {
+                    inject_entity_descriptions(
+                        query,
+                        &seed_hits,
+                        &name_matched_ids,
+                        graph,
+                        &mut results,
+                    );
+                }
+            } else {
+                inject_entity_descriptions(
+                    query,
+                    &seed_hits,
+                    &name_matched_ids,
+                    graph,
+                    &mut results,
+                );
+            }
+        }
+    }
+
     Ok(results)
 }
 
@@ -428,6 +502,71 @@ fn resolve_author_relative(query: &str, anchor_id: i64, graph: &GraphStore) -> O
     }
 
     None
+}
+
+/// Build a natural-language relations suffix for an entity.
+///
+/// Groups all outgoing relations by type and formats them as summary sentences.
+/// Shared by `inject_entity_descriptions` (Inject mode) and the Prepend/Replace paths.
+fn build_relations_suffix(
+    entity: &crate::graph::EntityNode,
+    entity_id: i64,
+    graph: &GraphStore,
+) -> String {
+    let Ok(rels) = graph.outgoing_relations(entity_id) else {
+        return String::new();
+    };
+    let mut by_type: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for (dst_id, rel_type, _strength, _evid) in rels {
+        if let Some(dst) = graph.get_entity(dst_id) {
+            by_type.entry(rel_type).or_default().push(dst.name.clone());
+        }
+    }
+    let mut statements: Vec<String> = Vec::new();
+    for (rel_type, mut targets) in by_type {
+        targets.dedup();
+        targets.truncate(12);
+        let list = targets.join(", ");
+        let sentence = match rel_type.as_str() {
+            "parent_of" => format!("The children of {} are: {}.", entity.name, list),
+            "child_of" => format!("{} is the child of {}.", entity.name, list),
+            "spouse_of" => format!("{} was married to {}.", entity.name, list),
+            "sibling_of" => format!("The siblings of {} include: {}.", entity.name, list),
+            "grandparent_of" => {
+                format!("The grandchildren of {} include: {}.", entity.name, list)
+            }
+            "grandchild_of" => format!("{} is the grandchild of {}.", entity.name, list),
+            other => format!("{} {} {}.", entity.name, other.replace('_', " "), list),
+        };
+        statements.push(sentence);
+    }
+    if statements.is_empty() {
+        String::new()
+    } else {
+        format!("\n\nKnown relationships: {}", statements.join(" "))
+    }
+}
+
+/// Build a synthetic `RetrievedChunk` from a doc name, text body, and score.
+fn make_synthetic_chunk(doc_name: String, text: String, score: f64) -> RetrievedChunk {
+    RetrievedChunk {
+        chunk_meta: ChunkMeta {
+            doc_name,
+            chunk_index: 0,
+            text,
+            surrounding: String::new(),
+            page_num: None,
+            ingested_at: String::new(),
+            section_name: None,
+            skip_extraction: false,
+            section_note: None,
+            section_type: crate::doc_schema::SectionType::Main,
+        },
+        score,
+        source_kb: None,
+        rerank_score: None,
+    }
 }
 
 /// Prepend a synthetic chunk for the most relevant graph entity.
@@ -606,69 +745,15 @@ pub(crate) fn inject_entity_descriptions(
         return;
     }
 
-    // Append outgoing relations as grouped summary sentences so the LLM can answer
-    // "who were the children of X?" queries directly from graph facts without
-    // needing to synthesize across many individual per-target statements.
-    // Format: "The children of Name are: A, B, C." (one sentence per relation type)
-    let relations_suffix = {
-        let mut statements: Vec<String> = Vec::new();
-        if let Ok(rels) = graph.outgoing_relations(inject_id) {
-            // Group by relation type, deduplicate and cap at 12 targets.
-            let mut by_type: std::collections::BTreeMap<String, Vec<String>> =
-                std::collections::BTreeMap::new();
-            for (dst_id, rel_type, _strength, _evid) in rels {
-                if let Some(dst) = graph.get_entity(dst_id) {
-                    by_type.entry(rel_type).or_default().push(dst.name.clone());
-                }
-            }
-            for (rel_type, mut targets) in by_type {
-                targets.dedup();
-                targets.truncate(12);
-                let list = targets.join(", ");
-                // Produce a natural-language summary sentence per relation type so
-                // the 8b LLM can quote it directly rather than synthesising fragments.
-                let sentence = match rel_type.as_str() {
-                    "parent_of" => format!("The children of {} are: {}.", entity.name, list),
-                    "child_of" => format!("{} is the child of {}.", entity.name, list),
-                    "spouse_of" => format!("{} was married to {}.", entity.name, list),
-                    "sibling_of" => format!("The siblings of {} include: {}.", entity.name, list),
-                    "grandparent_of" => {
-                        format!("The grandchildren of {} include: {}.", entity.name, list)
-                    }
-                    "grandchild_of" => format!("{} is the grandchild of {}.", entity.name, list),
-                    other => format!("{} {} {}.", entity.name, other.replace('_', " "), list),
-                };
-                statements.push(sentence);
-            }
-        }
-        if statements.is_empty() {
-            String::new()
-        } else {
-            format!("\n\nKnown relationships: {}", statements.join(" "))
-        }
-    };
-
-    let synthetic = RetrievedChunk {
-        chunk_meta: ChunkMeta {
-            doc_name: format!("[Graph: {}]", entity.name),
-            chunk_index: 0,
-            text: format!(
-                "{}: {}{}",
-                entity.name, entity.description, relations_suffix
-            ),
-            surrounding: String::new(),
-            page_num: None,
-            ingested_at: String::new(),
-            section_name: None,
-            skip_extraction: false,
-            section_note: None,
-            section_type: crate::doc_schema::SectionType::Main,
-        },
-        score: 2.0,
-        source_kb: None,
-        rerank_score: None,
-    };
-
+    let relations_suffix = build_relations_suffix(entity, inject_id, graph);
+    let synthetic = make_synthetic_chunk(
+        format!("[Graph: {}]", entity.name),
+        format!(
+            "{}: {}{}",
+            entity.name, entity.description, relations_suffix
+        ),
+        2.0,
+    );
     pool.insert(0, synthetic);
 }
 

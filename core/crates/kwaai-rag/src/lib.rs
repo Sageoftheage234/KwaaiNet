@@ -18,6 +18,7 @@ pub mod meta_store;
 pub mod ner;
 pub mod obsidian;
 pub mod prompt;
+pub mod query_understand;
 pub mod query_understanding;
 pub mod reranker;
 pub mod retriever;

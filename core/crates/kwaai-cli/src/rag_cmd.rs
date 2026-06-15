@@ -24,6 +24,22 @@ use crate::cli::{CacheAction, DreamAction, GraphAction, RagAction, RagArgs};
 use crate::config::{KwaaiNetConfig, RagConfig};
 use crate::display::*;
 
+fn parse_graph_mode(s: &str) -> kwaai_rag::query_understand::GraphMode {
+    match s.to_lowercase().as_str() {
+        "prepend" => kwaai_rag::query_understand::GraphMode::Prepend,
+        "replace" => kwaai_rag::query_understand::GraphMode::Replace,
+        _ => kwaai_rag::query_understand::GraphMode::Inject,
+    }
+}
+
+fn parse_classify_method(s: &str) -> kwaai_rag::query_understand::ClassifyMethod {
+    match s.to_lowercase().as_str() {
+        "llm" => kwaai_rag::query_understand::ClassifyMethod::Llm,
+        "hybrid" => kwaai_rag::query_understand::ClassifyMethod::Hybrid,
+        _ => kwaai_rag::query_understand::ClassifyMethod::Rule,
+    }
+}
+
 #[cfg(feature = "storage")]
 use crate::storage_rpc::{
     http_delete_vectors, http_search_vectors, http_upload_vectors, rpc_delete_vectors,
@@ -89,6 +105,8 @@ pub async fn run(args: RagArgs) -> Result<()> {
             hyde,
             hyde_alpha,
             rerank,
+            graph_mode,
+            query_classify,
         } => {
             cmd_query(
                 text,
@@ -103,6 +121,8 @@ pub async fn run(args: RagArgs) -> Result<()> {
                 hyde,
                 hyde_alpha,
                 rerank,
+                graph_mode,
+                query_classify,
             )
             .await
         }
@@ -240,6 +260,8 @@ pub async fn run(args: RagArgs) -> Result<()> {
             judge_model,
             output,
             progress_file,
+            graph_mode,
+            query_classify,
         } => {
             cmd_eval(
                 questions,
@@ -256,6 +278,8 @@ pub async fn run(args: RagArgs) -> Result<()> {
                 judge_model,
                 output,
                 progress_file,
+                graph_mode,
+                query_classify,
             )
             .await
         }
@@ -882,6 +906,8 @@ async fn cmd_query(
     hyde: bool,
     hyde_alpha: Option<f32>,
     rerank: bool,
+    graph_mode: String,
+    query_classify: String,
 ) -> Result<()> {
     #[cfg(not(feature = "storage"))]
     bail!("RAG requires the 'storage' feature.");
@@ -927,6 +953,9 @@ async fn cmd_query(
             hyde_inference_url: hyde_url,
             hyde_model: hyde_mdl,
             hyde_alpha: effective_alpha,
+            graph_mode: parse_graph_mode(&graph_mode),
+            query_classify: parse_classify_method(&query_classify),
+            query_multi_hop: false,
         };
         let mut spinner = if json_out {
             None
@@ -973,7 +1002,98 @@ async fn cmd_query(
             let mut chunks = match rag_cfg.storage_url.as_deref() {
                 Some("local") => {
                     let vs = Arc::new(open_local_vs(&rag_cfg.data_dir())?);
-                    if effective_mode == "iterative" {
+                    if effective_mode == "smart" {
+                        use kwaai_rag::query_understand::{
+                            understand_query_rule, GraphMode, QueryIntent,
+                        };
+                        let qs = understand_query_rule(&query);
+                        let is_family_nonauthor =
+                            matches!(qs.intent, QueryIntent::FamilyRelation { .. })
+                                && !qs.anchor_is_author;
+                        let is_family_author =
+                            matches!(qs.intent, QueryIntent::FamilyRelation { .. })
+                                && qs.anchor_is_author;
+                        let graph = GraphStore::open(&rag_cfg.data_dir(), tenant_id)
+                            .context("opening graph store for smart routing")?;
+                        drop(spinner.take());
+                        if is_family_nonauthor {
+                            let mut smart_cfg = retrieve_cfg.clone();
+                            smart_cfg.graph_mode = GraphMode::Replace;
+                            retrieve_graph_anchored(
+                                &query,
+                                &smart_cfg,
+                                &embed,
+                                &meta,
+                                &graph,
+                                move |emb, k| {
+                                    let vs = vs.clone();
+                                    Box::pin(async move {
+                                        let raw = vs.search(tenant_id, &emb, k).await?;
+                                        Ok(raw.into_iter().map(|r| (r.id, r.score)).collect())
+                                    })
+                                        as Pin<
+                                            Box<
+                                                dyn std::future::Future<
+                                                        Output = Result<Vec<(i64, f64)>>,
+                                                    > + Send,
+                                            >,
+                                        >
+                                },
+                            )
+                            .await?
+                        } else if is_family_author {
+                            let mut smart_cfg = retrieve_cfg.clone();
+                            smart_cfg.graph_mode = GraphMode::Prepend;
+                            retrieve_graph_anchored(
+                                &query,
+                                &smart_cfg,
+                                &embed,
+                                &meta,
+                                &graph,
+                                move |emb, k| {
+                                    let vs = vs.clone();
+                                    Box::pin(async move {
+                                        let raw = vs.search(tenant_id, &emb, k).await?;
+                                        Ok(raw.into_iter().map(|r| (r.id, r.score)).collect())
+                                    })
+                                        as Pin<
+                                            Box<
+                                                dyn std::future::Future<
+                                                        Output = Result<Vec<(i64, f64)>>,
+                                                    > + Send,
+                                            >,
+                                        >
+                                },
+                            )
+                            .await?
+                        } else {
+                            retrieve_iterative(
+                                &query,
+                                &retrieve_cfg,
+                                &embed,
+                                &meta,
+                                &graph,
+                                move |emb, k| {
+                                    let vs = vs.clone();
+                                    Box::pin(async move {
+                                        let raw = vs.search(tenant_id, &emb, k).await?;
+                                        Ok(raw.into_iter().map(|r| (r.id, r.score)).collect())
+                                    })
+                                        as Pin<
+                                            Box<
+                                                dyn std::future::Future<
+                                                        Output = Result<Vec<(i64, f64)>>,
+                                                    > + Send,
+                                            >,
+                                        >
+                                },
+                                &infer_url,
+                                &model,
+                                |msg| println!("{msg}"),
+                            )
+                            .await?
+                        }
+                    } else if effective_mode == "iterative" {
                         let graph = GraphStore::open(&rag_cfg.data_dir(), tenant_id)
                             .context("opening graph store for iterative retrieval")?;
                         drop(spinner.take());
@@ -1233,6 +1353,9 @@ async fn cmd_chat(
             } else {
                 None
             },
+            graph_mode: kwaai_rag::query_understand::GraphMode::Inject,
+            query_classify: kwaai_rag::query_understand::ClassifyMethod::Rule,
+            query_multi_hop: false,
         };
 
         let http = reqwest::Client::new();
@@ -6570,6 +6693,8 @@ async fn cmd_eval(
     judge_model: Option<String>,
     output: Option<std::path::PathBuf>,
     progress_file: Option<std::path::PathBuf>,
+    graph_mode: String,
+    query_classify: String,
 ) -> Result<()> {
     #[cfg(not(feature = "storage"))]
     bail!("RAG requires the 'storage' feature.");
@@ -6645,6 +6770,9 @@ async fn cmd_eval(
             } else {
                 None
             },
+            graph_mode: parse_graph_mode(&graph_mode),
+            query_classify: parse_classify_method(&query_classify),
+            query_multi_hop: false,
         };
 
         // Load document context preamble from persisted schema metadata (if any).
@@ -6686,7 +6814,7 @@ async fn cmd_eval(
         println!("  Model:     {model}");
         println!("  Inference: {inference_url}");
         let judge_mdl = judge_model.as_deref().unwrap_or(&model);
-        println!("  top_k={top_k}  mode={effective_mode}  hyde={hyde}  rerank={rerank}  understand={understand}  llm_judge={llm_judge}");
+        println!("  top_k={top_k}  mode={effective_mode}  graph_mode={graph_mode}  query_classify={query_classify}  hyde={hyde}  rerank={rerank}  understand={understand}  llm_judge={llm_judge}");
         if llm_judge {
             println!("  Judge model: {judge_mdl}");
         }
@@ -6736,7 +6864,59 @@ async fn cmd_eval(
                     as Pin<Box<dyn std::future::Future<Output = Result<Vec<(i64, f64)>>> + Send>>
             };
 
-            let mut chunks = if effective_mode == "iterative" {
+            let mut chunks = if effective_mode == "smart" {
+                use kwaai_rag::query_understand::{understand_query_rule, QueryIntent, GraphMode};
+                let qs = understand_query_rule(&q.question);
+                let is_family_nonauthor = matches!(qs.intent, QueryIntent::FamilyRelation { .. })
+                    && !qs.anchor_is_author;
+                let is_family_author = matches!(qs.intent, QueryIntent::FamilyRelation { .. })
+                    && qs.anchor_is_author;
+                let graph = GraphStore::open(&rag_cfg.data_dir(), tenant_id)
+                    .context("opening graph store")?;
+                if is_family_nonauthor {
+                    // Non-author family query: graph+replace (graph facts only, zero noise).
+                    let mut smart_cfg = retrieve_cfg.clone();
+                    smart_cfg.graph_mode = GraphMode::Replace;
+                    retrieve_graph_anchored(
+                        &q.question,
+                        &smart_cfg,
+                        &embed,
+                        &meta,
+                        &graph,
+                        search_fn,
+                    )
+                    .await
+                    .unwrap_or_default()
+                } else if is_family_author {
+                    // Author-anchored family query: graph+prepend (author entity facts + doc chunks).
+                    let mut smart_cfg = retrieve_cfg.clone();
+                    smart_cfg.graph_mode = GraphMode::Prepend;
+                    retrieve_graph_anchored(
+                        &q.question,
+                        &smart_cfg,
+                        &embed,
+                        &meta,
+                        &graph,
+                        search_fn,
+                    )
+                    .await
+                    .unwrap_or_default()
+                } else {
+                    retrieve_iterative(
+                        &q.question,
+                        &retrieve_cfg,
+                        &embed,
+                        &meta,
+                        &graph,
+                        search_fn,
+                        &inference_url,
+                        &model,
+                        |msg| println!("{msg}"),
+                    )
+                    .await
+                    .unwrap_or_default()
+                }
+            } else if effective_mode == "iterative" {
                 let graph = GraphStore::open(&rag_cfg.data_dir(), tenant_id)
                     .context("opening graph store")?;
                 retrieve_iterative(
@@ -6814,6 +6994,7 @@ async fn cmd_eval(
                 "model": model,
                 "messages": messages,
                 "stream": false,
+                "temperature": 0,
             });
             let answer = match http
                 .post(format!("{inference_url}/v1/chat/completions"))

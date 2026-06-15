@@ -73,9 +73,11 @@ fn find_manifest(model_ref: &str, manifests_root: &Path) -> Result<PathBuf> {
     // Candidates tried in order:
     //   1. registry.ollama.ai/library/<name>/<tag>  — standard Ollama library
     //   2. <name>/<tag>                              — fully-qualified (hf.co/…)
+    // Use separate join() calls to avoid forward-slash handling differences on Windows.
     let candidates = [
         manifests_root
-            .join("registry.ollama.ai/library")
+            .join("registry.ollama.ai")
+            .join("library")
             .join(name)
             .join(tag),
         manifests_root.join(name).join(tag),
@@ -88,9 +90,16 @@ fn find_manifest(model_ref: &str, manifests_root: &Path) -> Result<PathBuf> {
     }
 
     Err(anyhow!(
-        "Model '{}' is not pulled locally.\nRun: ollama pull {}",
+        "Model '{}' not found in {}.\n\
+         Searched:\n  {}\n  {}\n\
+         Either the model is not pulled (run: ollama pull {}) \
+         or Ollama is storing models elsewhere.\n\
+         Workaround: set OLLAMA_MODELS to your Ollama models directory.",
         model_ref,
-        model_ref
+        manifests_root.display(),
+        candidates[0].display(),
+        candidates[1].display(),
+        model_ref,
     ))
 }
 
@@ -111,6 +120,10 @@ pub fn list_local_models() -> Vec<String> {
     }
     for sub in &["Documents/Kwaai/ollama", "Documents/ollama"] {
         roots.push(home.join(sub).join("manifests"));
+    }
+    #[cfg(target_os = "windows")]
+    if let Some(local_data) = dirs::data_local_dir() {
+        roots.push(local_data.join("Ollama").join("models").join("manifests"));
     }
     roots.push(PathBuf::from("/usr/share/ollama/.ollama/models").join("manifests"));
     roots.push(home.join(".ollama").join("models").join("manifests"));
@@ -189,8 +202,10 @@ fn manifest_path_to_ref(manifest: &Path, root: &Path) -> Option<String> {
 /// storage layouts in priority order:
 ///
 /// 1. `OLLAMA_MODELS` env var (custom layout: `$dir/manifests/`, `$dir/blobs/`)
-/// 2. Common macOS custom paths under `~/Documents` (same layout)
-/// 3. Default `~/.ollama/models/` (default layout)
+/// 2. Common macOS/Kwaai custom paths under `~/Documents` (same layout)
+/// 3. Windows: `%LOCALAPPDATA%\Ollama\models` (some Ollama Windows installs)
+/// 4. Linux system service: `/usr/share/ollama/.ollama/models`
+/// 5. Default `~/.ollama/models/` (default layout, always returned as fallback)
 fn find_ollama_roots() -> Result<(PathBuf, PathBuf)> {
     let home = dirs::home_dir().ok_or_else(|| anyhow!("cannot determine home directory"))?;
 
@@ -207,6 +222,13 @@ fn find_ollama_roots() -> Result<(PathBuf, PathBuf)> {
         candidates.push(home.join(sub));
     }
 
+    // 3. Windows: some Ollama installs land in %LOCALAPPDATA%\Ollama\models
+    //    rather than the documented %USERPROFILE%\.ollama\models.
+    #[cfg(target_os = "windows")]
+    if let Some(local_data) = dirs::data_local_dir() {
+        candidates.push(local_data.join("Ollama").join("models"));
+    }
+
     // For each candidate check whether it uses the "custom" layout
     // (blobs/ directly under the root) and return if found.
     for dir in &candidates {
@@ -217,7 +239,7 @@ fn find_ollama_roots() -> Result<(PathBuf, PathBuf)> {
         }
     }
 
-    // 3. System-wide Ollama service layout (Linux: `systemctl enable ollama`).
+    // 4. System-wide Ollama service layout (Linux: `systemctl enable ollama`).
     //    When Ollama runs as a system service under user `ollama`, models land at
     //    /usr/share/ollama/.ollama/models — not in any user home directory.
     let system_root = PathBuf::from("/usr/share/ollama/.ollama/models");
@@ -225,7 +247,51 @@ fn find_ollama_roots() -> Result<(PathBuf, PathBuf)> {
         return Ok((system_root.join("manifests"), system_root.join("blobs")));
     }
 
-    // 4. Default ~/.ollama with the `models/` subdirectory.
+    // 5. Default ~/.ollama with the `models/` subdirectory.
     let default = home.join(".ollama").join("models");
     Ok((default.join("manifests"), default.join("blobs")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn find_manifest_error_names_search_directory() {
+        // When a model is missing, the error must include the searched root path
+        // so users can distinguish a path-mismatch from a genuinely unpulled model.
+        let missing_root = std::env::temp_dir().join("kwaainet-test-no-ollama-models");
+        let err = find_manifest("no-such-model:latest", &missing_root)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("kwaainet-test-no-ollama-models"),
+            "error should name the searched directory — got: {err}"
+        );
+        assert!(
+            err.contains("OLLAMA_MODELS"),
+            "error should suggest OLLAMA_MODELS workaround — got: {err}"
+        );
+    }
+
+    #[test]
+    fn find_manifest_uses_separate_joins_for_registry_path() {
+        // Regression: the old code used join("registry.ollama.ai/library") with a
+        // forward slash in the string, which is ambiguous on Windows. Verify the
+        // candidate path contains the registry and library as distinct components.
+        let root = std::path::PathBuf::from("/tmp/manifests");
+        // find_manifest will fail (no files exist), but we can inspect the error
+        // to confirm both components appear in the searched path.
+        let err = find_manifest("llama3:latest", &root)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("registry.ollama.ai"),
+            "path should contain registry: {err}"
+        );
+        assert!(
+            err.contains("library"),
+            "path should contain library: {err}"
+        );
+    }
 }

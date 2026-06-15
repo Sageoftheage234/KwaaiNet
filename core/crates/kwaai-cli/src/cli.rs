@@ -1139,7 +1139,8 @@ pub enum RagAction {
         inference_url: Option<String>,
 
         /// Retrieval mode: "vector" (hybrid), "graph" (entity-anchored), "auto" (router),
-        /// "iterative" (multi-round gap-fill with narration)
+        /// "iterative" (multi-round gap-fill with narration), "smart" (iterative for most queries,
+        /// graph+replace for family-relation queries)
         #[arg(long, default_value = "iterative", value_name = "MODE")]
         mode: String,
 
@@ -1158,6 +1159,20 @@ pub enum RagAction {
         /// Rerank candidates with a single LLM call before selecting top-k
         #[arg(long)]
         rerank: bool,
+
+        /// How to integrate graph query results into the LLM context.
+        /// "inject" (default) — prepend one entity description chunk (existing behaviour).
+        /// "prepend" — structured graph-facts block at score 3.0, Top-K chunks kept.
+        /// "replace" — for family-relation queries, replace all chunks with graph facts only.
+        #[arg(long, default_value = "inject", value_name = "MODE")]
+        graph_mode: String,
+
+        /// Query intent classification method for the graph pipeline.
+        /// "rule" (default) — fast keyword patterns, zero latency.
+        /// "llm" — single LLM JSON call, flexible, ~2 s added latency.
+        /// "hybrid" — rule first, LLM fallback when intent is unknown.
+        #[arg(long, default_value = "rule", value_name = "METHOD")]
+        query_classify: String,
     },
 
     /// Interactive RAG chat REPL (streams from shard API)
@@ -1196,7 +1211,8 @@ pub enum RagAction {
         rerank: bool,
 
         /// Retrieval mode: "vector" (hybrid), "graph" (entity-anchored), "auto" (router),
-        /// "iterative" (multi-round gap-fill with narration)
+        /// "iterative" (multi-round gap-fill with narration), "smart" (iterative for most queries,
+        /// graph+replace for family-relation queries)
         #[arg(long, default_value = "iterative", value_name = "MODE")]
         mode: String,
     },
@@ -1426,7 +1442,8 @@ pub enum RagAction {
         top_k: usize,
 
         /// Retrieval mode: "vector" (hybrid), "graph" (entity-anchored), "auto" (router),
-        /// "iterative" (multi-round gap-fill with narration)
+        /// "iterative" (multi-round gap-fill with narration), "smart" (iterative for most queries,
+        /// graph+replace for family-relation queries)
         #[arg(long, default_value = "iterative", value_name = "MODE")]
         mode: String,
 
@@ -1465,6 +1482,20 @@ pub enum RagAction {
         /// last_q, last_score, elapsed_s, eta_s.
         #[arg(long, value_name = "FILE")]
         progress_file: Option<std::path::PathBuf>,
+
+        /// How to integrate graph query results into the LLM context.
+        /// "inject" (default) — prepend one entity description chunk (existing behaviour).
+        /// "prepend" — structured graph-facts block at score 3.0, Top-K chunks kept.
+        /// "replace" — for family-relation queries, replace all chunks with graph facts only.
+        #[arg(long, default_value = "inject", value_name = "MODE")]
+        graph_mode: String,
+
+        /// Query intent classification method for the graph pipeline.
+        /// "rule" (default) — fast keyword patterns, zero latency.
+        /// "llm" — single LLM JSON call, flexible, ~2 s added latency.
+        /// "hybrid" — rule first, LLM fallback when intent is unknown.
+        #[arg(long, default_value = "rule", value_name = "METHOD")]
+        query_classify: String,
     },
 
     /// Autonomous knowledge graph completion (Dream RAG)
