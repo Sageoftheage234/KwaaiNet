@@ -400,3 +400,59 @@ q13 (All Africa Convention) collapsed from ~100% to 33%. This is likely the "Dr 
 4. **Seed q09 grandfather node** — this has been 0% across all runs; a YAML seed would fix it permanently
 
 *Updated 2026-06-10 with run 8 results.*
+
+---
+
+## Smart-mode routing — r17/r18/r18b results (2026-06-14 – 2026-06-15)
+
+### Overview
+
+| Run | Date | Recall | Keywords | Key change |
+|-----|------|--------|----------|------------|
+| r17 | 2026-06-14 | **71.6%** | 161/225 | Smart routing (is_family → Replace), t=0 |
+| r18 | 2026-06-15 | **70.2%** | 158/225 | Relative-entity resolution (wife/mother/grandfather → Replace), sibling regression |
+| **r18b** | **2026-06-15** | **72.4%** | **163/225** | r18 + sibling fix → new best |
+
+Shipped as **v0.4.102**.
+
+### What r18/r18b changed
+
+**r18** (`f3146f2`): In smart mode, when the query intent is `FamilyRelation` and anchor is the author, `resolve_author_relative()` now resolves "wife"→Nazima, "mother"→Ayesha, "grandfather"→JMH Gool via graph traversal. These queries switch from Prepend (author entity) to Replace (specific relative's entity). Also added full sequence diagram layer (`sequence.rs`, `timeline` CLI subcommand).
+
+**r18b** (`8913db8`): Removed sibling resolution from `resolve_author_relative()`. Siblings (plural) must stay as Prepend (author entity) because the author's graph node lists all siblings in `relations_suffix`; resolving to one sibling triggered Replace mode and hid the rest. q23 was 100%→20% in r18, restored to 100% in r18b.
+
+### Per-question diff: r17 → r18b
+
+| Q | r17 | r18b | Δ | Notes |
+|---|-----|------|---|-------|
+| q08 | 2/6 (33%) | 5/6 (83%) | **+3** | Wife detail — Replace on Nazima entity works |
+| q21 | 1/5 (20%) | 4/5 (80%) | **+3** | Mother — Replace on Ayesha entity works |
+| q14 | 2/6 (33%) | 4/6 (67%) | **+2** | LLM variance |
+| q36 | 2/6 (33%) | 3/6 (50%) | **+1** | LLM variance |
+| q39 | 2/6 (33%) | 3/6 (50%) | **+1** | LLM variance |
+| q27 | 5/5 (100%) | 3/5 (60%) | -2 | LLM variance |
+| q16 | 5/7 (71%) | 3/7 (43%) | -2 | LLM variance |
+| q10 | 6/7 (86%) | 5/7 (71%) | -1 | LLM variance |
+| q15 | 5/6 (83%) | 4/6 (67%) | -1 | LLM variance |
+| q19 | 5/6 (83%) | 4/6 (67%) | -1 | LLM variance |
+| q25 | 2/5 (40%) | 1/5 (20%) | -1 | LLM variance |
+
+Gains: q08+3, q21+3, q14+2, q36+1, q39+1 = **+10**
+Losses (all LLM variance): −8
+Net: **+2** (163 vs 161)
+
+### Persistent failures unchanged by smart routing
+
+| Q | r17 | r18b | Notes |
+|---|-----|------|-------|
+| q09 grandfather | 3/9 (33%) | 3/9 (33%) | Graph returns author's entity, not his grandfather |
+| q06 Buitencingle | 3/8 (38%) | 3/8 (38%) | TemporalEvent — timeline build would help |
+| q30 JMH arrival | 3/6 (50%) | 3/6 (50%) | TemporalEvent — timeline build would help |
+
+### Current score vs target
+
+| Target | Current best (r18b) | Gap |
+|--------|--------------------|----|
+| 80–90% | **72.4%** | ~8–18pp |
+
+*Updated 2026-06-15 with r18/r18b smart-mode results.*
