@@ -4087,16 +4087,13 @@ impl GraphStore {
         };
         let id_set: std::collections::HashSet<i64> = entity_ids.iter().copied().collect();
         let mut out = Vec::new();
-        for entry in table.iter().into_iter().flatten() {
-            if let Ok((_, v)) = entry {
-                if let Ok(interactions) =
-                    serde_json::from_slice::<Vec<crate::sequence::SequenceInteraction>>(v.value())
-                {
-                    for ia in interactions {
-                        if id_set.contains(&ia.from_entity_id) || id_set.contains(&ia.to_entity_id)
-                        {
-                            out.push(ia);
-                        }
+        for (_, v) in table.iter().into_iter().flatten().flatten() {
+            if let Ok(interactions) =
+                serde_json::from_slice::<Vec<crate::sequence::SequenceInteraction>>(v.value())
+            {
+                for ia in interactions {
+                    if id_set.contains(&ia.from_entity_id) || id_set.contains(&ia.to_entity_id) {
+                        out.push(ia);
                     }
                 }
             }
