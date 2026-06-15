@@ -1072,7 +1072,9 @@ async fn cmd_query(
                             .await?
                         } else {
                             let is_temporal = matches!(qs.intent, QueryIntent::TemporalEvent);
-                            // Temporal routing: try sequence diagram first; fall back to iterative.
+                            // Temporal routing: hybrid — run iterative retrieval, then prepend the
+                            // sequence diagram when timeline data exists. The LLM gets both the
+                            // structured timeline (precise dates/events) and the narrative chunks.
                             let seq_chunk = if is_temporal {
                                 let eids = kwaai_rag::sequence::extract_temporal_entity_ids(
                                     &query, &graph,
@@ -1081,35 +1083,35 @@ async fn cmd_query(
                             } else {
                                 None
                             };
+                            let mut chunks = retrieve_iterative(
+                                &query,
+                                &retrieve_cfg,
+                                &embed,
+                                &meta,
+                                &graph,
+                                move |emb, k| {
+                                    let vs = vs.clone();
+                                    Box::pin(async move {
+                                        let raw = vs.search(tenant_id, &emb, k).await?;
+                                        Ok(raw.into_iter().map(|r| (r.id, r.score)).collect())
+                                    })
+                                        as Pin<
+                                            Box<
+                                                dyn std::future::Future<
+                                                        Output = Result<Vec<(i64, f64)>>,
+                                                    > + Send,
+                                            >,
+                                        >
+                                },
+                                &infer_url,
+                                &model,
+                                |msg| println!("{msg}"),
+                            )
+                            .await?;
                             if let Some(seq) = seq_chunk {
-                                vec![seq]
-                            } else {
-                                retrieve_iterative(
-                                    &query,
-                                    &retrieve_cfg,
-                                    &embed,
-                                    &meta,
-                                    &graph,
-                                    move |emb, k| {
-                                        let vs = vs.clone();
-                                        Box::pin(async move {
-                                            let raw = vs.search(tenant_id, &emb, k).await?;
-                                            Ok(raw.into_iter().map(|r| (r.id, r.score)).collect())
-                                        })
-                                            as Pin<
-                                                Box<
-                                                    dyn std::future::Future<
-                                                            Output = Result<Vec<(i64, f64)>>,
-                                                        > + Send,
-                                                >,
-                                            >
-                                    },
-                                    &infer_url,
-                                    &model,
-                                    |msg| println!("{msg}"),
-                                )
-                                .await?
+                                chunks.insert(0, seq);
                             }
+                            chunks
                         }
                     } else if effective_mode == "iterative" {
                         let graph = GraphStore::open(&rag_cfg.data_dir(), tenant_id)
@@ -6934,23 +6936,23 @@ async fn cmd_eval(
                     } else {
                         None
                     };
+                    let mut chunks = retrieve_iterative(
+                        &q.question,
+                        &retrieve_cfg,
+                        &embed,
+                        &meta,
+                        &graph,
+                        search_fn,
+                        &inference_url,
+                        &model,
+                        |msg| println!("{msg}"),
+                    )
+                    .await
+                    .unwrap_or_default();
                     if let Some(seq) = seq_chunk {
-                        vec![seq]
-                    } else {
-                        retrieve_iterative(
-                            &q.question,
-                            &retrieve_cfg,
-                            &embed,
-                            &meta,
-                            &graph,
-                            search_fn,
-                            &inference_url,
-                            &model,
-                            |msg| println!("{msg}"),
-                        )
-                        .await
-                        .unwrap_or_default()
+                        chunks.insert(0, seq);
                     }
+                    chunks
                 }
             } else if effective_mode == "iterative" {
                 let graph = GraphStore::open(&rag_cfg.data_dir(), tenant_id)

@@ -588,8 +588,10 @@ pub fn extract_temporal_entity_ids(query: &str, graph: &GraphStore) -> Vec<i64> 
         }
     }
 
-    // Only include entities with ≥2 token hits to avoid false positives
-    let mut candidates: Vec<(i64, usize)> = scores.into_iter().filter(|(_, s)| *s >= 2).collect();
+    // Allow ≥1 hit — temporal queries name specific entities (places, historical figures)
+    // whose tokens are rare enough that a single match is high-confidence. The ≥2 threshold
+    // was silently dropping "JMH Gool" (only token: "gool") and short place names.
+    let mut candidates: Vec<(i64, usize)> = scores.into_iter().filter(|(_, s)| *s >= 1).collect();
     candidates.sort_by(|a, b| b.1.cmp(&a.1));
     candidates.into_iter().map(|(id, _)| id).take(3).collect()
 }
