@@ -1044,9 +1044,11 @@ async fn cmd_query(
                         } else if is_family_author {
                             // Author-anchored family query: Replace mode injects the resolved
                             // relative's entity description directly (wife/mother use this).
-                            // Exception: grandparents use Prepend — their entity description
-                            // alone is insufficient because biographical keywords (Swat, spice,
-                            // mosque, Buitencingle) live in the text chunks, not the description.
+                            // Exception: grandparents use Prepend with a rewritten retrieval
+                            // query: "Who was the author's grandfather?" → "Who was Haji Joosub
+                            // Maulvi Hamid Gool?" so vector search finds the biographical
+                            // chapters (Swat, spice, mosque, Buitencingle) rather than
+                            // family-context chunks.
                             let q_lower = query.to_lowercase();
                             let is_grandparent = q_lower.contains("grandfather")
                                 || q_lower.contains("grandpa")
@@ -1058,8 +1060,17 @@ async fn cmd_query(
                             } else {
                                 GraphMode::Replace
                             };
+                            let retrieval_query: std::borrow::Cow<str> = if is_grandparent {
+                                kwaai_rag::retriever::resolve_relative_entity_name(&query, &graph)
+                                    .map(|name| {
+                                        std::borrow::Cow::Owned(format!("Who was {name}?"))
+                                    })
+                                    .unwrap_or(std::borrow::Cow::Borrowed(&query))
+                            } else {
+                                std::borrow::Cow::Borrowed(&query)
+                            };
                             retrieve_graph_anchored(
-                                &query,
+                                &retrieval_query,
                                 &smart_cfg,
                                 &embed,
                                 &meta,
@@ -6924,8 +6935,8 @@ async fn cmd_eval(
                 } else if is_family_author {
                     // Author-anchored family query: Replace injects the resolved relative's
                     // entity description directly (wife/mother use this).
-                    // Exception: grandparents use Prepend — their biographical keywords
-                    // (Swat, spice, mosque, Buitencingle) live in text chunks, not the entity.
+                    // Exception: grandparents use Prepend with a rewritten retrieval query so
+                    // vector search finds biographical chapters, not family-context chunks.
                     let q_lower = q.question.to_lowercase();
                     let is_grandparent = q_lower.contains("grandfather")
                         || q_lower.contains("grandpa")
@@ -6937,8 +6948,17 @@ async fn cmd_eval(
                     } else {
                         GraphMode::Replace
                     };
+                    let retrieval_query: std::borrow::Cow<str> = if is_grandparent {
+                        kwaai_rag::retriever::resolve_relative_entity_name(&q.question, &graph)
+                            .map(|name| {
+                                std::borrow::Cow::Owned(format!("Who was {name}?"))
+                            })
+                            .unwrap_or(std::borrow::Cow::Borrowed(q.question.as_str()))
+                    } else {
+                        std::borrow::Cow::Borrowed(q.question.as_str())
+                    };
                     retrieve_graph_anchored(
-                        &q.question,
+                        &retrieval_query,
                         &smart_cfg,
                         &embed,
                         &meta,

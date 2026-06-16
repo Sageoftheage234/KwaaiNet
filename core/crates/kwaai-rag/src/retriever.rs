@@ -504,6 +504,24 @@ fn resolve_author_relative(query: &str, anchor_id: i64, graph: &GraphStore) -> O
     None
 }
 
+/// Resolve a relative-entity query for the author anchor and return the canonical
+/// entity name. Used by callers that need to rewrite the retrieval query.
+///
+/// Example: "Who was the author's grandfather?" → "Haji Joosub Maulvi Hamid Gool"
+/// Returns `None` when the author entity or the relative cannot be resolved.
+pub fn resolve_relative_entity_name(query: &str, graph: &GraphStore) -> Option<String> {
+    let author = graph.all_entities().find(|e| {
+        e.aliases.iter().any(|a| {
+            matches!(
+                a.to_lowercase().as_str(),
+                "author" | "the author" | "narrator" | "the narrator" | "the writer"
+            )
+        })
+    })?;
+    let relative_id = resolve_author_relative(query, author.id, graph)?;
+    graph.get_entity(relative_id).map(|e| e.name.clone())
+}
+
 /// Build a natural-language relations suffix for an entity.
 ///
 /// Groups all outgoing relations by type and formats them as summary sentences.
