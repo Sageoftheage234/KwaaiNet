@@ -245,6 +245,14 @@ pub async fn run(args: RagArgs) -> Result<()> {
 
         RagAction::Dream { action, kb } => cmd_dream(action, kb).await,
 
+        RagAction::Summarize {
+            kb,
+            inference_url,
+            model,
+            window_size,
+            reset,
+        } => cmd_summarize(kb, inference_url, model, window_size, reset).await,
+
         RagAction::Eval {
             questions,
             kb,
@@ -956,6 +964,7 @@ async fn cmd_query(
             graph_mode: parse_graph_mode(&graph_mode),
             query_classify: parse_classify_method(&query_classify),
             query_multi_hop: false,
+            use_summary_expansion: false,
         };
         let mut spinner = if json_out {
             None
@@ -1397,6 +1406,7 @@ async fn cmd_chat(
             graph_mode: kwaai_rag::query_understand::GraphMode::Inject,
             query_classify: kwaai_rag::query_understand::ClassifyMethod::Rule,
             query_multi_hop: false,
+            use_summary_expansion: false,
         };
 
         let http = reqwest::Client::new();
@@ -6818,6 +6828,7 @@ async fn cmd_eval(
             graph_mode: parse_graph_mode(&graph_mode),
             query_classify: parse_classify_method(&query_classify),
             query_multi_hop: false,
+            use_summary_expansion: false,
         };
 
         // Load document context preamble from persisted schema metadata (if any).
@@ -7805,6 +7816,54 @@ async fn cmd_graph_timeline(action: TimelineAction, kb: &str) -> Result<()> {
                 ));
             }
         }
+        Ok(())
+    }
+}
+
+// ── summarize ─────────────────────────────────────────────────────────────────
+
+async fn cmd_summarize(
+    kb: String,
+    inference_url: String,
+    model: String,
+    window_size: usize,
+    reset: bool,
+) -> Result<()> {
+    #[cfg(not(feature = "storage"))]
+    bail!("RAG requires the 'storage' feature.");
+
+    #[cfg(feature = "storage")]
+    {
+        let (rag_cfg, tenant_id) = load_rag_config_for(&kb)?;
+        let embed = EmbedClient::new(rag_cfg.embed_url.clone(), Some(rag_cfg.embed_model.clone()));
+        let meta = MetaStore::open(&rag_cfg.data_dir(), tenant_id)?;
+
+        if reset {
+            meta.clear_summary_nodes()?;
+            print_info("Cleared existing summary nodes.");
+        }
+
+        print_box_header(&format!("HiRAG Summarize ({})", kb));
+        println!("  inference_url={inference_url}  model={model}  window_size={window_size}");
+
+        let start = std::time::Instant::now();
+        let nodes = kwaai_rag::summary::generate_summaries(
+            &meta,
+            &embed,
+            &inference_url,
+            &model,
+            window_size,
+            |s| println!("{s}"),
+        )
+        .await?;
+
+        meta.put_summary_nodes(&nodes)?;
+        let elapsed = start.elapsed().as_secs_f64();
+        print_success(&format!(
+            "Stored {} summary nodes in {:.1}s",
+            nodes.len(),
+            elapsed
+        ));
         Ok(())
     }
 }

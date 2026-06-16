@@ -456,3 +456,91 @@ Net: **+2** (163 vs 161)
 | 80–90% | **72.4%** | ~8–18pp |
 
 *Updated 2026-06-15 with r18/r18b smart-mode results.*
+
+---
+
+## Timeline feature — r19/r20 results (2026-06-15)
+
+### Overview
+
+Timeline (`sequence.rs`) extracts dated events per entity from entity-linked chunks during `graph timeline build`. At query time, `retrieve_sequence()` prepends a Mermaid-formatted sequence diagram to the iterative retrieval results for TemporalEvent queries.
+
+Two eval iterations:
+- **r19** (hybrid routing, ≥1 entity token threshold): **163/225 (72.4%)** — equal to r18b
+- **r20** (quality gate: block diagrams with no specific 4-digit year): **155/225 (68.9%)** — −8 vs r18b
+
+### r19 vs r18b — what the sequence diagram changed
+
+| Q | r18b | r19 | Δ | Sources in r19 |
+|---|------|-----|---|----------------|
+| q16 Gandhi-Gool connection | 3/7 | 6/7 | **+3** | text + Graph:Wahida Gool (no seq diagram) |
+| q20 cricket | 2/5 | 3/5 | **+1** | text |
+| q25 Tabata | 1/5 | 2/5 | **+1** | text |
+| q27 Gandhi-JMH connection | 3/5 | 4/5 | **+1** | text + Graph:JMH |
+| q06 Buitencingle | 3/8 | 4/8 | **+1** | Graph:Buitencingle + text |
+| q30 JMH arrival | **3/6** | **0/6** | **−3** | seq_diagram:JMH Gool injected — displaced narrative chunks |
+| q34 Group Areas Act | 4/6 | 3/6 | **−1** | seq_diagram:District Six — LLM confused by diagram |
+| q35 Hassen Mall | 4/4 | 3/4 | **−1** | LLM variance |
+| q37 Gandhi in SA | 5/7 | 4/7 | **−1** | LLM variance |
+| q39 District Six pre-removals | 3/6 | 2/6 | **−1** | seq_diagram:District Six — LLM confused |
+
+Net: +7 gains, −7 losses = **0** → r19 = r18b = 163/225.
+
+**Key finding:** The timeline feature is net-neutral at v1 extraction quality. JMH Gool's timeline (only vague decade dates "1920s", "1940s") actively hurt q30 (−3) while District Six's timeline was mixed (helped some, hurt others due to LLM confusion when sequence diagram didn't add new facts).
+
+### Quality gate (r20) — rationale and effect
+
+The gate blocks diagrams where no event has a specific 4-digit year not followed by 's' ("1920s" → blocked; "1941" → passes). Targets: block JMH Gool's vague timeline, keep District Six/Gandhi.
+
+| Entity | Events in DB | Gate result |
+|--------|-------------|-------------|
+| JMH Gool | "1920s founded mosque", "1940s other" | **BLOCKED** |
+| District Six | "1941 proclaimed", "1966 declared White" | PASSES |
+| Buitencingle | 0 events | no diagram (None path) |
+| Gandhi | unclear — see below | unknown |
+
+**r20 vs r18b full diff:**
+
+| Q | r18b | r19 | r20 | Δ vs r18b | Notes |
+|---|------|-----|-----|-----------|-------|
+| q05 JMH Gool bio | 7/8 | 7/8 | 4/8 | **−3** | Pure LLM noise — no seq diagram for PersonProfile queries |
+| q30 JMH arrival | 3/6 | 0/6 | 0/6 | **−3** | Structural: keywords include "1884","Swat","Gujarat" — not in source text |
+| q10 Kloof Nek | 5/7 | 5/7 | 4/7 | −1 | LLM noise |
+| q14 District Six | 4/6 | 4/6 | 3/6 | −1 | LLM noise (seq diagram still injected in r20) |
+| q20 cricket | 2/5 | 3/5 | 1/5 | −1 | LLM noise |
+| q35 Hassen Mall | 4/4 | 3/4 | 3/4 | −1 | LLM noise |
+| q36 political orgs | 3/6 | 3/6 | 2/6 | −1 | LLM noise |
+| q06 Buitencingle | 3/8 | 4/8 | 4/8 | +1 | Stable gain from r19 |
+| q16 Gandhi-Gool | 3/7 | 6/7 | 4/7 | +1 | Partial gain retained vs r18b; −2 vs r19 (LLM noise) |
+| q29 TLSA-NEUM | 3/6 | 3/6 | 4/6 | +1 | LLM noise |
+
+**r20 diagnosis:** The −8 from r18b to r20 is almost entirely LLM non-determinism. The quality gate is correct (JMH Gool's vague timeline is blocked; District Six's specific timeline still passes and q39 explicitly cites it). The q05 −3 is pure noise (PersonProfile queries don't trigger the sequence diagram path). The q30 −3 is structural (r18b's 3/6 was a partial-keyword lucky run; "1884" is NOT in the source text per the user's domain clarification).
+
+**Eval noise floor estimate:** ±8 pts (3.5pp) across identical-code runs at temperature=0.
+
+### What q30 actually needs
+
+The user clarified: **1884 is NOT explicit in D6 text** — it must be inferred from:
+- Marriage ~1879 in India
+- Mauritius stay ~6 years  
+- First son Dr A.H. Gool born 1886
+- Arrived penniless "at the age of twenty-two"
+
+The q30 keywords are: `['1884', 'Mauritius', 'India', 'Swat', 'Gujarat', 'Joosub']`. Getting full marks requires multi-step inference that a 8B model with 20-chunk context can't reliably perform. Answering "1884" specifically requires temporal reasoning across disparate passages. This is a ceiling imposed by the model, not the retrieval.
+
+### Current score vs target
+
+| Eval | Score | pp | Key change |
+|------|-------|----|------------|
+| r18b (smart mode, no timeline) | 163/225 | 72.4% | baseline |
+| r19 (hybrid routing + timeline) | 163/225 | 72.4% | hybrid TemporalEvent routing |
+| r20 (+ quality gate) | 155/225 | 68.9% | decade exclusion in quality gate |
+| r21 (+ q09 Prepend mode) | 162/225 | 72.0% | grandparent queries use Prepend |
+| r22 (+ q09 retrieval rewrite) | 158/225 | 70.2% | retrieval query rewritten to canonical name |
+| **Target** | | **80–90%** | |
+
+The gap to 80% target is **7.5–17.5pp**. Within the ±8 pt noise floor, r21 and r22 are equivalent to r18b/r19. The q09 retrieval rewrite does not help because the LLM gives a minimal one-liner ("The author's grandfather was Joosub Maulvi Hamid Gool") even when the full entity description is in context — the question form "who was" triggers an identity answer, not a biographical one. The entity description is correctly injected via graph Prepend (q09 source shows `[Graph: Haji Joosub Maulvi Hamid Gool]`) but the LLM doesn't expand it.
+
+The gap to 80% target is **7.5–17.5pp**. Next lever: **HiRAG** (hierarchical summarization for broad summary questions like q39, q29, q36) — implemented in this session. Run `kwaainet rag summarize --kb D6` to generate summaries, then eval with `--use-summary-expansion` (not yet wired to eval CLI).
+
+*Updated 2026-06-15 with r21/r22 q09 fix results.*

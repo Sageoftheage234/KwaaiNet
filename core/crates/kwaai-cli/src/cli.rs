@@ -1507,6 +1507,29 @@ pub enum RagAction {
         #[arg(long, global = true, default_value = "default", value_name = "NAME")]
         kb: String,
     },
+
+    /// Build HiRAG summary hierarchy (window + section summaries for Round 2.5 expansion)
+    Summarize {
+        /// Knowledge base name (default: "default")
+        #[arg(long, default_value = "default", value_name = "NAME")]
+        kb: String,
+
+        /// Inference URL for LLM summarization
+        #[arg(long, default_value = "http://localhost:11434", value_name = "URL")]
+        inference_url: String,
+
+        /// Model name for summarization
+        #[arg(long, default_value = "llama3.1:8b", value_name = "MODEL")]
+        model: String,
+
+        /// Number of chunks per window summary (default: 10)
+        #[arg(long, default_value_t = 10, value_name = "N")]
+        window_size: usize,
+
+        /// Drop existing summaries and rebuild from scratch
+        #[arg(long)]
+        reset: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]

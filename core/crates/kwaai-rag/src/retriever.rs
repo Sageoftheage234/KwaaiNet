@@ -94,6 +94,9 @@ pub struct RetrieveConfig {
     /// When true, use 2-hop BFS for grandparent/grandchild queries instead of
     /// single-hop direct edge lookup.
     pub query_multi_hop: bool,
+    /// When true, run Round 2.5: cosine-search over HiRAG summary nodes and
+    /// expand matched summaries to their child chunks.
+    pub use_summary_expansion: bool,
 }
 
 impl Default for RetrieveConfig {
@@ -108,6 +111,7 @@ impl Default for RetrieveConfig {
             graph_mode: crate::query_understand::GraphMode::Inject,
             query_classify: crate::query_understand::ClassifyMethod::Rule,
             query_multi_hop: false,
+            use_summary_expansion: false,
         }
     }
 }

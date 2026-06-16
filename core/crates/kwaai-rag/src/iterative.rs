@@ -278,6 +278,44 @@ where
 
         let (coverage2, missing2) = compute_coverage(&terms, &pool);
 
+        // ── Round 2.5: HiRAG summary expansion ───────────────────────────────
+
+        if cfg.use_summary_expansion {
+            let summary_nodes = meta.all_summary_nodes()?;
+            if !summary_nodes.is_empty() {
+                let store = crate::summary::SummaryStore::load(summary_nodes);
+                let hits = store.search(&embedding, 5, 0.40);
+                if !hits.is_empty() {
+                    let existing_keys: HashSet<_> = pool.iter().map(chunk_key).collect();
+                    let mut added = 0usize;
+                    for (idx, _score) in &hits {
+                        let node = &store.nodes[*idx];
+                        let child_metas = meta.get_chunks(&node.chunk_ids)?;
+                        for cm_opt in child_metas {
+                            if let Some(cm) = cm_opt {
+                                let key = (cm.doc_name.clone(), cm.chunk_index);
+                                if !existing_keys.contains(&key) {
+                                    pool.push(RetrievedChunk {
+                                        chunk_meta: cm,
+                                        score: 0.40,
+                                        source_kb: None,
+                                        rerank_score: None,
+                                    });
+                                    added += 1;
+                                }
+                            }
+                        }
+                    }
+                    if added > 0 {
+                        on_status(&format!(
+                            "  ○ Round 2.5 summary expansion → {added} chunks from {} summary nodes",
+                            hits.len()
+                        ));
+                    }
+                }
+            }
+        }
+
         // ── Round 3: LLM query reformulation ──────────────────────────────────
 
         if coverage2 < COVERAGE_R3 && !missing2.is_empty() && !inference_url.is_empty() {

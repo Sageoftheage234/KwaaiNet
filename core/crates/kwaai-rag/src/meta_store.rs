@@ -15,6 +15,10 @@ const DOCS_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("docs");
 /// Tracks the last-seen mtime/size for folder-sync change detection.
 const SYNC_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("sync");
 
+/// key = tenant_uuid[16] + summary_id_i64_le[8] = 24 bytes → SummaryNode JSON
+const SUMMARY_NODES_TABLE: TableDefinition<&[u8], &[u8]> =
+    TableDefinition::new("summary_nodes");
+
 /// Metadata stored per-doc by `rag sync` for change detection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncMeta {
@@ -65,6 +69,7 @@ impl MetaStore {
         wtxn.open_table(CHUNKS_TABLE)?;
         wtxn.open_table(DOCS_TABLE)?;
         wtxn.open_table(SYNC_TABLE)?;
+        wtxn.open_table(SUMMARY_NODES_TABLE)?;
         wtxn.commit()?;
 
         Ok(Self { db, tenant_id })
@@ -238,6 +243,85 @@ impl MetaStore {
         {
             let mut table = wtxn.open_table(SYNC_TABLE)?;
             table.remove(key.as_slice())?;
+        }
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    // ── Summary nodes ────────────────────────────────────────────────────────
+
+    fn summary_key(tenant_id: uuid::Uuid, summary_id: i64) -> [u8; 24] {
+        let mut k = [0u8; 24];
+        k[..16].copy_from_slice(tenant_id.as_bytes());
+        k[16..].copy_from_slice(&summary_id.to_le_bytes());
+        k
+    }
+
+    pub fn put_summary_nodes(&self, nodes: &[crate::summary::SummaryNode]) -> Result<()> {
+        let wtxn = self.db.begin_write()?;
+        {
+            let mut table = wtxn.open_table(SUMMARY_NODES_TABLE)?;
+            for node in nodes {
+                let key = Self::summary_key(self.tenant_id, node.id);
+                let val = serde_json::to_vec(node)?;
+                table.insert(key.as_ref(), val.as_slice())?;
+            }
+        }
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    pub fn all_summary_nodes(&self) -> Result<Vec<crate::summary::SummaryNode>> {
+        let rtxn = self.db.begin_read()?;
+        let table = rtxn.open_table(SUMMARY_NODES_TABLE)?;
+        let prefix = self.tenant_id.as_bytes();
+        let start: [u8; 24] = {
+            let mut k = [0u8; 24];
+            k[..16].copy_from_slice(prefix);
+            k
+        };
+        let mut out = Vec::new();
+        for entry in table.range(start.as_ref()..)? {
+            let (k, v) = entry?;
+            let kb = k.value();
+            if kb.len() < 16 || &kb[..16] != prefix.as_ref() {
+                break;
+            }
+            let node: crate::summary::SummaryNode = serde_json::from_slice(v.value())?;
+            out.push(node);
+        }
+        Ok(out)
+    }
+
+    pub fn clear_summary_nodes(&self) -> Result<()> {
+        let rtxn = self.db.begin_read()?;
+        let ids: Vec<i64> = {
+            let table = rtxn.open_table(SUMMARY_NODES_TABLE)?;
+            let prefix = self.tenant_id.as_bytes();
+            let start: [u8; 24] = {
+                let mut k = [0u8; 24];
+                k[..16].copy_from_slice(prefix);
+                k
+            };
+            let mut ids = Vec::new();
+            for entry in table.range(start.as_ref()..)? {
+                let (k, _) = entry?;
+                let kb = k.value();
+                if kb.len() < 16 || &kb[..16] != prefix.as_ref() {
+                    break;
+                }
+                ids.push(i64::from_le_bytes(kb[16..24].try_into().unwrap()));
+            }
+            ids
+        };
+        drop(rtxn);
+        let wtxn = self.db.begin_write()?;
+        {
+            let mut table = wtxn.open_table(SUMMARY_NODES_TABLE)?;
+            for id in ids {
+                let key = Self::summary_key(self.tenant_id, id);
+                table.remove(key.as_ref())?;
+            }
         }
         wtxn.commit()?;
         Ok(())
