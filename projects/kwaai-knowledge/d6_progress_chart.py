@@ -68,6 +68,10 @@ MILESTONES = [
     ("M53", 68.9, 5, None),
     ("M54", 72.0, 5, None),
     ("M55", 70.2, 5, None),
+    ("M56", 70.7, 5, None),
+    ("M57", 71.6, 5, "HiRAG"),
+    ("M58", 74.7, 5, "Bio\nexpansion"),
+    ("M59", 70.2, 5, None),
 ]
 
 # Eval set change: from 20q/116kw to 40q/225kw between M35 and M42
@@ -77,7 +81,7 @@ EVAL_CHANGE_X = 14.5  # midpoint between M35 (x=13) and M42 (x=14)
 NOISE = 3.5
 
 # Representative points that get error bars (to avoid clutter)
-ERROR_BAR_LABELS = {"M17", "M22", "M35", "M43", "M50", "M51"}
+ERROR_BAR_LABELS = {"M17", "M22", "M35", "M43", "M50", "M51", "M58"}
 
 # ---------------------------------------------------------------------------
 # Build arrays
@@ -149,6 +153,8 @@ ANNO_POS = {
     "M49": (-9,  "center"),
     "M50": (+5,  "center"),
     "M51": (+5,  "center"),
+    "M57": (-9,  "center"),
+    "M58": (+5,  "center"),
 }
 
 for i, (label, recall, phase_idx, ann) in enumerate(MILESTONES):
@@ -174,7 +180,7 @@ ax.set_xlabel("Experiment Milestone", fontsize=9)
 # X-tick labels: major milestones only
 tick_labels = [m[0] if m[0] in {
     "M1", "M4", "M9", "M12", "M17", "M22", "M35",
-    "M42", "M43", "M46", "M50", "M51"
+    "M42", "M43", "M46", "M50", "M51", "M58"
 } else "" for m in MILESTONES]
 ax.set_xticks(xs)
 ax.set_xticklabels(tick_labels, fontsize=7.5, rotation=0)
