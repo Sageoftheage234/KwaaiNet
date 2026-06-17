@@ -37,7 +37,8 @@ persons:
       supplier to the troops of Queen Victoria during the Anglo-Boer War. He
       founded the Hanaffi Quwatul Islam Mosque in Loop Street (completed 1898),
       built the grand 13-room mansion at 7 Buitencingle Street, and knew
-      Gandhi, Cecil Rhodes, and Dr. Abdullah Abdurahman personally. His
+      Gandhi, Cecil Rhodes, Dr. Abdullah Abdurahman, and George Bernard Shaw
+      personally. His
       children included Ayesha (Lallie), Mohamed Saaid, and Zohra by his
       first wife Bibi; and Abdul Hamid (B.G.), Goolam, Jane, Minnie, Fatima,
       Mariam, Zobeida, and Mohammed Hanief by his second wife Wahida.
@@ -202,11 +203,14 @@ persons:
       - "Zainunnissa"
     description: >-
       Zainunnissa (Cissie) Gool was a renowned Cape Town politician and
-      community activist, daughter of Dr. Abdullah Abdurahman. She served as
-      a Cape Town city councillor and was known for her fiery speeches and
-      dedication to non-European rights. She was a key figure in the
-      Non-European Unity Movement and one of the foremost women activists of
-      her time in South Africa. She married Dr. Abdul Hamid Gool (B.G.).
+      community activist, daughter of Dr. Abdullah Abdurahman. She was NOT a
+      blood descendant of J.M.H. Gool — she married into the family. She
+      married Dr. Abdul Hamid Gool (B.G. Cheops), who was a son of J.M.H.
+      Gool and his second wife Wahida, making Cissie Gool the daughter-in-law
+      of J.M.H. Gool. She served as a Cape Town city councillor and was known
+      for her fiery speeches and dedication to non-European rights. She was a
+      key figure in the Non-European Unity Movement and one of the foremost
+      women activists of her time in South Africa.
 
   # ─── Rassool family ─────────────────────────────────────────────────────────
 
@@ -246,8 +250,9 @@ persons:
       the Non-European Unity Movement (NEUM), the New Era Fellowship (NEF),
       and the All African Convention (AAC) — the four major organisations
       that opposed apartheid and racial discrimination together. He was a
-      keen cricketer who played in the non-European cricket structure in Cape
-      Town. He is married to Professor Nazima Rassool and has three children:
+      keen cricketer who played club cricket in District Six and Cape Town,
+      representing Western Province in the non-European cricket structure.
+      He is married to Professor Nazima Rassool and has three children:
       Feyruz, Reza, and Zarina, and six grandchildren: Joseph, Samuel,
       Alexander, Leonardo, Dylan, and Lewis.
 
@@ -475,13 +480,14 @@ persons:
       - "Mahatma Gandhi"
       - "Gandhi"
     description: >-
-      Mohandas Karamchand Gandhi (Mahatma Gandhi) lived in South Africa from
-      1893 to 1914 and organised the Indian community's resistance to
-      discriminatory legislation, developing his method of non-violent
-      resistance (satyagraha). He knew J.M.H. Gool personally, visited the
-      Gool family mansion at 7 Buitencingle Street, and founded and edited
-      the Indian Opinion. His connection to the Gool family is documented
-      in archival correspondence.
+      Mohandas Karamchand Gandhi (Mahatma Gandhi) was a lawyer who came to
+      South Africa in 1893 initially to work on a legal case for an Indian
+      firm. He remained until 1914, becoming deeply involved in organising the
+      Indian community's resistance to discriminatory legislation and developing
+      his method of non-violent resistance (satyagraha). He knew J.M.H. Gool
+      personally, visited the Gool family mansion at 7 Buitencingle Street,
+      and founded and edited the Indian Opinion. His connection to the Gool
+      family is documented in archival correspondence.
 
   # ─── I.B. Tabata (Jane's husband) ──────────────────────────────────────────
 
@@ -534,7 +540,7 @@ persons:
       linked to the TLSA, NEF, and AAC.
 
   - canonical: "The Torch"
-    entity_type: Organization
+    entity_type: Publication
     aliases:
       - "Torch"
       - "the Torch newspaper"
@@ -547,10 +553,11 @@ persons:
       democratic rights.
 
   - canonical: "Group Areas Act"
-    entity_type: Organization
+    entity_type: Legislation
     aliases:
       - "Group Areas Acts"
       - "Group Areas"
+      - "Group Areas Act 1950"
     description: >-
       The Group Areas Act (1950) was apartheid legislation that forcibly divided
       South Africa into racially segregated residential and business zones. Under
@@ -559,10 +566,11 @@ persons:
       of families. Their homes were demolished and bulldozed. Residents were
       relocated to townships on the Cape Flats, far from the city. The Act
       caused immense social disruption, destroying the vibrant multi-cultural
-      community of District Six.
+      community of District Six. The apartheid government used it to implement
+      racial segregation through forced removals across South Africa.
 
   - canonical: "Population Registration Act"
-    entity_type: Organization
+    entity_type: Legislation
     aliases:
       - "Population Registration Act 1950"
     description: >-
@@ -572,7 +580,7 @@ persons:
       a person could live, work, and go to school under the apartheid system.
 
   - canonical: "Non-collaboration"
-    entity_type: Organization
+    entity_type: Concept
     aliases:
       - "non-collaboration policy"
       - "non-collaboration principle"
@@ -677,7 +685,7 @@ persons:
       Muslim community of District Six and the surrounding area.
 
   - canonical: "Indian Opinion"
-    entity_type: Organization
+    entity_type: Publication
     aliases:
       - "Indian Opinion Dec 29_ 1906 p986"
       - "Indian Opinion Dec 29, 1906 p986"
@@ -711,17 +719,21 @@ persons:
     aliases:
       - "District 6"
       - "the District"
+      - "Distrik Ses"
     description: >-
-      District Six was a vibrant, multicultural inner-city neighbourhood of
-      Cape Town, South Africa, situated between the city centre and Devil's Peak.
-      It was home to the Rassool and Gool families and tens of thousands of
-      residents — Cape Malay, Coloured, Indian, Jewish, and African communities
-      living side by side. It had a rich community culture of jazz, sport, and
-      street life. Under the Group Areas Act, District Six was declared a White
-      group area in 1966. Its entire non-White population was forcibly removed
-      to townships on the Cape Flats. The homes and streets were demolished and
-      bulldozed. The forced removals destroyed this multicultural community
-      forever.
+      District Six was a vibrant, densely populated, multicultural inner-city
+      neighbourhood of Cape Town, situated on the slopes of Devil's Peak close
+      to the city centre. It was home to the Rassool and Gool families and tens
+      of thousands of residents — Cape Malay, Coloured, Indian, Jewish, and
+      African communities living side by side in a tightly knit, multi-racial
+      community. District Six had a rich cultural life: jazz clubs, cinemas,
+      mosques, churches, fish markets, spice shops, and a lively street life
+      with colourful characters. Before the forced removals it was one of the
+      most vibrant urban neighbourhoods in South Africa. Under the Group Areas
+      Act, the apartheid government declared District Six a White group area in
+      1966. Its entire non-White population was forcibly removed to townships
+      on the Cape Flats. The homes and streets were demolished and bulldozed.
+      The forced removals destroyed this multicultural community forever.
 
   - canonical: "Cape Flats"
     entity_type: Place
