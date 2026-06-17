@@ -37,6 +37,7 @@ pub fn schema_type_for(entity_type: &str) -> Option<&'static str> {
         "Language" => Some("schema:DefinedTerm"),
         "Family" => Some("schema:Organization"),
         "Publication" => Some("schema:CreativeWork"),
+        "Legislation" => Some("schema:Legislation"),
         _ => None, // Unknown + anything unrecognised
     }
 }
