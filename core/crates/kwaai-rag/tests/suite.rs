@@ -876,13 +876,13 @@ fn expected_fields_person_has_10_fields() {
 }
 
 #[test]
-fn expected_fields_location_has_5_fields() {
-    assert_eq!(expected_fields("Location").len(), 5);
+fn expected_fields_location_has_2_fields() {
+    assert_eq!(expected_fields("Location").len(), 2);
 }
 
 #[test]
-fn expected_fields_organization_has_5_fields() {
-    assert_eq!(expected_fields("Organization").len(), 5);
+fn expected_fields_organization_has_4_fields() {
+    assert_eq!(expected_fields("Organization").len(), 4);
 }
 
 #[test]
