@@ -839,6 +839,7 @@ mod tests {
                 gender: None,
                 fields: Default::default(),
                 confidence: 0.0,
+                extraction_confidence: 0.0,
             })
             .unwrap();
         (store, dir)

@@ -509,18 +509,21 @@ pub fn retrieve_sequence(
     // A 4-digit year that is NOT immediately followed by 's' (decade suffix) is the bar.
     // "1884" → passes. "February 1914" → passes. "1920s" → fails. "decades ago" → fails.
     let has_specific_year = events.iter().any(|e| {
-        e.date_raw.as_deref().map(|d| {
-            let b = d.as_bytes();
-            for i in 0..b.len().saturating_sub(3) {
-                if b[i..i + 4].iter().all(|c| c.is_ascii_digit()) {
-                    let next = b.get(i + 4).copied();
-                    if !matches!(next, Some(b's') | Some(b'S')) {
-                        return true;
+        e.date_raw
+            .as_deref()
+            .map(|d| {
+                let b = d.as_bytes();
+                for i in 0..b.len().saturating_sub(3) {
+                    if b[i..i + 4].iter().all(|c| c.is_ascii_digit()) {
+                        let next = b.get(i + 4).copied();
+                        if !matches!(next, Some(b's') | Some(b'S')) {
+                            return true;
+                        }
                     }
                 }
-            }
-            false
-        }).unwrap_or(false)
+                false
+            })
+            .unwrap_or(false)
     });
     if !has_specific_year {
         return None;

@@ -16,8 +16,7 @@ const DOCS_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("docs");
 const SYNC_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("sync");
 
 /// key = tenant_uuid[16] + summary_id_i64_le[8] = 24 bytes → SummaryNode JSON
-const SUMMARY_NODES_TABLE: TableDefinition<&[u8], &[u8]> =
-    TableDefinition::new("summary_nodes");
+const SUMMARY_NODES_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("summary_nodes");
 
 /// Metadata stored per-doc by `rag sync` for change detection.
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -294,19 +294,13 @@ where
                         // actual cosine similarity score so it ranks above the 0.40-floor
                         // source chunks and the LLM receives the condensed narrative directly.
                         // doc_name prefix "__summary__" keeps it out of real chunk dedup.
-                        let synth_key = (
-                            format!("__summary__:{}", node.id),
-                            0u32,
-                        );
+                        let synth_key = (format!("__summary__:{}", node.id), 0u32);
                         if !existing_keys.contains(&synth_key) {
-                            let label = node
-                                .section_name
-                                .as_deref()
-                                .unwrap_or(&node.doc_name);
+                            let label = node.section_name.as_deref().unwrap_or(&node.doc_name);
                             // Cap at 0.55 so summaries supplement context without
-                        // displacing high-confidence Round-1 source chunks (~0.6–1.0).
-                        let synth_score = score.min(0.55);
-                        pool.push(RetrievedChunk {
+                            // displacing high-confidence Round-1 source chunks (~0.6–1.0).
+                            let synth_score = score.min(0.55);
+                            pool.push(RetrievedChunk {
                                 chunk_meta: crate::meta_store::ChunkMeta {
                                     doc_name: format!("__summary__:{}", node.id),
                                     chunk_index: 0,

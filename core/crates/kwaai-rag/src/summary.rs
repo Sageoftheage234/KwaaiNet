@@ -127,7 +127,10 @@ pub async fn generate_summaries(
     let mut by_doc: std::collections::BTreeMap<String, Vec<(i64, crate::meta_store::ChunkMeta)>> =
         Default::default();
     for (id, cm) in all_chunks {
-        by_doc.entry(cm.doc_name.clone()).or_default().push((id, cm));
+        by_doc
+            .entry(cm.doc_name.clone())
+            .or_default()
+            .push((id, cm));
     }
     for chunks in by_doc.values_mut() {
         chunks.sort_by_key(|(_, cm)| cm.chunk_index);
@@ -160,7 +163,9 @@ pub async fn generate_summaries(
                 .join("\n\n");
             let trimmed_end = if combined.len() > 6_000 {
                 let mut end = 6_000;
-                while !combined.is_char_boundary(end) { end -= 1; }
+                while !combined.is_char_boundary(end) {
+                    end -= 1;
+                }
                 end
             } else {
                 combined.len()
@@ -210,7 +215,9 @@ pub async fn generate_summaries(
                 .join("\n\n");
             let trimmed_end = if combined.len() > 6_000 {
                 let mut end = 6_000;
-                while !combined.is_char_boundary(end) { end -= 1; }
+                while !combined.is_char_boundary(end) {
+                    end -= 1;
+                }
                 end
             } else {
                 combined.len()
@@ -252,6 +259,9 @@ pub async fn generate_summaries(
         }
     }
 
-    on_status(&format!("  ○ Generated {} summary nodes total", nodes.len()));
+    on_status(&format!(
+        "  ○ Generated {} summary nodes total",
+        nodes.len()
+    ));
     Ok(nodes)
 }

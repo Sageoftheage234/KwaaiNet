@@ -337,7 +337,10 @@ pub fn expected_fields(entity_type: &str) -> &'static [(&'static str, &'static s
                 "locationType",
                 "type of place (district, city, country, neighbourhood, building, street)",
             ),
-            ("historicalNote", "what happened here — verbatim or close paraphrase from the text"),
+            (
+                "historicalNote",
+                "what happened here — verbatim or close paraphrase from the text",
+            ),
         ],
         "Organization" => &[
             ("foundingDate", "year or period when founded"),

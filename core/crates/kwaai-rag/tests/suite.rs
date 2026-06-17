@@ -59,6 +59,7 @@ fn make_entity(name: &str, entity_type: &str) -> EntityNode {
         evidence: vec![],
         fields: HashMap::new(),
         confidence: 0.0,
+        extraction_confidence: 0.0,
     }
 }
 
@@ -1366,6 +1367,7 @@ fn score_entity_unknown_type_zero_type_score() {
         evidence: vec![],
         fields: HashMap::new(),
         confidence: 0.0,
+        extraction_confidence: 0.0,
     };
     let score = score_entity(&node, &[]);
     assert_eq!(
@@ -1393,6 +1395,7 @@ fn score_entity_concept_with_good_description() {
         evidence: vec![],
         fields: HashMap::new(),
         confidence: 0.0,
+        extraction_confidence: 0.0,
     };
     let score = score_entity(&node, &[]);
     assert!(
@@ -1423,6 +1426,7 @@ fn score_entity_person_with_fields() {
         evidence: vec![],
         fields,
         confidence: 0.0,
+        extraction_confidence: 0.0,
     };
     let score = score_entity(&node, &[]);
     // 2/10 fields = 0.2 summary_score
@@ -1451,6 +1455,7 @@ fn score_entity_relation_score_with_all_groups_matched() {
         evidence: vec![],
         fields: HashMap::new(),
         confidence: 0.0,
+        extraction_confidence: 0.0,
     };
     let score = score_entity(&node, &rels);
     assert!(
@@ -1478,6 +1483,7 @@ fn score_entity_peripheral_entity_lower_bar() {
         evidence: vec![],
         fields: HashMap::new(),
         confidence: 0.0,
+        extraction_confidence: 0.0,
     };
     let score = score_entity(&node, &rels);
     assert!(
@@ -1502,6 +1508,7 @@ fn score_entity_overall_is_average() {
         evidence: vec![],
         fields: HashMap::new(),
         confidence: 0.0,
+        extraction_confidence: 0.0,
     };
     let score = score_entity(&node, &[]);
     // overall = (0.0 + 0.0 + neutral_relation) / 3
