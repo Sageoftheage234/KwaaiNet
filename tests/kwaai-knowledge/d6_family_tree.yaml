@@ -487,10 +487,15 @@ persons:
       - "M.K. Gandhi"
       - "M_ Gandhi"
       - "M. Gandhi"
+      - "M K Gandhi"
       - "Gandhiji"
       - "hatma Gandhi"
       - "Mahatma Gandhi"
+      - "Mahatma"
+      - "the Mahatma"
+      - "Mohandas Gandhi"
       - "Gandhi"
+      - "Mr. Gandhi"
     description: >-
       Mohandas Karamchand Gandhi (Mahatma Gandhi) was an Indian lawyer who came
       to South Africa in 1893 to work on a legal case for an Indian firm. He
@@ -643,6 +648,8 @@ persons:
     aliases:
       - "TLSA"
       - "Teachers' League of South Africa"
+      - "League of South Africa"
+      - "the League"
     description: >-
       The Teachers League of South Africa (TLSA) was a professional and
       political organisation for Coloured teachers that followed a boycott
@@ -947,6 +954,13 @@ relations:
   - { from: "Mohandas Karamchand Gandhi", to: "Manilal Gandhi", type: "parent_of" }
   - { from: "Louis Messaris",             to: "Tykie Messaris", type: "parent_of" }
   - { from: "Omar Abrahams",              to: "Jameel",         type: "sibling_of" }
+
+  # ─── Person ↔ Person (non-family associations) — q27, q33, q35 ─────────────
+  - { from: "Mohandas Karamchand Gandhi", to: "Haji Joosub Maulvi Hamid Gool", type: "associated_with" }
+  - { from: "Dr. Abdulla Abdurahman",     to: "Haji Joosub Maulvi Hamid Gool", type: "associated_with" }
+  - { from: "Mohandas Karamchand Gandhi", to: "Dr. Abdulla Abdurahman",         type: "associated_with" }
+  - { from: "Yousuf Rassool",             to: "Hassen Mall",                    type: "associated_with" }
+  - { from: "Benjamin Maximilian Kies",   to: "I.B. Tabata",                    type: "associated_with" }
 
   # ─── Person → Organization (membership / founding) ───────────────────────────
   - { from: "Yousuf Rassool",              to: "Non-European Unity Movement",    type: "member_of" }

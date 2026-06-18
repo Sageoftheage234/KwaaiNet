@@ -311,12 +311,19 @@ pub async fn extract_and_store_entities_pub(
                     .map(|(k, v)| (k.clone(), FieldValue::new(v.clone(), res.chunk_id)))
                     .collect();
                 let description = {
-                    let from_fields =
-                        description_from_fields(extracted_name, &extracted.entity_type, &fields);
-                    if from_fields.is_empty() {
+                    if !extracted.description.is_empty() {
                         extracted.description.clone()
                     } else {
-                        from_fields
+                        let from_fields = description_from_fields(
+                            extracted_name,
+                            &extracted.entity_type,
+                            &fields,
+                        );
+                        if from_fields.is_empty() {
+                            extracted.name.clone()
+                        } else {
+                            from_fields
+                        }
                     }
                 };
                 let node = EntityNode {
@@ -506,7 +513,7 @@ pub async fn extract_and_store_entities_pub(
                 let texts: Vec<String> = entities
                     .iter()
                     .map(|e| {
-                        let desc = if e.fields.is_empty() {
+                        let desc = if !e.description.is_empty() {
                             e.description.clone()
                         } else {
                             let fv_map: HashMap<String, FieldValue> = e
@@ -517,16 +524,12 @@ pub async fn extract_and_store_entities_pub(
                                 .collect();
                             let s = description_from_fields(&e.name, &e.entity_type, &fv_map);
                             if s.is_empty() {
-                                e.description.clone()
+                                e.name.clone()
                             } else {
                                 s
                             }
                         };
-                        if desc.is_empty() {
-                            e.name.clone()
-                        } else {
-                            format!("{}: {}", e.name, desc)
-                        }
+                        format!("{}: {}", e.name, desc)
                     })
                     .collect();
                 let text_refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
@@ -674,7 +677,7 @@ async fn extract_and_store_entities(
         let texts: Vec<String> = entities
             .iter()
             .map(|e| {
-                let desc = if e.fields.is_empty() {
+                let desc = if !e.description.is_empty() {
                     e.description.clone()
                 } else {
                     let fv_map: HashMap<String, FieldValue> = e
@@ -685,16 +688,12 @@ async fn extract_and_store_entities(
                         .collect();
                     let s = description_from_fields(&e.name, &e.entity_type, &fv_map);
                     if s.is_empty() {
-                        e.description.clone()
+                        e.name.clone()
                     } else {
                         s
                     }
                 };
-                if desc.is_empty() {
-                    e.name.clone()
-                } else {
-                    format!("{}: {}", e.name, desc)
-                }
+                format!("{}: {}", e.name, desc)
             })
             .collect();
         let text_refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
@@ -724,12 +723,19 @@ async fn extract_and_store_entities(
                 .map(|(k, v)| (k.clone(), FieldValue::new(v.clone(), chunk_id)))
                 .collect();
             let description = {
-                let from_fields =
-                    description_from_fields(&extracted.name, &extracted.entity_type, &fields);
-                if from_fields.is_empty() {
+                if !extracted.description.is_empty() {
                     extracted.description.clone()
                 } else {
-                    from_fields
+                    let from_fields = description_from_fields(
+                        &extracted.name,
+                        &extracted.entity_type,
+                        &fields,
+                    );
+                    if from_fields.is_empty() {
+                        extracted.name.clone()
+                    } else {
+                        from_fields
+                    }
                 }
             };
             let node = EntityNode {
@@ -1359,15 +1365,19 @@ async fn extract_entity_centric(
                             })
                             .collect();
                     let description = {
-                        let from_fields = crate::graph::description_from_fields(
-                            &clean_name,
-                            &extracted.entity_type,
-                            &fields,
-                        );
-                        if from_fields.is_empty() {
+                        if !extracted.description.is_empty() {
                             extracted.description.clone()
                         } else {
-                            from_fields
+                            let from_fields = crate::graph::description_from_fields(
+                                &clean_name,
+                                &extracted.entity_type,
+                                &fields,
+                            );
+                            if from_fields.is_empty() {
+                                clean_name.clone()
+                            } else {
+                                from_fields
+                            }
                         }
                     };
                     let eid = crate::graph::entity_id(&clean_name, &extracted.entity_type);
@@ -1695,15 +1705,19 @@ async fn refine_low_confidence_entities(
                 .collect();
 
             let description = {
-                let from_fields = crate::graph::description_from_fields(
-                    &clean_name,
-                    &extracted.entity_type,
-                    &fields,
-                );
-                if from_fields.is_empty() {
+                if !extracted.description.is_empty() {
                     extracted.description.clone()
                 } else {
-                    from_fields
+                    let from_fields = crate::graph::description_from_fields(
+                        &clean_name,
+                        &extracted.entity_type,
+                        &fields,
+                    );
+                    if from_fields.is_empty() {
+                        clean_name.clone()
+                    } else {
+                        from_fields
+                    }
                 }
             };
 

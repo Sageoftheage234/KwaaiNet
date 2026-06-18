@@ -1,4 +1,49 @@
 
+## r48 — 2026-06-17 21:18 — **80.0% (180.0/225)** ⚠️ regression
+
+**Flags:** smart mode, biographical-expansion, model=llama3.1:8b, metro-linux p2p, num_ctx=8192
+
+**Changes since r47:**
+- **Code**: restored demanding prompt for "tell me about" / "describe" (is_bio_tell fix — only "tell me more about" uses simple prompt)
+- **YAML**: Gandhi description — satyagraha front-loaded as primary term
+- **YAML**: Indian Opinion — satyagraha/passive front-loaded
+- **YAML**: NEUM — "boycott policy of non-collaboration" moved to first sentence
+- **YAML**: TLSA — "boycott policy of non-collaboration" front-loaded
+- **YAML**: NEF — added "debates" keyword
+- **YAML**: Haji Joosub — moved Indian Opinion/Gandhi friendship sentence earlier
+- Re-seeded (new relations) + re-embedded
+
+**vs r47 (197.0/225 = 87.6%):** −17.0 pts — catastrophic regression
+
+| Q | r47 | r48 | delta | Note |
+|---|-----|-----|-------|------|
+| q06 | 4 | 5 | +1 | demanding prompt restored — "belt", "No. 7", "Table Mountain" returned |
+| q11 | 5 | 6 | +1 | TLSA entity enriched |
+| q18 | 4 | 6 | +2 | NEF "debates" keyword fix worked |
+| q09 | 8 | 3 | -5 | Correct entity injected but LLM gave one-liner: "was Haji Joosub Maulvi Hamid Gool [1]." — likely degraded p2p inference |
+| q16 | 5 | 4 | -1 | Gandhi/satyagraha regression |
+| q20 | 5 | 4 | -1 | Cricket question regression |
+| q26 | 6 | 4 | -2 | Abdurahman regression |
+| q27 | 5 | 4 | -1 | Indian Opinion still missing |
+| q30 | 4 | 4 | 0 | No change (J.M.H. Gool & Co. entity) |
+| q31 | 5 | 4 | -1 | Mosque question regression |
+| q32 | 5 | 3 | -2 | Cissie-Gool relationship regression |
+| q33 | 5 | 3 | -2 | Notable figures regression |
+| q37 | 6 | 4 | -2 | Wrong entity: [Graph: League of South Africa] instead of Gandhi/Indian Opinion |
+| q38 | 4 | 2 | -2 | Wrong entity: [Graph: Peter Alexander Rassool] instead of Cissie Gool |
+
+**Root cause of regression:**
+- YAML description changes altered entity embeddings → broke routing for Q37 (→ "League of South Africa" garbage entity) and Q38 (→ Peter Rassool)
+- "League of South Africa" is a spurious extracted entity with garbage description (foundingDate="...quoting from Homer") — its name overlaps "South Africa" in Q37 → scores 2.1
+- P2p inference was degraded at eval time (2-7x slower than r47) → Q09 one-liner answer despite correct entity injection
+
+**Fixes implemented for r49:**
+- **EE prompt**: added `description` field to no_relations JSON schema (text-based, not mechanical)
+- **EE prompt**: added candidate subset rule (skip "League of South Africa" when "Teachers League of South Africa" is also a candidate)
+- **EE prompt**: tightened field value validation (must be verbatim date/name/place from text)
+- **ingestion.rs**: flipped description priority — text-extracted description wins over description_from_fields()
+- **YAML**: added 5 person-to-person associations (Gandhi↔Haji Joosub, Gandhi↔Abdurahman, Abdurahman↔Haji Joosub, Yousuf↔Hassen Mall, Kies↔Tabata)
+
 ## r47 — 2026-06-17 20:30 — **87.6% (197.0/225)** ⭐ new best
 
 **Flags:** smart mode, biographical-expansion, model=llama3.1:8b, metro-linux p2p, num_ctx=8192

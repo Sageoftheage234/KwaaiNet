@@ -4485,14 +4485,14 @@ pub async fn extract_from_text(
              You are a precise knowledge extraction engine.\n\
              The following proper noun candidates were identified in the text.\n\
              Classify each as a named entity (keep) or discard it if it is not a real entity.\n\
-             For kept entities output: name, type, and structured fields.\n\
+             For kept entities output: name, type, a description, and structured fields.\n\
              List AT MOST {entity_cap} entities.\n\
              Return ONLY valid JSON (no markdown, no explanation):\n\
-             {{\"entities\":[{{\"name\":\"...\",\"type\":\"...\",\"fields\":{{...}},\"extraction_confidence\":0.9}},...]}}\n\n\
+             {{\"entities\":[{{\"name\":\"...\",\"type\":\"...\",\"description\":\"1-2 sentences from the text about who/what this entity is and why it matters here\",\"fields\":{{...}},\"extraction_confidence\":0.9}},...]}}\n\n\
              {hints_block}\
              Candidates:\n{candidates_block}\n\n\
              Entity types: {entity_list}\n\n\
-             Field keys by entity type — include only keys whose values are explicitly stated in this passage:\n\
+             Field keys by entity type — include ONLY keys whose values are a specific date, name, or place literally present in this passage (no inference, no background knowledge):\n\
                Person:       birthDate, birthPlace, deathDate, nationality, occupation, \
                              affiliation, spouse, parent, sibling, child\n\
                Place:        locationType, historicalNote\n\
@@ -4508,11 +4508,13 @@ Do NOT append dates, page numbers, volume references, or citation details to ent
 not \"Indian Opinion Dec 29, 1906 p986\").\n\
              - Entity names must be ≤ 5 words. If a candidate contains multiple names \
 separated by commas or 'and', extract each as its own entity.\n\
-             - Descriptions must contain at least one specific fact (date, place, role, or \
-relationship) from the text. Do not describe in generic terms.\n\
-             - Field values must be verbatim quotes or direct paraphrases from THIS passage. \
-Do NOT use background knowledge to fill in geographic locations, dates, or other attributes \
-not stated in the text.\n\
+             - If a candidate is contained within a longer candidate (e.g. \"League of South Africa\" \
+is a suffix of \"Teachers League of South Africa\"), prefer ONLY the longer/more-specific form \
+and discard the shorter substring.\n\
+             - description must contain at least one specific fact (date, place, role, or \
+relationship) drawn from this passage. Do not use background knowledge or generic definitions.\n\
+             - Field values must be a specific date, name, or place that literally appears in \
+this passage. Omit any field whose value cannot be quoted verbatim from the text.\n\
              - NEVER extract generic family roles as entity names. \"Uncle Aity\", \
 \"Auntie Cissie\", \"Granny Bibi\" are NOT valid entity names — skip them. Only extract \
 proper names (first name + family name, or a well-known single name).\n\
