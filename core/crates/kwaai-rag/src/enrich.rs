@@ -316,7 +316,7 @@ async fn call_enrich(
     evidence_text: &str,
     url: &str,
     model: &str,
-    _need_desc: bool,
+    need_desc: bool,
     need_gender: bool,
 ) -> EnrichResult {
     let type_label = match entity_type.to_lowercase().as_str() {
@@ -326,7 +326,15 @@ async fn call_enrich(
         _ => "entity",
     };
 
-    let existing_hint = if !current_desc.is_empty() {
+    // Provide existing description as context only when NOT forcing a fresh generation.
+    // When need_desc is true AND a description already exists, we're re-generating from
+    // scratch (--force was used) — don't let the old text anchor the LLM.
+    // Also skip if the previous extraction failed ("there is no mention").
+    let existing_hint = if !need_desc
+        && !current_desc.is_empty()
+        && current_desc.len() > 50
+        && !current_desc.to_lowercase().starts_with("there is no mention")
+    {
         format!("\nExisting summary (may be refined): {current_desc}\n")
     } else {
         String::new()
@@ -348,8 +356,16 @@ async fn call_enrich(
              {evidence_text}\n\n\
              Based ONLY on the excerpts above, return ONLY a JSON object with these two fields \
              (no other text, no markdown fences):\n\
-             {{\n  \"description\": \"<2-3 sentences: who {name} is, their significance, \
-             key relationships — text-grounded only>\",\n\
+             {{\n  \"description\": \"<3-5 factual sentences about {name}. \
+             You MUST include every specific fact found in the excerpts: \
+             (1) who they are and their primary role or title, \
+             (2) any years or dates mentioned (birth, arrival, marriage, death), \
+             (3) places of origin, residence, or travel specifically named in the text, \
+             (4) the full names of any family members explicitly mentioned (parents, spouse, \
+             siblings, children — list ALL of them by name if present), \
+             (5) organisations they founded, led, or belonged to. \
+             PRIORITISE specific named entities and dates over general characterisations. \
+             Do NOT add information absent from the excerpts.>\",\n\
                \"gender\": <\"Male\" | \"Female\" | null>\n\
              }}\n\n\
              For gender, look for DIRECT TEXTUAL EVIDENCE:\n\
@@ -360,14 +376,42 @@ async fn call_enrich(
              Return null if the evidence is absent or ambiguous."
         )
     } else {
-        // Plain prose for non-Person entities or when only description is needed
+        // Type-specific prose prompt (no JSON needed when only description is needed)
+        let (sentence_count, type_guidance) = match entity_type.to_lowercase().as_str() {
+            "place" | "location" => (
+                "3–5",
+                "PRIORITISE specific facts from the text: \
+                 (1) founding year or key historical date, \
+                 (2) exact street address or location within the city if mentioned, \
+                 (3) physical description and geographic setting, \
+                 (4) full names of specific persons associated with it, \
+                 (5) notable events that occurred there. \
+                 List all named persons and dates you find — do not omit them.",
+            ),
+            "organization" => (
+                "3–5",
+                "PRIORITISE specific facts from the text: \
+                 (1) founding year and the full name of the founding person, \
+                 (2) the organisation's full name, abbreviation, and stated purpose, \
+                 (3) affiliated organisations named in the text, \
+                 (4) full names of key members or leaders mentioned, \
+                 (5) specific campaigns, events, or positions it is known for. \
+                 List all named persons, dates, and affiliated bodies you find.",
+            ),
+            _ => (
+                "2–3",
+                "Include the specific facts from the excerpts: what it is, \
+                 any founding year or key date, named persons associated with it, \
+                 and its significance in the story.",
+            ),
+        };
         format!(
             "You are a knowledge extraction assistant working with a historical memoir.{existing_hint}\n\
              Below are all excerpts from the document that mention \"{name}\"{alias_hint} (a {type_label}):\n\n\
              {evidence_text}\n\n\
-             Based ONLY on the excerpts above, write a concise 2–3 sentence description of \"{name}\" \
-             that captures: who or what they are, their significance in the story, and any key \
-             relationships or roles. Do NOT add information not present in the excerpts. \
+             Based ONLY on the excerpts above, write a concise {sentence_count} sentence description \
+             of \"{name}\". {type_guidance} \
+             Do NOT add information not present in the excerpts. \
              Output ONLY the description paragraph."
         )
     };
@@ -452,14 +496,18 @@ async fn call_llm_once(prompt: &str, url: &str, model: &str, json_mode: bool) ->
         .build()
         .ok()?;
 
-    let full_url = format!("{}/v1/chat/completions", url.trim_end_matches('/'));
+    // Use native /api/chat — supports "format":"json" and "stream":false properly.
+    // /v1/chat/completions streams SSE by default and ignores "format":"json".
+    let full_url = format!("{}/api/chat", url.trim_end_matches('/'));
     let mut body = serde_json::json!({
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.1,
-        "max_tokens": 400,
+        "stream": false,
+        "options": {
+            "temperature": 0.1,
+            "num_predict": 600,
+        },
     });
-    // Ollama JSON mode — forces the response to be valid JSON
     if json_mode {
         body["format"] = serde_json::json!("json");
     }
@@ -482,7 +530,7 @@ async fn call_llm_once(prompt: &str, url: &str, model: &str, json_mode: bool) ->
             .ok()?
             .ok()?;
 
-    let text = v["choices"][0]["message"]["content"]
+    let text = v["message"]["content"]
         .as_str()
         .unwrap_or("")
         .trim()

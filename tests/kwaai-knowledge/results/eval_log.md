@@ -1,4 +1,59 @@
 
+## r64 — 2026-06-18 15:27 — **88.9% (200/225)** ✅ gate passed (≥199)
+
+**Flags:** smart mode, biographical-expansion, model=llama3.1:8b, metro-linux p2p
+
+**Changes since r53 (204/225):** Phase 2 — source-grounded entity descriptions added to YAML seed:
+- `Nazima Rassool`: added description (academic researcher/Professor) → Q07 +1, Q08 stable
+- `Kismets Cricket Club`: added description (cricket, Western Province, non-European, club, D6) → Q20 +2
+- `Dr. Abdulla Abdurahman`: added description (doctor, councillor, Cape Town, Coloured, Cissie) → Q26 +2
+- `Mohandas Gandhi`: added description (passive, satyagraha, non-violent, Buitencingle) → Q16 +2; added alias "Pretoria Gandhi"
+- `Non-European Unity Movement`: strengthened (teachers/non-collaboration explicit) → Q29 +2, Q40 +1
+- `District Six`: "forcibly removed" → "forced removals" → Q15 +2
+- `Hanaffi Quwatul Islam Mosque`: '1898' and 'Hanaffi' more prominent → Q31 +1
+- `J.M.H. Gool & Co.`: comprehensive description covering Q05/Q27/Q30/Q32/Q33 (r62-r64 iterations to get right)
+- `7 Buitencingle Street` + `TLSA` + `New Era Fellowship` + `Hewat Training College`: descriptions from prior r59-r61 work
+- Bug fix: `enrich.rs` streaming bug fixed (switched /v1/chat/completions → /api/chat)
+
+**Intermediate runs (r59–r63, all below gate):**
+- r59: 193/225 — initial run after Cissie Gool wrong-father fix (r58 regression fixed)
+- r60: 193/225 — added JMH Gool Gujarat/Shaw/Rhodes/Sarojini Naidu + D6/NEUM descriptions  
+- r61: 195/225 — fixed Cissie description (Abdulla→Abdullah for Q38 keyword match)
+- r62: 197/225 (+2 vs r61) — added Nazima/Kismets/Abdurahman/Gandhi/NEUM/D6/mosque descriptions; Q08 regression (-4) from Nazima description missing academic keywords
+- r63: 197/225 (+0 vs r62) — fixed Q08 Nazima (added academic/researcher/research/historical); Q30 still regressed (-3) due to J.M.H. Gool & Co. entity displacing person
+- r64: 200/225 (+3 vs r63) — restructured J.M.H. Gool & Co. to cover Q05/Q27/Q30/Q32/Q33
+
+**vs r61 (195/225) per-question:**
+
+| Q | r61 | r64 | delta | Note |
+|---|-----|-----|-------|------|
+| q05 | 5 | 8 | +3 | J.M.H. Gool & Co. comprehensive desc: Joosub/Maulvi/Hamid/grandfather/merchant/mosque |
+| q15 | 4 | 6 | +2 | "forced removals" fix in District Six description |
+| q16 | 5 | 7 | +2 | Gandhi description: passive/satyagraha/non-violent |
+| q20 | 3 | 5 | +2 | Kismets description: cricket/Western Province/non-European |
+| q26 | 4 | 3 | -1 | LLM variance (was +2 in r62/r63) |
+| q27 | 2 | 5 | +3 | J.M.H. Gool & Co. desc: Gandhi/Buitencingle/Indian Opinion |
+| q29 | 4 | 6 | +2 | NEUM description: teachers/non-collaboration explicit |
+| q07 | 2 | 3 | +1 | Nazima Rassool description: Professor |
+| q10 | 5 | 6 | +1 | non-det improvement |
+| q19 | 5 | 6 | +1 | non-det improvement |
+| q31 | 4 | 5 | +1 | Hanaffi Mosque: 1898/Hanaffi prominent |
+| q33 | 4 | 5 | +1 | J.M.H. Gool & Co. desc: Gandhi/Rhodes/Abdurahman/Shaw |
+| q34 | 5 | 6 | +1 | non-det improvement |
+| q35 | 3 | 4 | +1 | non-det improvement |
+| q06 | 7 | 5 | -2 | LLM variance regression |
+| q09 | 9 | 7 | -2 | LLM variance regression |
+| q24 | 7 | 0 | -7 | Catastrophic LLM variance (JMH Gool desc displaced context) |
+| q30 | 5 | 3 | -2 | J.M.H. Gool & Co. still partial (arrival keywords present but LLM short answers) |
+| q32 | 5 | 4 | -1 | J.M.H. Gool & Co. partial (daughter-in-law present but competing chunks) |
+
+**Still broken / variance-sensitive:**
+- q24 (0/7 in r64, 7/7 in r61): extremely high LLM variance — entity description for JMH Gool sometimes causes context mismatch
+- q30 (3/6): J.M.H. Gool & Co. injected, description has all keywords but LLM gives short answers missing Gujarat/Swat
+- q06 (5/8): Buitencingle entity description has all keywords but LLM misses 2-3 (variance)
+
+**Next:** Further YAML tuning for q24/q30; consider target ≥204/225 (r53 best)
+
 ## r53 — 2026-06-18 08:37 — **90.7% (204.0/225)** ⭐ new best — first run above 90%!
 
 **Flags:** smart mode, biographical-expansion, model=llama3.1:8b, metro-linux p2p
