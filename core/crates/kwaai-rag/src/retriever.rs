@@ -750,10 +750,7 @@ pub(crate) fn inject_entity_descriptions(
         nm.sort_by(|a, b| {
             // a.2/b.2 = name_overlap, a.3/b.3 = extraction_confidence, a.1/b.1 = embedding
             b.2.cmp(&a.2)
-                .then(
-                    b.3.partial_cmp(&a.3)
-                        .unwrap_or(std::cmp::Ordering::Equal),
-                )
+                .then(b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal))
                 .then(b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal))
         });
         let nm: Vec<(i64, f64)> = nm.into_iter().map(|(id, s, _, _)| (id, s)).collect();

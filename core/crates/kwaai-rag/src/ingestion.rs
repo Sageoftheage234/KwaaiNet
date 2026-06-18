@@ -726,11 +726,8 @@ async fn extract_and_store_entities(
                 if !extracted.description.is_empty() {
                     extracted.description.clone()
                 } else {
-                    let from_fields = description_from_fields(
-                        &extracted.name,
-                        &extracted.entity_type,
-                        &fields,
-                    );
+                    let from_fields =
+                        description_from_fields(&extracted.name, &extracted.entity_type, &fields);
                     if from_fields.is_empty() {
                         extracted.name.clone()
                     } else {
@@ -1954,11 +1951,12 @@ async fn validate_entities_against_schemas(
             // Parse the JSON array out of the content.
             let json_start = content.find('[');
             let json_end = content.rfind(']');
-            let verdicts: Vec<serde_json::Value> = if let (Some(s), Some(e)) = (json_start, json_end) {
-                serde_json::from_str(&content[s..=e]).unwrap_or_default()
-            } else {
-                vec![]
-            };
+            let verdicts: Vec<serde_json::Value> =
+                if let (Some(s), Some(e)) = (json_start, json_end) {
+                    serde_json::from_str(&content[s..=e]).unwrap_or_default()
+                } else {
+                    vec![]
+                };
 
             // Apply verdicts to the store.
             for (batch_idx, (eid, _name)) in batch.iter().enumerate() {

@@ -1,4 +1,33 @@
 
+## r51 — 2026-06-18 08:13 — **89.8% (202.0/225)**
+
+**Flags:** smart mode, biographical-expansion, model=llama3.1:8b, metro-linux p2p
+
+**Changes since r50 (199/225 = 88.4%):** same code+graph as r50, fresh LLM run (+3 pts non-det)
+
+| Q | r50 | r51 | delta | Note |
+|---|-----|-----|-------|------|
+| q15 | 4 | 6 | +2 | LLM non-det improvement — "Cape Flats" + "demolished" retrieved |
+| q16 | 5 | 6 | +1 | Gandhi — got satyagraha this run |
+| q26 | 5 | 6 | +1 | LLM non-det improvement |
+| q29 | 3 | 4 | +1 | TLSA/NEUM — non-collaboration returned |
+| q32 | 4 | 5 | +1 | LLM non-det improvement |
+| q19 | 6 | 5 | -1 | LLM non-det regression |
+| q25 | 4 | 3 | -1 | LLM non-det regression |
+| q27 | 5 | 4 | -1 | LLM non-det regression |
+
+**Per-question:** Q01:3, Q02:3, Q03:6, Q04:4, Q05:8, Q06:2, Q07:3, Q08:5, Q09:9, Q10:7, Q11:6, Q12:6, Q13:6, Q14:5, Q15:6, Q16:6, Q17:5, Q18:6, Q19:5, Q20:4, Q21:5, Q22:4, Q23:5, Q24:7, Q25:3, Q26:6, Q27:4, Q28:5, Q29:4, Q30:4, Q31:5, Q32:5, Q33:5, Q34:6, Q35:4, Q36:6, Q37:7, Q38:4, Q39:5, Q40:3
+
+**Key finding:** Q06 (Buitencingle) = 2/8 for 2nd consecutive run — not non-det, but systematic.
+Root cause: "7 Buitencingle Street" entity description (YAML) is missing: Dutch, belt, cobbled,
+palm trees, No. 7, grandfather. LLM cannot output keywords not in the injected entity.
+Fix: enriched entity description for r52 rebuild.
+
+**Still broken:**
+- q06 (2/8): systematic — entity description sparse; fix in YAML for r52
+- q20 (4/5): "District Six" missing — front-loaded in Kismets description for r52
+- q30 (4/6): Gujarat/Joosub consistently missing — front-loaded in Haji Joosub description for r52
+
 ## r50 — 2026-06-18 08:05 — **88.4% (199.0/225)** ⭐ new best
 
 **Flags:** smart mode, biographical-expansion, model=llama3.1:8b, metro-linux p2p

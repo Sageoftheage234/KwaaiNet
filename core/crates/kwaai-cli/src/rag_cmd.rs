@@ -20,7 +20,9 @@ use kwaai_rag::{
     seed_json,
 };
 
-use crate::cli::{CacheAction, DreamAction, GraphAction, RagAction, RagArgs, SchemaAction, TimelineAction};
+use crate::cli::{
+    CacheAction, DreamAction, GraphAction, RagAction, RagArgs, SchemaAction, TimelineAction,
+};
 use crate::config::{KwaaiNetConfig, RagConfig};
 use crate::display::*;
 
@@ -2572,7 +2574,10 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                 });
 
                 if validation_model.is_some() {
-                    println!("  Validation model:  {}", validation_model.as_deref().unwrap());
+                    println!(
+                        "  Validation model:  {}",
+                        validation_model.as_deref().unwrap()
+                    );
                     println!("  Validation floor:  {validation_floor:.2}");
                     println!("  Validation budget: {validation_budget}");
                 }
@@ -7160,8 +7165,8 @@ async fn cmd_eval(
                 let is_bio_who = q_lower.starts_with("who was ")
                     || q_lower.starts_with("who is ")
                     || q_lower.starts_with("who were ");
-                let is_bio_tell = q_lower.starts_with("tell me about ")
-                    || q_lower.starts_with("describe ");
+                let is_bio_tell =
+                    q_lower.starts_with("tell me about ") || q_lower.starts_with("describe ");
                 let is_bio_tell_more = q_lower.starts_with("tell me more about ");
                 let is_enum = q_lower.contains("organisation")
                     || q_lower.contains("organization")
@@ -8059,9 +8064,8 @@ async fn cmd_graph_schema(action: SchemaAction, kb: &str) -> Result<()> {
                 let parsed: SchemaFile = serde_yaml::from_str(&contents)
                     .with_context(|| format!("parsing YAML schema file {}", file.display()))?;
                 let schemas = parsed.entity_type_schemas;
-                let mut store =
-                    kwaai_rag::graph::GraphStore::open(&rag_cfg.data_dir(), tenant_id)
-                        .context("opening graph store")?;
+                let mut store = kwaai_rag::graph::GraphStore::open(&rag_cfg.data_dir(), tenant_id)
+                    .context("opening graph store")?;
                 let count = schemas.len();
                 store
                     .set_kb_entity_schemas(&schemas)

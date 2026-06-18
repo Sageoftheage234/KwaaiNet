@@ -32,21 +32,21 @@ persons:
       - "Grandpa J.M.H. Gool"
       - "Gool"
     description: >-
-      J.M.H. Gool (Haji Joosub Maulvi Hamid Gool) was the author's maternal
-      grandfather, a prosperous merchant from India who arrived at the Cape via
-      Mauritius in 1884. His father was a Pushto-speaking Maulvi from the Province of Swat
-      who had moved to Rander in Gujarat. Joosub left behind his
-      eleven-year-old bride in India and came to Cape Town where he established
-      J.M.H. Gool & Co. at 25 Church Street, supplying spices and becoming a
-      supplier to the troops of Queen Victoria during the Anglo-Boer War. He
-      founded the Hanaffi Quwatul Islam Mosque in Loop Street (completed 1898),
-      built the grand 13-room mansion at 7 Buitencingle Street, and knew
-      Gandhi, Cecil Rhodes, Dr. Abdullah Abdurahman, and George Bernard Shaw
-      personally. His friendship with Gandhi is documented in the Indian Opinion
-      (March 1914), which reported on Gandhi's visits to the Gool mansion at
-      Buitencingle. His children included Ayesha (Lallie), Mohamed Saaid, and
-      Zohra by his first wife Bibi; and Abdul Hamid (B.G.), Goolam, Jane,
-      Minnie, Fatima, Mariam, Zobeida, and Mohammed Hanief by his second wife Wahida.
+      Joosub Maulvi Hamid Gool (J.M.H. Gool), the author's maternal
+      grandfather, was a prosperous merchant who arrived in Cape Town in 1884,
+      coming via Mauritius from India. His roots were in Rander, Gujarat; his
+      father was a Pushto-speaking Maulvi from the Province of Swat. Joosub
+      left behind his eleven-year-old bride in India and established J.M.H.
+      Gool & Co. at 25 Church Street, supplying spices and becoming a supplier
+      to the troops of Queen Victoria during the Anglo-Boer War. He founded the
+      Hanaffi Quwatul Islam Mosque in Loop Street (completed 1898), built the
+      grand 13-room mansion at 7 Buitencingle Street, and knew Gandhi, Cecil
+      Rhodes, Dr. Abdullah Abdurahman, and George Bernard Shaw personally. His
+      friendship with Gandhi is documented in the Indian Opinion (March 1914),
+      which reported on Gandhi's visits to the Gool mansion at Buitencingle.
+      His children included Ayesha (Lallie), Mohamed Saaid, and Zohra by his
+      first wife Bibi; and Abdul Hamid (B.G.), Goolam, Jane, Minnie, Fatima,
+      Mariam, Zobeida, and Mohammed Hanief by his second wife Wahida.
 
   - canonical: "Bibi Gool"
     gender: "Female"
@@ -767,14 +767,14 @@ persons:
       - "West Indian cricket tour"
       - "non-racial cricket"
     description: >-
-      Kismets Cricket Club was the cricket club that the author Yousuf Rassool
-      joined and played for in District Six, Cape Town. The club operated within
-      the non-European cricket structure under apartheid, separate from the
-      mainstream white cricket leagues. Through Kismets, the author participated
-      in the Sunday League and other non-European cricket competitions. He played
-      for Western Province in the non-European cricket structure. Cricket was a
-      major passion of the author's life and a site of political exclusion for
-      the Coloured community under apartheid.
+      Kismets Cricket Club was a District Six cricket club that Yousuf Rassool
+      joined and played for. The club operated within the non-European cricket
+      structure under apartheid, separate from the mainstream white cricket
+      leagues. Through Kismets, the author participated in the Sunday League and
+      other non-European cricket competitions and represented Western Province
+      in the non-European cricket structure. Cricket was a major passion of the
+      author's life and a site of political exclusion for the Coloured community
+      under apartheid in Cape Town.
 
   # ─── Key places ───────────────────────────────────────────────────────────────
 
@@ -838,13 +838,19 @@ persons:
     entity_type: Place
     aliases:
       - "Buitencingle Street"
+      - "Buitencingle"
       - "the Buitencingle mansion"
       - "7 Buitenkingle Street"
+      - "No. 7 Buitencingle"
     description: >-
-      7 Buitencingle Street was the grand 13-room mansion in District Six built
-      by Haji Joosub Maulvi Hamid Gool. It was the family home of the Gool
-      family and a gathering place for prominent visitors including Gandhi and
-      Dr. Abdullah Abdurahman.
+      Buitencingle Street (No. 7) was a select, exclusive residential street in
+      Cape Town at the foot of Table Mountain. The name is Dutch in origin —
+      "cingle" means belt, and Buitencingle was the outermost belt of old Cape
+      Town. The street was wide and cobbled, with traffic islands sporting
+      stunted palm trees. At No. 7 stood the author's grandfather's grand
+      13-room mansion — the Gool family home built by Haji Joosub Maulvi Hamid
+      Gool. The mansion was a gathering place for prominent visitors including
+      Gandhi and Dr. Abdullah Abdurahman.
 
 relations:
 

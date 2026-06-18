@@ -769,11 +769,15 @@ impl GraphStore {
                         &existing.entity_type,
                         &merged_fields,
                     );
-                    [computed, node.description.clone(), existing.description.clone()]
-                        .into_iter()
-                        .filter(|d| !d.is_empty())
-                        .max_by_key(|d| d.len())
-                        .unwrap_or_default()
+                    [
+                        computed,
+                        node.description.clone(),
+                        existing.description.clone(),
+                    ]
+                    .into_iter()
+                    .filter(|d| !d.is_empty())
+                    .max_by_key(|d| d.len())
+                    .unwrap_or_default()
                 };
                 let best_emb = if best_desc == existing.description {
                     existing.embedding.clone()
