@@ -29,6 +29,8 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "core -> target"
       - name: fmt
         run: cargo fmt --check -p kwaainet
       - name: clippy
