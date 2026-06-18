@@ -91,7 +91,9 @@ MILESTONES = [
     ("M76", 75.9, 5, None),
     ("M77", 77.8, 5, None),
     ("M78", 84.9, 5, "Reembed\nbug fix"),
-    ("M79", 87.6, 5, "Entity\nenrichment\n← BEST"),
+    ("M79", 87.6, 5, "Entity\nenrichment"),
+    ("M80", 88.0, 5, None),
+    ("M81", 88.4, 5, "Routing\nfix ← BEST"),
 ]
 
 # Eval set change: from 20q/116kw to 40q/225kw between M35 and M42
@@ -101,7 +103,7 @@ EVAL_CHANGE_X = 14.5  # midpoint between M35 (x=13) and M42 (x=14)
 NOISE = 3.5
 
 # Representative points that get error bars (to avoid clutter)
-ERROR_BAR_LABELS = {"M17", "M22", "M35", "M43", "M50", "M51", "M58", "M60", "M74", "M79"}
+ERROR_BAR_LABELS = {"M17", "M22", "M35", "M43", "M50", "M51", "M58", "M60", "M74", "M81"}
 
 # ---------------------------------------------------------------------------
 # Build arrays

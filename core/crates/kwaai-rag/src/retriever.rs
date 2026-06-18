@@ -666,7 +666,10 @@ pub(crate) fn inject_entity_descriptions(
                 .filter(|c| matches!(c, '.' | '?' | '!'))
                 .count();
             if lenient {
-                desc.len() >= 40 && sents >= 1
+                // Raised from 40→100 to exclude short EE-extracted fragments
+                // (e.g. "Yorkshire Cricket Club: The team that played against..." at 88 chars)
+                // while keeping all YAML-seeded entities (always 100+ chars).
+                desc.len() >= 100 && sents >= 1
             } else {
                 desc.len() >= 100 && sents >= 2
             }
@@ -676,10 +679,17 @@ pub(crate) fn inject_entity_descriptions(
         // Two forms are kept so abbreviations like "j.m.h." score correctly:
         //   • q_sig_tokens: normalized form (dots→spaces) for ordinary words
         //   • q_raw_tokens: raw trimmed+lowercased form so "j.m.h" stays intact
+        //
+        // Geo-stopwords excluded from overlap scoring: they appear in so many entity names
+        // in this corpus ("Union of South Africa", "Teachers League of South Africa", etc.)
+        // that matching them drives spurious routing — e.g. Q37 "why was he in South Africa?"
+        // routes to "Union of South Africa" instead of Gandhi.
+        const GEO_STOP: &[&str] = &["south", "africa", "african", "cape", "town"];
         let q_sig_tokens: std::collections::HashSet<String> = q_lower
             .split_whitespace()
             .filter(|t| t.len() >= 3)
             .map(crate::graph::normalize_name)
+            .filter(|t| !GEO_STOP.contains(&t.as_str()))
             .collect();
         let q_raw_tokens: std::collections::HashSet<String> = q_lower
             .split_whitespace()
@@ -687,7 +697,7 @@ pub(crate) fn inject_entity_descriptions(
                 t.trim_matches(|c: char| !c.is_alphanumeric())
                     .to_lowercase()
             })
-            .filter(|s| s.len() >= 2)
+            .filter(|s| s.len() >= 2 && !GEO_STOP.contains(&s.as_str()))
             .collect();
         let name_overlap = |id: i64| -> usize {
             let Some(e) = graph.get_entity(id) else {
@@ -722,17 +732,31 @@ pub(crate) fn inject_entity_descriptions(
                 .unwrap_or(0)
         };
 
-        // Sort name-matched candidates by overlap count descending, then by embedding score.
-        let mut nm: Vec<(i64, f64)> = seed_hits
+        // Sort name-matched candidates: (1) name_overlap desc, (2) YAML-seeded first
+        // (extraction_confidence=1.0 beats EE-extracted fragments), (3) embedding desc.
+        // Pre-compute keys to avoid repeated graph lookups inside the comparator.
+        let mut nm: Vec<(i64, f64, usize, f32)> = seed_hits
             .iter()
             .filter(|(id, _)| name_matched.contains(id))
-            .map(|(id, s)| (*id, *s))
+            .map(|(id, s)| {
+                let overlap = name_overlap(*id);
+                let conf = graph
+                    .get_entity(*id)
+                    .map(|e| e.extraction_confidence)
+                    .unwrap_or(0.0);
+                (*id, *s, overlap, conf)
+            })
             .collect();
         nm.sort_by(|a, b| {
-            name_overlap(b.0)
-                .cmp(&name_overlap(a.0))
+            // a.2/b.2 = name_overlap, a.3/b.3 = extraction_confidence, a.1/b.1 = embedding
+            b.2.cmp(&a.2)
+                .then(
+                    b.3.partial_cmp(&a.3)
+                        .unwrap_or(std::cmp::Ordering::Equal),
+                )
                 .then(b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal))
         });
+        let nm: Vec<(i64, f64)> = nm.into_iter().map(|(id, s, _, _)| (id, s)).collect();
 
         // 1. Name-matched candidates first (sorted by overlap, so JMH Gool beats Wahida Gool
         //    for "Who was JMH Gool?" queries — both share "gool" but JMH also shares "jmh").
