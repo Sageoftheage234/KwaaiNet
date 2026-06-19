@@ -1,4 +1,34 @@
 
+## r67 — 2026-06-18 17:05 — **92.0% (207/225)** ⭐ new best — first run above 92%!
+
+**Flags:** smart mode, biographical-expansion, model=llama3.1:8b, metro-linux p2p
+
+**Changes since r66 (206/225):** +1 pt net
+
+- `Kloof Nek`: added description with saddle/Table Mountain/Lion's Head/Glen/Kloof Street/Buitencingle → Q10 +3
+- `Haji Joosub Maulvi Hamid Gool`: moved wives sentence before acquaintances → Q24 +2 (Bibi/Wahida now appear)
+- `Indian Opinion`: added description with passive/satyagraha/Buitencingle → Q16 (variance, -1 despite change)
+- `J.M.H. Gool & Co.`: person-first opening "Joosub Maulvi Hamid Gool — the author's grandfather and founder of..." → Q30 unchanged (4/6)
+
+| Q | r66 | r67 | delta | Note |
+|---|-----|-----|-------|------|
+| q10 | 4 | 7 | +3 | Kloof Nek description: saddle/Table Mountain/Lion's Head/Glen/Kloof Street/Buitencingle |
+| q24 | 5 | 7 | +2 | Wives sentence moved earlier → Bibi Gool / Wahida Gool now in LLM answer |
+| q06 | 6 | 7 | +1 | LLM variance |
+| q25 | 4 | 5 | +1 | LLM variance |
+| q31 | 4 | 5 | +1 | LLM variance |
+| q16 | 6 | 5 | -1 | Indian Opinion injected; description added but answer still missing 2 keywords |
+| q17 | 5 | 4 | -1 | LLM variance |
+| q20 | 4 | 3 | -1 | LLM variance |
+| q32 | 5 | 4 | -1 | LLM variance |
+| q33 | 5 | 4 | -1 | LLM variance |
+
+**Still losing points (candidates for r68):**
+- q30 (4/6): LLM reproduces "Mauritius/1884/bride" from destination clause but drops "Swat/Gujarat" from origin clause — restructure sentence so Swat→Gujarat→Mauritius→Cape flows as one journey
+- q16 (5/7): Indian Opinion injected; answer missing "satyagraha" and possibly "passive" — consider strengthening description
+- q05 (7/8): 1 keyword still missing from J.M.H. Gool answer
+- q09 (8/9): 1 keyword still missing from grandfather answer
+
 ## r66 — 2026-06-18 16:29 — **91.6% (206/225)** ⭐ new best — first run above 91%!
 
 **Flags:** smart mode, biographical-expansion, model=llama3.1:8b, metro-linux p2p
