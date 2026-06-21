@@ -1694,10 +1694,15 @@ async fn cmd_chat(
                 .context("calling shard API")?;
 
             let body: serde_json::Value = resp.json().await?;
-            let answer = body["choices"][0]["message"]["content"]
-                .as_str()
-                .unwrap_or("(no response)")
-                .to_string();
+            let answer = if let Some(s) = body["choices"][0]["message"]["content"].as_str() {
+                s.to_string()
+            } else if let Some(err) = body["error"]["message"].as_str() {
+                format!("(inference error: {err})")
+            } else if !body["error"].is_null() {
+                format!("(inference error: {})", body["error"])
+            } else {
+                format!("(no response — body: {})", &body.to_string()[..body.to_string().len().min(200)])
+            };
 
             println!("\n  Assistant: {answer}");
 

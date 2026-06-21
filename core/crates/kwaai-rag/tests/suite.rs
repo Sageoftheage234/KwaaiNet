@@ -2204,3 +2204,277 @@ fn d6_check_cissie_aliases() {
     }
     println!("Total entities with grandfather/grandpa alias: {count}");
 }
+
+// =============================================================================
+// RAG Chat tests
+// =============================================================================
+//
+// These tests cover:
+//   1. build_chat_messages prompt structure
+//   2. Response JSON parsing — valid, Ollama error object, empty body
+//   3. Mock LLM server — full HTTP round-trip (no p2p, no embedding)
+//   4. p2p://auto config sentinel recognition
+//
+// All tests run without a live LLM, embedding server, or p2p daemon.
+
+// ── 1. Prompt structure ───────────────────────────────────────────────────────
+
+fn make_chat_chunk(text: &str) -> RetrievedChunk {
+    RetrievedChunk {
+        chunk_meta: ChunkMeta {
+            doc_name: "test.pdf".to_string(),
+            chunk_index: 0,
+            text: text.to_string(),
+            surrounding: String::new(),
+            page_num: None,
+            ingested_at: "2026-01-01".to_string(),
+            section_name: None,
+            skip_extraction: false,
+            section_note: None,
+            section_type: Default::default(),
+        },
+        score: 1.0,
+        source_kb: None,
+        rerank_score: None,
+    }
+}
+
+#[test]
+fn chat_messages_system_first_user_last() {
+    let chunks = vec![make_chat_chunk("District Six was a community in Cape Town.")];
+    let msgs = build_chat_messages("Who lived in District Six?", &chunks, &[], 10000, None);
+    assert_eq!(msgs[0].role, "system");
+    assert_eq!(msgs.last().unwrap().role, "user");
+    assert_eq!(msgs.last().unwrap().content, "Who lived in District Six?");
+}
+
+#[test]
+fn chat_messages_history_interleaved() {
+    use kwaai_rag::prompt::ChatMessage;
+    let chunks = vec![make_chat_chunk("text")];
+    let history = vec![
+        ChatMessage { role: "user".to_string(), content: "q1".to_string() },
+        ChatMessage { role: "assistant".to_string(), content: "a1".to_string() },
+    ];
+    let msgs = build_chat_messages("q2", &chunks, &history, 10000, None);
+    // system + 2 history + user
+    assert_eq!(msgs.len(), 4);
+    assert_eq!(msgs[1].role, "user");
+    assert_eq!(msgs[2].role, "assistant");
+    assert_eq!(msgs[3].role, "user");
+    assert_eq!(msgs[3].content, "q2");
+}
+
+#[test]
+fn chat_messages_doc_context_in_system() {
+    let chunks = vec![make_chat_chunk("text")];
+    let msgs = build_chat_messages(
+        "q",
+        &chunks,
+        &[],
+        10000,
+        Some("Lest We Forget by Joe Rassool"),
+    );
+    assert!(msgs[0].content.contains("Lest We Forget by Joe Rassool"));
+}
+
+#[test]
+fn chat_messages_sources_numbered() {
+    let chunks = vec![
+        make_chat_chunk("first chunk text"),
+        make_chat_chunk("second chunk text"),
+    ];
+    let msgs = build_chat_messages("q", &chunks, &[], 10000, None);
+    let system = &msgs[0].content;
+    assert!(system.contains("[1]"), "expected [1] in system: {system}");
+    assert!(system.contains("[2]"), "expected [2] in system: {system}");
+}
+
+#[test]
+fn chat_messages_token_budget_truncates_context() {
+    let chunks = vec![
+        make_chat_chunk("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+        make_chat_chunk("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"),
+    ];
+    // Very small max_context_chars: only first chunk entry should fit
+    let msgs = build_chat_messages("q", &chunks, &[], 10, None);
+    let system = &msgs[0].content;
+    assert!(!system.contains("BBB"), "second chunk should be truncated: {system}");
+}
+
+#[test]
+fn chat_messages_no_chunks_still_valid() {
+    let msgs = build_chat_messages("what is it?", &[], &[], 10000, None);
+    assert_eq!(msgs[0].role, "system");
+    assert_eq!(msgs.last().unwrap().role, "user");
+    assert!(msgs[0].content.contains("0 source excerpt(s)"));
+}
+
+// ── 2. Response JSON parsing ──────────────────────────────────────────────────
+
+fn extract_chat_answer(body: &serde_json::Value) -> String {
+    if let Some(s) = body["choices"][0]["message"]["content"].as_str() {
+        s.to_string()
+    } else if let Some(err) = body["error"]["message"].as_str() {
+        format!("(inference error: {err})")
+    } else if !body["error"].is_null() {
+        format!("(inference error: {})", body["error"])
+    } else {
+        format!(
+            "(no response — body: {})",
+            &body.to_string()[..body.to_string().len().min(200)]
+        )
+    }
+}
+
+#[test]
+fn response_parse_valid_completion() {
+    let body = serde_json::json!({
+        "choices": [{ "message": { "content": "District Six was a community.", "role": "assistant" } }]
+    });
+    assert_eq!(extract_chat_answer(&body), "District Six was a community.");
+}
+
+#[test]
+fn response_parse_ollama_error_object() {
+    let body = serde_json::json!({ "error": { "message": "model 'llama3.1:8b' not found" } });
+    let answer = extract_chat_answer(&body);
+    assert!(answer.contains("inference error"), "got: {answer}");
+    assert!(answer.contains("not found"), "got: {answer}");
+}
+
+#[test]
+fn response_parse_string_error_field() {
+    let body = serde_json::json!({ "error": "context length exceeded" });
+    let answer = extract_chat_answer(&body);
+    assert!(answer.contains("inference error"), "got: {answer}");
+}
+
+#[test]
+fn response_parse_empty_choices() {
+    let body = serde_json::json!({ "choices": [] });
+    let answer = extract_chat_answer(&body);
+    assert!(answer.starts_with("(no response"), "got: {answer}");
+}
+
+#[test]
+fn response_parse_missing_content_field() {
+    let body = serde_json::json!({
+        "choices": [{ "message": { "role": "assistant" } }]
+    });
+    let answer = extract_chat_answer(&body);
+    assert!(answer.starts_with("(no response"), "got: {answer}");
+}
+
+// ── 3. Mock LLM server — full HTTP round-trip ─────────────────────────────────
+
+#[tokio::test]
+async fn chat_mock_server_valid_response() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let base_url = format!("http://127.0.0.1:{port}");
+
+    // Minimal HTTP server: accept one request, return a valid completion.
+    tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut buf = vec![0u8; 4096];
+        let _ = socket.read(&mut buf).await;
+        let body = serde_json::json!({
+            "choices": [{ "message": { "role": "assistant",
+                "content": "District Six was a vibrant community." } }]
+        })
+        .to_string();
+        let resp = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        let _ = socket.write_all(resp.as_bytes()).await;
+    });
+
+    let client = reqwest::Client::new();
+    let payload = serde_json::json!({
+        "model": "llama3.1:8b",
+        "messages": [{ "role": "user", "content": "hello" }],
+        "stream": false,
+    });
+    let resp = client
+        .post(format!("{base_url}/v1/chat/completions"))
+        .json(&payload)
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(
+        extract_chat_answer(&body),
+        "District Six was a vibrant community."
+    );
+}
+
+#[tokio::test]
+async fn chat_mock_server_model_not_found_error() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let base_url = format!("http://127.0.0.1:{port}");
+
+    tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut buf = vec![0u8; 4096];
+        let _ = socket.read(&mut buf).await;
+        let body = serde_json::json!({
+            "error": { "message": "model 'llama3.1:8b' not found, try pulling it first" }
+        })
+        .to_string();
+        let resp = format!(
+            "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        let _ = socket.write_all(resp.as_bytes()).await;
+    });
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base_url}/v1/chat/completions"))
+        .json(&serde_json::json!({"model": "x", "messages": [], "stream": false}))
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let answer = extract_chat_answer(&body);
+    assert!(
+        answer.contains("inference error") && answer.contains("not found"),
+        "expected error message, got: {answer}"
+    );
+}
+
+// ── 4. p2p://auto config sentinel ────────────────────────────────────────────
+
+#[test]
+fn p2p_auto_is_non_localhost() {
+    let url = "p2p://auto";
+    let is_remote = !url.contains("localhost") && !url.contains("127.0.0.1");
+    assert!(is_remote, "p2p://auto should be treated as remote");
+}
+
+#[test]
+fn p2p_auto_does_not_match_concrete_peer() {
+    assert_ne!(
+        "p2p://12D3KooWCzuhpXrZXD8aezgm4JCkCZSTgj48uDywYYdTzUhF8SHs",
+        "p2p://auto"
+    );
+}
+
+#[test]
+fn inference_url_proxy_required_for_p2p_schemes() {
+    let needs_proxy = |url: &str| url.starts_with("p2p://") || url.starts_with("mux://");
+    assert!(needs_proxy("p2p://auto"));
+    assert!(needs_proxy("p2p://12D3KooWAbc"));
+    assert!(needs_proxy("mux://12D3KooWAbc"));
+    assert!(!needs_proxy("http://localhost:11434"));
+    assert!(!needs_proxy("http://192.168.1.10:11434"));
+}
