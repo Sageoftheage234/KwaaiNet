@@ -211,7 +211,7 @@ for i, (label, recall, phase_idx, ann) in enumerate(MILESTONES):
 
 # Axes
 ax.set_xlim(-0.5, len(MILESTONES) - 0.5)
-ax.set_ylim(15, 95)
+ax.set_ylim(15, 103)
 ax.set_ylabel("Keyword Recall (%)", fontsize=9)
 ax.set_xlabel("Experiment Milestone", fontsize=9)
 

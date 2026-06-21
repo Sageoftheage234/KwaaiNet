@@ -1378,6 +1378,32 @@ async fn announce(
         warn!("❌ Model registry announcement failed");
     }
 
+    // Inference nodes registry — advertise this node as an available inference
+    // peer so `p2p://auto` in rag chat/query can discover it without knowing
+    // block coverage.  Uses the same DHTServerInfo msgpack encoding as block
+    // records so `discover_inference_peer()` can reuse `decode_server_info_ext`.
+    // Key: _kwaai.inference.nodes  subkey: msgpack(peer_id_base58)  TTL: 360 s
+    {
+        let inf_req = StoreRequest {
+            auth: Some(RequestAuthInfo::new()),
+            keys: vec![dht_id(crate::shard_cmd::INFERENCE_NODES_DHT_KEY)],
+            subkeys: vec![subkey.clone()],
+            values: vec![info_bytes.clone()],
+            expiration_time: vec![get_dht_time() + 360.0],
+            in_cache: vec![false],
+            peer: Some(node_info.clone()),
+        };
+        {
+            let g = storage.read().await;
+            let _ = g.handle_store(inf_req.clone());
+        }
+        if send_to_bootstrap(client, bootstrap_peers, inf_req).await.0 {
+            info!("✅ Announced to _kwaai.inference.nodes");
+        } else {
+            warn!("❌ Inference nodes announcement failed");
+        }
+    }
+
     // VPK nodes registry — advertise this node's VPK capability when enabled.
     // Key: _kwaai.vpk.nodes  subkey: msgpack(peer_id_base58)
     // Value: msgpack({ mode, endpoint, capacity_gb, tenant_count, vpk_version })

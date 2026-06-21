@@ -1922,6 +1922,8 @@ pub struct BlockServerEntry {
     pub start_block: usize,
     pub end_block: usize,
     pub public_name: String,
+    /// Tokens/sec claimed by the peer in its DHT announcement (0.0 = unknown).
+    pub throughput: f64,
     /// Local trust score for this peer (None until enriched from ReputationStore).
     pub trust_score: Option<f64>,
 }
@@ -2002,6 +2004,130 @@ pub async fn discover_chain(
     let mut chain: Vec<BlockServerEntry> = servers.into_values().collect();
     chain.sort_by_key(|e| e.start_block);
     chain
+}
+
+// ── Inference peer discovery ───────────────────────────────────────────────────
+
+/// DHT key under which nodes advertise Ollama / shard-API availability.
+pub const INFERENCE_NODES_DHT_KEY: &str = "_kwaai.inference.nodes";
+
+/// Discover the best available inference peer from the DHT.
+///
+/// Queries `_kwaai.inference.nodes` first (direct Ollama/shard nodes); falls
+/// back to any online block-serving peer if that key is empty.  Picks the
+/// peer with the highest announced throughput.  Returns a `p2p://PEER_ID`
+/// URL ready to pass to `resolve_inference_urls`.
+///
+/// Returns `None` when no reachable peers are found (caller should fall back
+/// to localhost Ollama or surface an error).
+pub async fn discover_inference_peer(
+    client: &mut P2PClient,
+    our_peer_id: &PeerId,
+    bootstrap_peers: &[String],
+    dht_prefix: Option<&str>,
+    total_blocks: Option<usize>,
+) -> Option<String> {
+    use prost::Message as _;
+
+    let our_dhtid = Sha1::new()
+        .chain_update(our_peer_id.to_bytes())
+        .finalize()
+        .to_vec();
+
+    // 1. Query _kwaai.inference.nodes for dedicated inference peers.
+    let inf_key = {
+        let packed = rmp_serde::to_vec(INFERENCE_NODES_DHT_KEY).ok()?;
+        Sha1::new().chain_update(&packed).finalize().to_vec()
+    };
+    let find_req = FindRequest {
+        auth: Some(RequestAuthInfo::new()),
+        keys: vec![inf_key],
+        peer: Some(NodeInfo {
+            node_id: our_dhtid.clone(),
+        }),
+    };
+    let mut req_bytes = Vec::new();
+    find_req.encode(&mut req_bytes).ok()?;
+
+    let mut candidates: Vec<(f64, PeerId, String)> = Vec::new(); // (throughput, peer_id, name)
+
+    for addr in bootstrap_peers {
+        let Some(peer_str) = addr.split("/p2p/").nth(1) else {
+            continue;
+        };
+        let bp = match peer_str.parse::<PeerId>() {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        if client.connect_peer(addr).await.is_err() {
+            continue;
+        }
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        let resp_bytes = match client
+            .call_unary_handler(&bp.to_bytes(), "DHTProtocol.rpc_find", &req_bytes)
+            .await
+        {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        let Ok(resp) = FindResponse::decode(&resp_bytes[..]) else {
+            continue;
+        };
+        for result in resp.results {
+            if result.value.is_empty() {
+                continue;
+            }
+            // Values stored under _kwaai.inference.nodes use the same
+            // DHTServerInfo msgpack encoding as block records.
+            if result.result_type == 1 {
+                if let Some((state, _, _, name, peer_id_b58, version, tps)) =
+                    decode_server_info_ext(&result.value)
+                {
+                    if state == 2 && version_meets_minimum(&version) {
+                        if let Ok(pid) = peer_id_b58.parse::<PeerId>() {
+                            candidates.push((tps, pid, name));
+                        }
+                    }
+                }
+            } else if result.result_type == 2 {
+                let mut tmp: HashMap<String, BlockServerEntry> = HashMap::new();
+                decode_server_info_dictionary(&result.value, &mut tmp);
+                for (_, e) in tmp {
+                    candidates.push((e.throughput, e.peer_id, e.public_name));
+                }
+            }
+        }
+    }
+
+    // 2. Fall back to the block-serving chain when the inference key is empty.
+    if candidates.is_empty() {
+        if let (Some(prefix), Some(total)) = (dht_prefix, total_blocks) {
+            let chain =
+                discover_chain(client, our_peer_id, prefix, total, bootstrap_peers).await;
+            for e in chain {
+                candidates.push((e.throughput, e.peer_id, e.public_name));
+            }
+        }
+    }
+
+    if candidates.is_empty() {
+        return None;
+    }
+
+    // Pick the peer with the highest throughput; break ties by name for stability.
+    candidates.sort_by(|a, b| {
+        b.0.partial_cmp(&a.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.2.cmp(&b.2))
+    });
+    let (tps, best_peer, name) = &candidates[0];
+    tracing::info!(
+        "p2p://auto → {} ({}, {:.1} tok/s)",
+        best_peer.to_base58(),
+        name,
+        tps
+    );
+    Some(format!("p2p://{}", best_peer.to_base58()))
 }
 
 // ── Gap detection ─────────────────────────────────────────────────────────────
@@ -2094,7 +2220,7 @@ async fn pick_gap_blocks(
 /// synthesise a stable key from `public_name:start_block` so they still count
 /// for gap detection even though they cannot be routed to directly.
 fn decode_server_info_regular(bytes: &[u8]) -> Option<(String, BlockServerEntry)> {
-    let (state, start_block, end_block, public_name, peer_id_b58, version) =
+    let (state, start_block, end_block, public_name, peer_id_b58, version, throughput) =
         decode_server_info_ext(bytes)?;
     // Only include ONLINE nodes (state=2); skip JOINING (0) and OFFLINE (-1).
     if state != 2 {
@@ -2117,6 +2243,7 @@ fn decode_server_info_regular(bytes: &[u8]) -> Option<(String, BlockServerEntry)
             start_block,
             end_block,
             public_name,
+            throughput,
             trust_score: None,
         },
     ))
@@ -2179,7 +2306,7 @@ fn decode_server_info_dictionary(bytes: &[u8], out: &mut HashMap<String, BlockSe
             Err(_) => continue,
         };
 
-        if let Some((state, start_block, end_block, public_name, _, version)) =
+        if let Some((state, start_block, end_block, public_name, _, version, throughput)) =
             decode_server_info_ext(value_bytes)
         {
             if state != 2 {
@@ -2194,6 +2321,7 @@ fn decode_server_info_dictionary(bytes: &[u8], out: &mut HashMap<String, BlockSe
                 start_block,
                 end_block,
                 public_name,
+                throughput,
                 trust_score: None,
             });
         }
@@ -2237,8 +2365,10 @@ pub fn snap_to_valid_blocks(n: usize) -> usize {
 }
 
 /// Core decoder: `Ext(64, msgpack([state, throughput, {start_block, end_block, …}]))`
-/// Returns `(state, start_block, end_block, public_name, peer_id_b58, version)`.
-fn decode_server_info_ext(bytes: &[u8]) -> Option<(i32, usize, usize, String, String, String)> {
+/// Returns `(state, start_block, end_block, public_name, peer_id_b58, version, throughput)`.
+fn decode_server_info_ext(
+    bytes: &[u8],
+) -> Option<(i32, usize, usize, String, String, String, f64)> {
     let val = rmpv::decode::read_value(&mut &bytes[..]).ok()?;
     let inner_bytes = match &val {
         rmpv::Value::Ext(64, b) => b.as_slice(),
@@ -2265,6 +2395,7 @@ fn decode_server_info_ext(bytes: &[u8]) -> Option<(i32, usize, usize, String, St
     };
 
     let state = arr[0].as_i64().unwrap_or(0) as i32;
+    let throughput = arr[1].as_f64().unwrap_or(0.0);
     let start_block = get_i("start_block")? as usize;
     let end_block = get_i("end_block")? as usize;
     let public_name = get_s("public_name");
@@ -2278,6 +2409,7 @@ fn decode_server_info_ext(bytes: &[u8]) -> Option<(i32, usize, usize, String, St
         public_name,
         peer_id_b58,
         version,
+        throughput,
     ))
 }
 
@@ -2360,6 +2492,7 @@ impl SerializableEntry {
             start_block: self.start_block,
             end_block: self.end_block,
             public_name: self.public_name.clone(),
+            throughput: 0.0,
             trust_score: None,
         })
     }
