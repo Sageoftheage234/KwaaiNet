@@ -1446,9 +1446,9 @@ pub enum RagAction {
         #[arg(long, default_value = "default", value_name = "NAME")]
         kb: String,
 
-        /// Inference URL for LLM answer generation
-        #[arg(long, default_value = "http://localhost:11434", value_name = "URL")]
-        inference_url: String,
+        /// Inference URL for LLM answer generation (defaults to config inference_url; use p2p://auto for DHT discovery)
+        #[arg(long, value_name = "URL")]
+        inference_url: Option<String>,
 
         /// Model name for answer generation (e.g. "llama3.2:3b")
         #[arg(long, default_value = "llama3.1:8b", value_name = "MODEL")]

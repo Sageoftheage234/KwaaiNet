@@ -2110,6 +2110,10 @@ pub async fn discover_inference_peer(
         }
     }
 
+    // Remove ourselves — dialling self via p2p proxy always fails.
+    let our_b58 = our_peer_id.to_base58();
+    candidates.retain(|(_, pid, _)| pid.to_base58() != our_b58);
+
     if candidates.is_empty() {
         return None;
     }

@@ -6894,7 +6894,7 @@ struct EvalQuestion {
 async fn cmd_eval(
     questions_path: std::path::PathBuf,
     kb: String,
-    inference_url: String,
+    inference_url: Option<String>,
     model: String,
     top_k: usize,
     mode: String,
@@ -6946,10 +6946,23 @@ async fn cmd_eval(
             .timeout(std::time::Duration::from_secs(300))
             .build()?;
 
-        // Resolve p2p:// URLs to local HTTP proxies (same pattern as dream/graph build).
+        // Resolve inference URL: honour global config and p2p://auto sentinel.
+        let (rag_cfg_for_url, _) = load_rag_config_for(&kb)?;
+        let inference_url = inference_url
+            .or_else(|| {
+                let global = crate::config::KwaaiNetConfig::load_or_create().ok()?;
+                let url = &global.inference_url;
+                let is_remote = !url.contains("localhost") && !url.contains("127.0.0.1");
+                (is_remote || url == "p2p://auto").then(|| url.clone())
+            })
+            .unwrap_or_else(|| rag_cfg_for_url.inference_url.clone());
+
+        // Resolve p2p://auto → DHT discovery; p2p:// / mux:// → local HTTP proxy.
         let mut _proxy_handles: Vec<tokio::task::JoinHandle<()>> = vec![];
         let inference_url =
-            if inference_url.starts_with("p2p://") || inference_url.starts_with("mux://") {
+            if inference_url == "p2p://auto" || inference_url.starts_with("p2p://")
+                || inference_url.starts_with("mux://")
+            {
                 use kwaai_p2p_daemon::{P2PClient, DEFAULT_SOCKET_NAME};
                 let sock = std::env::var("KWAAINET_SOCKET")
                     .unwrap_or_else(|_| DEFAULT_SOCKET_NAME.to_string());
@@ -6960,12 +6973,48 @@ async fn cmd_eval(
                 let p2p = std::sync::Arc::new(
                     P2PClient::connect(&addr)
                         .await
-                        .context("connecting to p2pd for p2p:// URL resolution")?,
+                        .context("connecting to p2pd for inference URL resolution")?,
                 );
-                let (resolved, handles) =
-                    crate::ollama_proxy::resolve_inference_urls(&[inference_url], &p2p).await?;
-                _proxy_handles = handles;
-                resolved.into_iter().next().unwrap_or_default()
+                let resolved_raw = if inference_url == "p2p://auto" {
+                    let global = crate::config::KwaaiNetConfig::load_or_create()?;
+                    let our_peer_id =
+                        crate::identity::NodeIdentity::load_or_create()?.peer_id;
+                    let bootstrap_peers = global.initial_peers.clone();
+                    let dht_prefix = global.effective_dht_prefix();
+                    let total = global.model_total_blocks() as usize;
+                    let mut disc_client = P2PClient::connect(&addr)
+                        .await
+                        .context("connecting to p2pd for p2p://auto discovery")?;
+                    match crate::shard_cmd::discover_inference_peer(
+                        &mut disc_client,
+                        &our_peer_id,
+                        &bootstrap_peers,
+                        Some(&dht_prefix),
+                        Some(total),
+                    )
+                    .await
+                    {
+                        Some(url) => {
+                            eprintln!("  ● p2p://auto → {url}");
+                            url
+                        }
+                        None => {
+                            eprintln!("⚠️  p2p://auto: no peers found — falling back to localhost");
+                            "http://localhost:11434".to_string()
+                        }
+                    }
+                } else {
+                    inference_url.clone()
+                };
+                if resolved_raw.starts_with("p2p://") || resolved_raw.starts_with("mux://") {
+                    let (resolved, handles) =
+                        crate::ollama_proxy::resolve_inference_urls(&[resolved_raw], &p2p)
+                            .await?;
+                    _proxy_handles = handles;
+                    resolved.into_iter().next().unwrap_or_default()
+                } else {
+                    resolved_raw
+                }
             } else {
                 inference_url
             };
