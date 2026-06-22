@@ -139,6 +139,7 @@ pub async fn run(args: RagArgs) -> Result<()> {
             hyde_alpha,
             rerank,
             mode,
+            local,
         } => {
             cmd_chat(
                 top_k,
@@ -150,6 +151,7 @@ pub async fn run(args: RagArgs) -> Result<()> {
                 hyde_alpha,
                 rerank,
                 mode,
+                local,
             )
             .await
         }
@@ -1375,6 +1377,7 @@ async fn cmd_chat(
     hyde_alpha: Option<f32>,
     rerank: bool,
     mode: String,
+    local: bool,
 ) -> Result<()> {
     #[cfg(not(feature = "storage"))]
     bail!("RAG requires the 'storage' feature.");
@@ -1386,6 +1389,12 @@ async fn cmd_chat(
             "llama3.1:8b".to_string()
         } else {
             model
+        };
+        // --local bypasses p2p resolution entirely
+        let inference_url = if local {
+            Some("http://localhost:11434".to_string())
+        } else {
+            inference_url
         };
         let inference_url = inference_url
             .or_else(|| {
@@ -4207,6 +4216,40 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                             "\n{} candidate(s) found. Re-run with --commit to merge.",
                             candidates.len()
                         );
+                    }
+                }
+            }
+
+            GraphAction::SetDescription { entity, description } => {
+                #[cfg(not(feature = "storage"))]
+                bail!("RAG requires the 'storage' feature.");
+
+                #[cfg(feature = "storage")]
+                {
+                    let (rag_cfg, tenant_id) = load_rag_config_for(&kb)?;
+                    let mut store =
+                        kwaai_rag::graph::GraphStore::open(&rag_cfg.data_dir(), tenant_id)
+                            .context("opening graph store")?;
+
+                    let node = if let Some(n) = store.find_by_name(&entity) {
+                        Some((n.id, n.name.clone()))
+                    } else if let Some(n) = store.find_by_name_normalized(&entity) {
+                        Some((n.id, n.name.clone()))
+                    } else {
+                        None
+                    };
+
+                    match node {
+                        None => {
+                            eprintln!("Entity not found: {entity}");
+                            std::process::exit(1);
+                        }
+                        Some((id, name)) => {
+                            store
+                                .set_description(id, &description)
+                                .context("setting description")?;
+                            println!("✅  Description updated for \"{name}\"");
+                        }
                     }
                 }
             }

@@ -1232,6 +1232,10 @@ pub enum RagAction {
         /// graph+replace for family-relation queries)
         #[arg(long, default_value = "iterative", value_name = "MODE")]
         mode: String,
+
+        /// Use local Ollama for chat (http://localhost:11434) instead of a remote inference node
+        #[arg(long)]
+        local: bool,
     },
 
     /// List ingested documents
@@ -2108,6 +2112,19 @@ pub enum GraphAction {
         /// Actually merge the proposed entities (default: dry-run only)
         #[arg(long)]
         commit: bool,
+    },
+
+    /// Manually set the description for a named entity (bypasses LLM enrichment).
+    /// Useful when the LLM-generated description is incorrect and cannot be fixed by re-running
+    /// enrich-entities (e.g. when entity_to_chunks links are corrupted by alias collision).
+    SetDescription {
+        /// Entity name (case-insensitive prefix match)
+        #[arg(long, value_name = "NAME")]
+        entity: String,
+
+        /// The new description text to store
+        #[arg(long, value_name = "TEXT")]
+        description: String,
     },
 
     /// Export the knowledge graph to an Obsidian vault

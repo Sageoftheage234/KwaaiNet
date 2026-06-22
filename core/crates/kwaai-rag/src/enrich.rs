@@ -136,36 +136,7 @@ pub async fn enrich_entity_descriptions(
                 continue;
             }
 
-            let fetch_limit = chunk_ids.len().min(cfg.fetch_limit);
-            let chunks = match meta.get_chunks(&chunk_ids[..fetch_limit]) {
-                Ok(c) => c,
-                Err(_) => {
-                    report.entities_skipped_no_evidence += 1;
-                    continue;
-                }
-            };
-
-            let evidence_text: String = chunks
-                .iter()
-                .flatten()
-                .map(|c| {
-                    let mut s = String::new();
-                    if let Some(ref sec) = c.section_name {
-                        s.push_str(&format!("[Section: {sec}]\n"));
-                    }
-                    s.push_str(&c.text);
-                    s
-                })
-                .collect::<Vec<_>>()
-                .join("\n---\n");
-
-            if evidence_text.is_empty() {
-                report.entities_skipped_no_evidence += 1;
-                continue;
-            }
-
-            let url_idx = items.len() % inference_urls.len().max(1);
-            let inference_url = inference_urls.get(url_idx).cloned().unwrap_or_default();
+            // Compute aliases early so we can use them for evidence filtering.
             // Filter out generic pronoun aliases so the LLM hint is signal, not noise.
             const PRONOUN_ALIASES: &[&str] = &[
                 "i",
@@ -187,6 +158,106 @@ pub async fn enrich_entity_descriptions(
                 .filter(|a| !PRONOUN_ALIASES.contains(&a.to_lowercase().as_str()))
                 .cloned()
                 .collect();
+
+            // Distinctive aliases: anything beyond just the entity's first name alone.
+            // A bare first name (e.g. "Fatima" for "Fatima Gool") is too generic — it matches
+            // unrelated people with the same first name appearing in other passages of the memoir.
+            let canonical_lower = node.name.to_lowercase();
+            let first_name_part: &str = canonical_lower
+                .split_whitespace()
+                .next()
+                .unwrap_or(&canonical_lower);
+            let distinctive_aliases: Vec<String> = meaningful_aliases
+                .iter()
+                .filter(|a| a.to_lowercase() != first_name_part)
+                .cloned()
+                .collect();
+
+            // Fetch a wider pool first (up to 4× fetch_limit), filter by distinctive aliases,
+            // then cap at fetch_limit. This ensures we don't miss valid chunks that happen to
+            // fall beyond the first fetch_limit positions in the unfiltered set.
+            let pre_filter_limit = chunk_ids.len().min(cfg.fetch_limit * 4);
+            let chunks = match meta.get_chunks(&chunk_ids[..pre_filter_limit]) {
+                Ok(c) => c,
+                Err(_) => {
+                    report.entities_skipped_no_evidence += 1;
+                    continue;
+                }
+            };
+
+            // Keep only chunks where the full entity name or a distinctive alias appears.
+            // This prevents a bare first-name alias from pulling in chunks about unrelated
+            // people who share the same first name, which causes the LLM to fabricate
+            // relationships between the entity and those unrelated people.
+            let evidence_text: String = chunks
+                .iter()
+                .flatten()
+                .filter(|c| {
+                    let text_lower = c.text.to_lowercase();
+                    text_lower.contains(&canonical_lower)
+                        || distinctive_aliases
+                            .iter()
+                            .any(|a| text_lower.contains(a.to_lowercase().as_str()))
+                })
+                .take(cfg.fetch_limit)
+                .map(|c| {
+                    let mut s = String::new();
+                    if let Some(ref sec) = c.section_name {
+                        s.push_str(&format!("[Section: {sec}]\n"));
+                    }
+                    s.push_str(&c.text);
+                    s
+                })
+                .collect::<Vec<_>>()
+                .join("\n---\n");
+
+            // If distinctive-alias filtering removed everything, the entity's entity_to_chunks
+            // links are all from generic-first-name occurrences (e.g. "Fatima Gool" whose
+            // linked chunks come from a different Fatima in the text). Fall back to a full-corpus
+            // scan that finds any chunk mentioning the canonical name or a distinctive alias.
+            let evidence_text = if evidence_text.is_empty() && !distinctive_aliases.is_empty() {
+                tracing::warn!(
+                    entity = %node.name,
+                    chunk_ids = chunk_ids.len(),
+                    "no distinctive-alias evidence in entity_to_chunks; scanning full corpus"
+                );
+                match meta.all_chunks() {
+                    Ok(all) => {
+                        let fallback: Vec<String> = all
+                            .into_iter()
+                            .filter_map(|(_id, c)| {
+                                let text_lower = c.text.to_lowercase();
+                                if text_lower.contains(&canonical_lower)
+                                    || distinctive_aliases
+                                        .iter()
+                                        .any(|a| text_lower.contains(a.to_lowercase().as_str()))
+                                {
+                                    let mut s = String::new();
+                                    if let Some(ref sec) = c.section_name {
+                                        s.push_str(&format!("[Section: {sec}]\n"));
+                                    }
+                                    s.push_str(&c.text);
+                                    Some(s)
+                                } else {
+                                    None
+                                }
+                            })
+                            .take(cfg.fetch_limit)
+                            .collect();
+                        fallback.join("\n---\n")
+                    }
+                    Err(_) => evidence_text,
+                }
+            } else {
+                evidence_text
+            };
+            if evidence_text.is_empty() {
+                report.entities_skipped_no_evidence += 1;
+                continue;
+            }
+
+            let url_idx = items.len() % inference_urls.len().max(1);
+            let inference_url = inference_urls.get(url_idx).cloned().unwrap_or_default();
             items.push(WorkItem {
                 id: node.id,
                 name: node.name.clone(),
@@ -343,11 +414,16 @@ async fn call_enrich(
     };
 
     // Tell the LLM about alias forms so it can connect pronoun/abbreviation references
-    // in the evidence text back to the entity being described.
+    // in the evidence text back to the entity being described. Explicit wording prevents
+    // 8B models from reading "(Timmie)" as a child/relative rather than a nickname.
     let alias_hint = if aliases.is_empty() {
         String::new()
     } else {
-        format!(" (also referred to as: {})", aliases.join(", "))
+        format!(
+            " (NOTE: the following are all alternative names for this same person — \
+             not children, relatives, or other people: {})",
+            aliases.join(", ")
+        )
     };
 
     let prompt = if need_gender {
@@ -363,11 +439,17 @@ async fn call_enrich(
              (1) who they are and their primary role or title, \
              (2) any years or dates mentioned (birth, arrival, marriage, death), \
              (3) places of origin, residence, or travel specifically named in the text, \
-             (4) the full names of any family members explicitly mentioned (parents, spouse, \
-             siblings, children — list ALL of them by name if present), \
+             (4) the full names of family members ONLY when the text EXPLICITLY states the \
+             relationship using kinship terms directly attached to {name} — e.g. \
+             '{name}\\'s daughter', 'son of {name}', '{name} married X'. \
+             Do NOT name someone as a relative of {name} just because they appear in the same \
+             passage — the evidence covers a broad memoir and other named people are usually \
+             separate characters, not {name}\\'s relatives. \
              (5) organisations they founded, led, or belonged to. \
              PRIORITISE specific named entities and dates over general characterisations. \
-             Do NOT add information absent from the excerpts.>\",\n\
+             Do NOT add information absent from the excerpts. \
+             CRITICAL: Any aliases listed above are all names for {name} themselves — \
+             do NOT treat them as names of their children, relatives, or other people.>\",\n\
                \"gender\": <\"Male\" | \"Female\" | null>\n\
              }}\n\n\
              For gender, look for DIRECT TEXTUAL EVIDENCE:\n\
@@ -418,7 +500,7 @@ async fn call_enrich(
         )
     };
 
-    match call_llm(&prompt, url, model, need_gender).await {
+    let result = match call_llm(&prompt, url, model, need_gender).await {
         Some(text) if need_gender => parse_enrich_json(&text),
         Some(text) if text.len() >= 20 => EnrichResult {
             description: Some(text),
@@ -428,7 +510,72 @@ async fn call_enrich(
             description: None,
             gender: None,
         },
+    };
+
+    if let Some(ref desc) = result.description {
+        let unsupported = unsupported_proper_nouns(desc, evidence_text, name, aliases);
+        if !unsupported.is_empty() {
+            tracing::warn!(
+                "hallucination risk in \"{}\": claims {:?} not found in evidence",
+                name,
+                unsupported
+            );
+        }
     }
+
+    result
+}
+
+/// Returns proper-noun tokens from `description` that do not appear in `evidence`.
+/// Used to surface hallucinated names and places before they are written to the graph.
+fn unsupported_proper_nouns(
+    description: &str,
+    evidence: &str,
+    entity_name: &str,
+    aliases: &[String],
+) -> Vec<String> {
+    const STOP_WORDS: &[&str] = &[
+        "The", "A", "An", "In", "Of", "And", "For", "With", "By", "On", "At", "From",
+        "To", "Is", "Was", "He", "She", "His", "Her", "Their", "This", "That", "These",
+        "Those", "Based", "Only", "All", "Any", "Each", "Both", "Some", "Not", "No",
+        "Born", "Known", "Also", "Early", "Later", "During", "After", "Before",
+        "Member", "Leader", "Founder", "President", "Doctor", "Professor",
+    ];
+
+    let excluded: Vec<String> = std::iter::once(entity_name.to_lowercase())
+        .chain(aliases.iter().map(|s| s.to_lowercase()))
+        .collect();
+
+    let evidence_lower = evidence.to_lowercase();
+    let mut candidates: Vec<String> = Vec::new();
+
+    for word in description.split_whitespace() {
+        let word = word.trim_end_matches(|c: char| !c.is_alphanumeric());
+        if word.len() < 3 {
+            continue;
+        }
+        let first = word.chars().next().unwrap_or_default();
+        if !first.is_uppercase() {
+            continue;
+        }
+        if STOP_WORDS.contains(&word) {
+            continue;
+        }
+        if word.chars().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
+        let lower = word.to_lowercase();
+        if excluded.iter().any(|ex| ex.contains(lower.as_str()) || lower.contains(ex.as_str())) {
+            continue;
+        }
+        if !evidence_lower.contains(lower.as_str()) {
+            candidates.push(word.to_string());
+        }
+    }
+
+    candidates.sort();
+    candidates.dedup();
+    candidates
 }
 
 fn parse_enrich_json(text: &str) -> EnrichResult {
