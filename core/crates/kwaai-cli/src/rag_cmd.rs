@@ -4220,7 +4220,10 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                 }
             }
 
-            GraphAction::SetDescription { entity, description } => {
+            GraphAction::SetDescription {
+                entity,
+                description,
+            } => {
                 #[cfg(not(feature = "storage"))]
                 bail!("RAG requires the 'storage' feature.");
 

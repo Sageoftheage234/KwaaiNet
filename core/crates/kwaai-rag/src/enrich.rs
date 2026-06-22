@@ -535,11 +535,53 @@ fn unsupported_proper_nouns(
     aliases: &[String],
 ) -> Vec<String> {
     const STOP_WORDS: &[&str] = &[
-        "The", "A", "An", "In", "Of", "And", "For", "With", "By", "On", "At", "From",
-        "To", "Is", "Was", "He", "She", "His", "Her", "Their", "This", "That", "These",
-        "Those", "Based", "Only", "All", "Any", "Each", "Both", "Some", "Not", "No",
-        "Born", "Known", "Also", "Early", "Later", "During", "After", "Before",
-        "Member", "Leader", "Founder", "President", "Doctor", "Professor",
+        "The",
+        "A",
+        "An",
+        "In",
+        "Of",
+        "And",
+        "For",
+        "With",
+        "By",
+        "On",
+        "At",
+        "From",
+        "To",
+        "Is",
+        "Was",
+        "He",
+        "She",
+        "His",
+        "Her",
+        "Their",
+        "This",
+        "That",
+        "These",
+        "Those",
+        "Based",
+        "Only",
+        "All",
+        "Any",
+        "Each",
+        "Both",
+        "Some",
+        "Not",
+        "No",
+        "Born",
+        "Known",
+        "Also",
+        "Early",
+        "Later",
+        "During",
+        "After",
+        "Before",
+        "Member",
+        "Leader",
+        "Founder",
+        "President",
+        "Doctor",
+        "Professor",
     ];
 
     let excluded: Vec<String> = std::iter::once(entity_name.to_lowercase())
@@ -565,7 +607,10 @@ fn unsupported_proper_nouns(
             continue;
         }
         let lower = word.to_lowercase();
-        if excluded.iter().any(|ex| ex.contains(lower.as_str()) || lower.contains(ex.as_str())) {
+        if excluded
+            .iter()
+            .any(|ex| ex.contains(lower.as_str()) || lower.contains(ex.as_str()))
+        {
             continue;
         }
         if !evidence_lower.contains(lower.as_str()) {
