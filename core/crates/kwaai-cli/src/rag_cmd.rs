@@ -1690,29 +1690,39 @@ async fn cmd_chat(
                 "stream": false,
             });
 
-            let resp = http
-                .post(format!("{inference_url}/v1/chat/completions"))
-                .json(&payload)
-                .send()
-                .await
-                .context("calling shard API")?;
-
-            let answer = match resp.json::<serde_json::Value>().await {
-                Ok(body) => {
-                    if let Some(s) = body["choices"][0]["message"]["content"].as_str() {
-                        s.to_string()
-                    } else if let Some(err) = body["error"]["message"].as_str() {
-                        format!("(inference error: {err})")
-                    } else if !body["error"].is_null() {
-                        format!("(inference error: {})", body["error"])
-                    } else {
-                        format!(
-                            "(no response — body: {})",
-                            &body.to_string()[..body.to_string().len().min(200)]
-                        )
+            // Retry once on empty body — relay reservations drop briefly during renewal.
+            let answer = 'inference: {
+                for attempt in 0u8..2 {
+                    if attempt > 0 {
+                        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                    }
+                    let Ok(resp) = http
+                        .post(format!("{inference_url}/v1/chat/completions"))
+                        .json(&payload)
+                        .send()
+                        .await
+                    else {
+                        continue;
+                    };
+                    match resp.json::<serde_json::Value>().await {
+                        Ok(body) => {
+                            if let Some(s) = body["choices"][0]["message"]["content"].as_str() {
+                                break 'inference s.to_string();
+                            } else if let Some(err) = body["error"]["message"].as_str() {
+                                break 'inference format!("(inference error: {err})");
+                            } else if !body["error"].is_null() {
+                                break 'inference format!("(inference error: {})", body["error"]);
+                            } else {
+                                break 'inference format!(
+                                    "(no response — body: {})",
+                                    &body.to_string()[..body.to_string().len().min(200)]
+                                );
+                            }
+                        }
+                        Err(_) => continue,
                     }
                 }
-                Err(_) => "(inference error: peer unreachable — check daemon on remote machine)".to_string(),
+                "(inference error: peer unreachable — check daemon on remote machine)".to_string()
             };
 
             println!("\n  Assistant: {answer}");
