@@ -2102,8 +2102,7 @@ pub async fn discover_inference_peer(
     // 2. Fall back to the block-serving chain when the inference key is empty.
     if candidates.is_empty() {
         if let (Some(prefix), Some(total)) = (dht_prefix, total_blocks) {
-            let chain =
-                discover_chain(client, our_peer_id, prefix, total, bootstrap_peers).await;
+            let chain = discover_chain(client, our_peer_id, prefix, total, bootstrap_peers).await;
             for e in chain {
                 candidates.push((e.throughput, e.peer_id, e.public_name));
             }

@@ -1397,72 +1397,71 @@ async fn cmd_chat(
         // Resolve p2p://auto → best available peer discovered via DHT.
         // Resolve p2p:// / mux:// → local HTTP proxy via ollama_proxy.
         let mut _proxy_handles: Vec<tokio::task::JoinHandle<()>> = vec![];
-        let inference_url: String =
-            if inference_url == "p2p://auto" || inference_url.starts_with("p2p://")
-                || inference_url.starts_with("mux://")
-            {
-                use kwaai_p2p_daemon::{P2PClient, DEFAULT_SOCKET_NAME};
-                let sock = std::env::var("KWAAINET_SOCKET")
-                    .unwrap_or_else(|_| DEFAULT_SOCKET_NAME.to_string());
-                #[cfg(unix)]
-                let addr = format!("/unix/{sock}");
-                #[cfg(not(unix))]
-                let addr = "/ip4/127.0.0.1/tcp/5005".to_string();
-                let p2p = std::sync::Arc::new(
-                    P2PClient::connect(&addr)
-                        .await
-                        .context("connecting to p2pd for inference URL resolution")?,
-                );
-
-                // Expand p2p://auto to a concrete peer via DHT discovery.
-                let resolved_raw = if inference_url == "p2p://auto" {
-                    let global = crate::config::KwaaiNetConfig::load_or_create()?;
-                    let our_peer_id = crate::identity::NodeIdentity::load_or_create()?.peer_id;
-                    let bootstrap_peers = global.initial_peers.clone();
-                    let dht_prefix = global.effective_dht_prefix();
-                    let total = global.model_total_blocks() as usize;
-                    // Open a second client connection for the DHT discovery RPC — P2PClient
-                    // is not Clone and the Arc<P2PClient> used for the proxy is shared.
-                    let mut disc_client = P2PClient::connect(&addr)
-                        .await
-                        .context("connecting to p2pd for p2p://auto discovery")?;
-                    match crate::shard_cmd::discover_inference_peer(
-                        &mut disc_client,
-                        &our_peer_id,
-                        &bootstrap_peers,
-                        Some(&dht_prefix),
-                        Some(total),
-                    )
+        let inference_url: String = if inference_url == "p2p://auto"
+            || inference_url.starts_with("p2p://")
+            || inference_url.starts_with("mux://")
+        {
+            use kwaai_p2p_daemon::{P2PClient, DEFAULT_SOCKET_NAME};
+            let sock = std::env::var("KWAAINET_SOCKET")
+                .unwrap_or_else(|_| DEFAULT_SOCKET_NAME.to_string());
+            #[cfg(unix)]
+            let addr = format!("/unix/{sock}");
+            #[cfg(not(unix))]
+            let addr = "/ip4/127.0.0.1/tcp/5005".to_string();
+            let p2p = std::sync::Arc::new(
+                P2PClient::connect(&addr)
                     .await
-                    {
-                        Some(url) => {
-                            println!("  ● p2p://auto resolved to {url}");
-                            url
-                        }
-                        None => {
-                            eprintln!(
-                                "⚠️  p2p://auto: no inference peers found on DHT — \
-                                 falling back to local Ollama"
-                            );
-                            "http://localhost:11434".to_string()
-                        }
-                    }
-                } else {
-                    inference_url.clone()
-                };
+                    .context("connecting to p2pd for inference URL resolution")?,
+            );
 
-                if resolved_raw.starts_with("p2p://") || resolved_raw.starts_with("mux://") {
-                    let (resolved, handles) =
-                        crate::ollama_proxy::resolve_inference_urls(&[resolved_raw], &p2p)
-                            .await?;
-                    _proxy_handles = handles;
-                    resolved.into_iter().next().unwrap_or_default()
-                } else {
-                    resolved_raw
+            // Expand p2p://auto to a concrete peer via DHT discovery.
+            let resolved_raw = if inference_url == "p2p://auto" {
+                let global = crate::config::KwaaiNetConfig::load_or_create()?;
+                let our_peer_id = crate::identity::NodeIdentity::load_or_create()?.peer_id;
+                let bootstrap_peers = global.initial_peers.clone();
+                let dht_prefix = global.effective_dht_prefix();
+                let total = global.model_total_blocks() as usize;
+                // Open a second client connection for the DHT discovery RPC — P2PClient
+                // is not Clone and the Arc<P2PClient> used for the proxy is shared.
+                let mut disc_client = P2PClient::connect(&addr)
+                    .await
+                    .context("connecting to p2pd for p2p://auto discovery")?;
+                match crate::shard_cmd::discover_inference_peer(
+                    &mut disc_client,
+                    &our_peer_id,
+                    &bootstrap_peers,
+                    Some(&dht_prefix),
+                    Some(total),
+                )
+                .await
+                {
+                    Some(url) => {
+                        println!("  ● p2p://auto resolved to {url}");
+                        url
+                    }
+                    None => {
+                        eprintln!(
+                            "⚠️  p2p://auto: no inference peers found on DHT — \
+                                 falling back to local Ollama"
+                        );
+                        "http://localhost:11434".to_string()
+                    }
                 }
             } else {
-                inference_url
+                inference_url.clone()
             };
+
+            if resolved_raw.starts_with("p2p://") || resolved_raw.starts_with("mux://") {
+                let (resolved, handles) =
+                    crate::ollama_proxy::resolve_inference_urls(&[resolved_raw], &p2p).await?;
+                _proxy_handles = handles;
+                resolved.into_iter().next().unwrap_or_default()
+            } else {
+                resolved_raw
+            }
+        } else {
+            inference_url
+        };
 
         let embed = EmbedClient::new(rag_cfg.embed_url.clone(), Some(rag_cfg.embed_model.clone()));
         let meta = MetaStore::open(&rag_cfg.data_dir(), tenant_id)?;
@@ -1701,7 +1700,10 @@ async fn cmd_chat(
             } else if !body["error"].is_null() {
                 format!("(inference error: {})", body["error"])
             } else {
-                format!("(no response — body: {})", &body.to_string()[..body.to_string().len().min(200)])
+                format!(
+                    "(no response — body: {})",
+                    &body.to_string()[..body.to_string().len().min(200)]
+                )
             };
 
             println!("\n  Assistant: {answer}");
@@ -6959,65 +6961,63 @@ async fn cmd_eval(
 
         // Resolve p2p://auto → DHT discovery; p2p:// / mux:// → local HTTP proxy.
         let mut _proxy_handles: Vec<tokio::task::JoinHandle<()>> = vec![];
-        let inference_url =
-            if inference_url == "p2p://auto" || inference_url.starts_with("p2p://")
-                || inference_url.starts_with("mux://")
-            {
-                use kwaai_p2p_daemon::{P2PClient, DEFAULT_SOCKET_NAME};
-                let sock = std::env::var("KWAAINET_SOCKET")
-                    .unwrap_or_else(|_| DEFAULT_SOCKET_NAME.to_string());
-                #[cfg(unix)]
-                let addr = format!("/unix/{sock}");
-                #[cfg(not(unix))]
-                let addr = "/ip4/127.0.0.1/tcp/5005".to_string();
-                let p2p = std::sync::Arc::new(
-                    P2PClient::connect(&addr)
-                        .await
-                        .context("connecting to p2pd for inference URL resolution")?,
-                );
-                let resolved_raw = if inference_url == "p2p://auto" {
-                    let global = crate::config::KwaaiNetConfig::load_or_create()?;
-                    let our_peer_id =
-                        crate::identity::NodeIdentity::load_or_create()?.peer_id;
-                    let bootstrap_peers = global.initial_peers.clone();
-                    let dht_prefix = global.effective_dht_prefix();
-                    let total = global.model_total_blocks() as usize;
-                    let mut disc_client = P2PClient::connect(&addr)
-                        .await
-                        .context("connecting to p2pd for p2p://auto discovery")?;
-                    match crate::shard_cmd::discover_inference_peer(
-                        &mut disc_client,
-                        &our_peer_id,
-                        &bootstrap_peers,
-                        Some(&dht_prefix),
-                        Some(total),
-                    )
+        let inference_url = if inference_url == "p2p://auto"
+            || inference_url.starts_with("p2p://")
+            || inference_url.starts_with("mux://")
+        {
+            use kwaai_p2p_daemon::{P2PClient, DEFAULT_SOCKET_NAME};
+            let sock = std::env::var("KWAAINET_SOCKET")
+                .unwrap_or_else(|_| DEFAULT_SOCKET_NAME.to_string());
+            #[cfg(unix)]
+            let addr = format!("/unix/{sock}");
+            #[cfg(not(unix))]
+            let addr = "/ip4/127.0.0.1/tcp/5005".to_string();
+            let p2p = std::sync::Arc::new(
+                P2PClient::connect(&addr)
                     .await
-                    {
-                        Some(url) => {
-                            eprintln!("  ● p2p://auto → {url}");
-                            url
-                        }
-                        None => {
-                            eprintln!("⚠️  p2p://auto: no peers found — falling back to localhost");
-                            "http://localhost:11434".to_string()
-                        }
+                    .context("connecting to p2pd for inference URL resolution")?,
+            );
+            let resolved_raw = if inference_url == "p2p://auto" {
+                let global = crate::config::KwaaiNetConfig::load_or_create()?;
+                let our_peer_id = crate::identity::NodeIdentity::load_or_create()?.peer_id;
+                let bootstrap_peers = global.initial_peers.clone();
+                let dht_prefix = global.effective_dht_prefix();
+                let total = global.model_total_blocks() as usize;
+                let mut disc_client = P2PClient::connect(&addr)
+                    .await
+                    .context("connecting to p2pd for p2p://auto discovery")?;
+                match crate::shard_cmd::discover_inference_peer(
+                    &mut disc_client,
+                    &our_peer_id,
+                    &bootstrap_peers,
+                    Some(&dht_prefix),
+                    Some(total),
+                )
+                .await
+                {
+                    Some(url) => {
+                        eprintln!("  ● p2p://auto → {url}");
+                        url
                     }
-                } else {
-                    inference_url.clone()
-                };
-                if resolved_raw.starts_with("p2p://") || resolved_raw.starts_with("mux://") {
-                    let (resolved, handles) =
-                        crate::ollama_proxy::resolve_inference_urls(&[resolved_raw], &p2p)
-                            .await?;
-                    _proxy_handles = handles;
-                    resolved.into_iter().next().unwrap_or_default()
-                } else {
-                    resolved_raw
+                    None => {
+                        eprintln!("⚠️  p2p://auto: no peers found — falling back to localhost");
+                        "http://localhost:11434".to_string()
+                    }
                 }
             } else {
-                inference_url
+                inference_url.clone()
             };
+            if resolved_raw.starts_with("p2p://") || resolved_raw.starts_with("mux://") {
+                let (resolved, handles) =
+                    crate::ollama_proxy::resolve_inference_urls(&[resolved_raw], &p2p).await?;
+                _proxy_handles = handles;
+                resolved.into_iter().next().unwrap_or_default()
+            } else {
+                resolved_raw
+            }
+        } else {
+            inference_url
+        };
 
         let retrieve_cfg = RetrieveConfig {
             top_k,

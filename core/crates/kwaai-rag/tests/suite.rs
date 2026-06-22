@@ -2241,7 +2241,9 @@ fn make_chat_chunk(text: &str) -> RetrievedChunk {
 
 #[test]
 fn chat_messages_system_first_user_last() {
-    let chunks = vec![make_chat_chunk("District Six was a community in Cape Town.")];
+    let chunks = vec![make_chat_chunk(
+        "District Six was a community in Cape Town.",
+    )];
     let msgs = build_chat_messages("Who lived in District Six?", &chunks, &[], 10000, None);
     assert_eq!(msgs[0].role, "system");
     assert_eq!(msgs.last().unwrap().role, "user");
@@ -2253,8 +2255,14 @@ fn chat_messages_history_interleaved() {
     use kwaai_rag::prompt::ChatMessage;
     let chunks = vec![make_chat_chunk("text")];
     let history = vec![
-        ChatMessage { role: "user".to_string(), content: "q1".to_string() },
-        ChatMessage { role: "assistant".to_string(), content: "a1".to_string() },
+        ChatMessage {
+            role: "user".to_string(),
+            content: "q1".to_string(),
+        },
+        ChatMessage {
+            role: "assistant".to_string(),
+            content: "a1".to_string(),
+        },
     ];
     let msgs = build_chat_messages("q2", &chunks, &history, 10000, None);
     // system + 2 history + user
@@ -2299,7 +2307,10 @@ fn chat_messages_token_budget_truncates_context() {
     // Very small max_context_chars: only first chunk entry should fit
     let msgs = build_chat_messages("q", &chunks, &[], 10, None);
     let system = &msgs[0].content;
-    assert!(!system.contains("BBB"), "second chunk should be truncated: {system}");
+    assert!(
+        !system.contains("BBB"),
+        "second chunk should be truncated: {system}"
+    );
 }
 
 #[test]
