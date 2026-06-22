@@ -1382,6 +1382,11 @@ async fn cmd_chat(
     #[cfg(feature = "storage")]
     {
         let (rag_cfg, tenant_id) = load_rag_config_for(&kb)?;
+        let model = if model == "default" {
+            "llama3.1:8b".to_string()
+        } else {
+            model
+        };
         let inference_url = inference_url
             .or_else(|| {
                 // Prefer the global kwaainet config when the user has pointed it
@@ -1692,27 +1697,35 @@ async fn cmd_chat(
                 .await
                 .context("calling shard API")?;
 
-            let body: serde_json::Value = resp.json().await?;
-            let answer = if let Some(s) = body["choices"][0]["message"]["content"].as_str() {
-                s.to_string()
-            } else if let Some(err) = body["error"]["message"].as_str() {
-                format!("(inference error: {err})")
-            } else if !body["error"].is_null() {
-                format!("(inference error: {})", body["error"])
-            } else {
-                format!(
-                    "(no response — body: {})",
-                    &body.to_string()[..body.to_string().len().min(200)]
-                )
+            let answer = match resp.json::<serde_json::Value>().await {
+                Ok(body) => {
+                    if let Some(s) = body["choices"][0]["message"]["content"].as_str() {
+                        s.to_string()
+                    } else if let Some(err) = body["error"]["message"].as_str() {
+                        format!("(inference error: {err})")
+                    } else if !body["error"].is_null() {
+                        format!("(inference error: {})", body["error"])
+                    } else {
+                        format!(
+                            "(no response — body: {})",
+                            &body.to_string()[..body.to_string().len().min(200)]
+                        )
+                    }
+                }
+                Err(e) => format!("(inference error: {e})"),
             };
 
             println!("\n  Assistant: {answer}");
 
-            // Store in cache (local KB only, fire-and-forget).
-            if let Some(ref mut cache) = query_cache {
-                if let Ok(query_emb) = embed.embed_one(&query).await {
-                    let chunk_ids: Vec<i64> = chunks.iter().map(|_| 0i64).collect();
-                    let _ = cache.put(query.clone(), query_emb, answer.clone(), chunk_ids);
+            // Store in cache only on successful responses (local KB only, fire-and-forget).
+            let is_error =
+                answer.starts_with("(inference error:") || answer.starts_with("(no response");
+            if !is_error {
+                if let Some(ref mut cache) = query_cache {
+                    if let Ok(query_emb) = embed.embed_one(&query).await {
+                        let chunk_ids: Vec<i64> = chunks.iter().map(|_| 0i64).collect();
+                        let _ = cache.put(query.clone(), query_emb, answer.clone(), chunk_ids);
+                    }
                 }
             }
 
