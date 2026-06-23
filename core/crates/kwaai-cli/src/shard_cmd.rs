@@ -883,9 +883,12 @@ async fn cmd_shard_run_via_ollama(args: &ShardRunArgs, raw_url: &str) -> Result<
         let peer_id: PeerId = peer_str
             .parse()
             .with_context(|| format!("invalid PeerId in mux:// URL: {raw_url}"))?;
-        let (port, handle) = crate::inference_mux::start_local_mux_proxy(peer_id)
-            .await
-            .context("start mux proxy")?;
+        let (port, handle) = crate::inference_mux::start_local_mux_proxy(
+            peer_id,
+            crate::circuit_breaker::CircuitBreaker::new(),
+        )
+        .await
+        .context("start mux proxy")?;
         // Give the proxy a moment to accept connections before the first request.
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         (format!("http://127.0.0.1:{port}"), Some(handle))

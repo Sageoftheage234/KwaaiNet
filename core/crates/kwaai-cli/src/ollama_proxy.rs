@@ -31,6 +31,8 @@ use tokio::{
 };
 use tracing::{debug, info, warn};
 
+use crate::circuit_breaker::CircuitBreaker;
+
 pub const OLLAMA_PROXY_PROTO: &str = "/kwaai/ollama-proxy/1.0.0";
 pub const SHARD_PROXY_PROTO: &str = "/kwaai/shard-proxy/1.0.0";
 
@@ -210,8 +212,9 @@ fn encode_err(status: u16, msg: &str) -> kwaai_p2p_daemon::error::Result<Vec<u8>
 pub async fn start_local_proxy(
     client: Arc<P2PClient>,
     peer_id: PeerId,
+    breaker: Arc<CircuitBreaker>,
 ) -> Result<(u16, tokio::task::JoinHandle<()>)> {
-    start_proxy_with_proto(client, peer_id, OLLAMA_PROXY_PROTO).await
+    start_proxy_with_proto(client, peer_id, OLLAMA_PROXY_PROTO, breaker).await
 }
 
 /// Start a local TCP listener that proxies HTTP → P2P → remote shard API.
@@ -220,14 +223,16 @@ pub async fn start_local_proxy(
 pub async fn start_local_shard_proxy(
     client: Arc<P2PClient>,
     peer_id: PeerId,
+    breaker: Arc<CircuitBreaker>,
 ) -> Result<(u16, tokio::task::JoinHandle<()>)> {
-    start_proxy_with_proto(client, peer_id, SHARD_PROXY_PROTO).await
+    start_proxy_with_proto(client, peer_id, SHARD_PROXY_PROTO, breaker).await
 }
 
 async fn start_proxy_with_proto(
     client: Arc<P2PClient>,
     peer_id: PeerId,
     protocol: &'static str,
+    breaker: Arc<CircuitBreaker>,
 ) -> Result<(u16, tokio::task::JoinHandle<()>)> {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
@@ -244,7 +249,10 @@ async fn start_proxy_with_proto(
                 }
             };
             let client = client.clone();
-            tokio::spawn(handle_connection(stream, client, peer_id, protocol));
+            let breaker = breaker.clone();
+            tokio::spawn(handle_connection(
+                stream, client, peer_id, protocol, breaker,
+            ));
         }
     });
 
@@ -256,6 +264,7 @@ async fn handle_connection(
     client: Arc<P2PClient>,
     peer_id: PeerId,
     protocol: &'static str,
+    breaker: Arc<CircuitBreaker>,
 ) {
     // Read the full HTTP request in two phases so that large LLM prompts
     // (~20-50 KB) delivered over a relay connection are not silently truncated
@@ -296,6 +305,23 @@ async fn handle_connection(
         }
     }
 
+    // Circuit breaker check: fail fast if this peer has had too many
+    // consecutive connection/timeout failures recently.
+    if !breaker.allow(&peer_id) {
+        let msg = b"Circuit open - peer temporarily unavailable";
+        let _ = stream
+            .write_all(
+                format!(
+                    "HTTP/1.1 503 Service Unavailable\r\nContent-Length: {}\r\nRetry-After: 30\r\n\r\n",
+                    msg.len()
+                )
+                .as_bytes(),
+            )
+            .await;
+        let _ = stream.write_all(msg).await;
+        return;
+    }
+
     let (method, path, body) = match parse_http_request(&buf) {
         Some(t) => t,
         None => {
@@ -321,6 +347,7 @@ async fn handle_connection(
         Ok(b) => b,
         Err(e) => {
             warn!("inference_proxy: P2P call to {peer_id} via {protocol}: {e}");
+            breaker.record_failure(&peer_id);
             let msg = b"Bad Gateway";
             let _ = stream
                 .write_all(
@@ -335,6 +362,7 @@ async fn handle_connection(
             return;
         }
     };
+    breaker.record_success(&peer_id);
 
     let resp: ProxyResponse = match rmp_serde::from_slice(&resp_bytes) {
         Ok(r) => r,
@@ -422,12 +450,17 @@ pub async fn resolve_inference_urls(
     let mut resolved = Vec::with_capacity(urls.len());
     let mut handles = Vec::new();
 
+    // One circuit breaker shared across all peers in this session.
+    // Keyed by PeerId so each peer trips/resets independently.
+    let breaker = CircuitBreaker::new();
+
     for url in urls {
         if let Some(peer_str) = url.strip_prefix("mux://") {
             let peer_id: PeerId = peer_str
                 .parse()
                 .with_context(|| format!("invalid PeerId in mux:// URL: {url}"))?;
-            let (port, handle) = crate::inference_mux::start_local_mux_proxy(peer_id).await?;
+            let (port, handle) =
+                crate::inference_mux::start_local_mux_proxy(peer_id, breaker.clone()).await?;
             resolved.push(format!("http://127.0.0.1:{port}"));
             handles.push(handle);
             info!("inference_proxy: {url} → http://127.0.0.1:{port} (via inference-mux)");
@@ -442,12 +475,12 @@ pub async fn resolve_inference_urls(
             let (proto_name, (port, handle)) = if shard_available {
                 (
                     "shard-proxy",
-                    start_local_shard_proxy(client.clone(), peer_id).await?,
+                    start_local_shard_proxy(client.clone(), peer_id, breaker.clone()).await?,
                 )
             } else {
                 (
                     "ollama-proxy",
-                    start_local_proxy(client.clone(), peer_id).await?,
+                    start_local_proxy(client.clone(), peer_id, breaker.clone()).await?,
                 )
             };
 

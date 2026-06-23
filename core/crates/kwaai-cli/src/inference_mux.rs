@@ -34,6 +34,8 @@ use tokio::{
 };
 use tracing::{debug, info, warn};
 
+use crate::circuit_breaker::CircuitBreaker;
+
 pub const MUX_PROTO: &str = "/kwaai/inference-mux/1.0.0";
 
 // ── Wire types ────────────────────────────────────────────────────────────────
@@ -399,7 +401,10 @@ type SharedMuxClient = Arc<RwLock<Option<Arc<InferenceMuxClient>>>>;
 /// The proxy reconnects automatically whenever the stream dies.
 ///
 /// Returns `(local_port, join_handle)`. Drop the handle to stop the proxy.
-pub async fn start_local_mux_proxy(peer_id: PeerId) -> Result<(u16, JoinHandle<()>)> {
+pub async fn start_local_mux_proxy(
+    peer_id: PeerId,
+    breaker: Arc<CircuitBreaker>,
+) -> Result<(u16, JoinHandle<()>)> {
     let shared: SharedMuxClient = Arc::new(RwLock::new(None));
 
     let listener = TcpListener::bind("127.0.0.1:0")
@@ -422,7 +427,10 @@ pub async fn start_local_mux_proxy(peer_id: PeerId) -> Result<(u16, JoinHandle<(
                 }
             };
             let shared = shared.clone();
-            tokio::spawn(handle_mux_proxy_connection(stream, shared, peer_id));
+            let breaker = breaker.clone();
+            tokio::spawn(handle_mux_proxy_connection(
+                stream, shared, peer_id, breaker,
+            ));
         }
     });
 
@@ -461,6 +469,7 @@ async fn handle_mux_proxy_connection(
     mut stream: TcpStream,
     shared: SharedMuxClient,
     peer_id: PeerId,
+    breaker: Arc<CircuitBreaker>,
 ) {
     // Two-phase read — same approach as ollama_proxy::handle_connection.
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
@@ -496,6 +505,23 @@ async fn handle_mux_proxy_connection(
         }
     }
 
+    // Circuit breaker check: fail fast if this peer has had too many
+    // consecutive connection/stream failures recently.
+    if !breaker.allow(&peer_id) {
+        let msg = b"Circuit open - peer temporarily unavailable";
+        let _ = stream
+            .write_all(
+                format!(
+                    "HTTP/1.1 503 Service Unavailable\r\nContent-Length: {}\r\nRetry-After: 30\r\n\r\n",
+                    msg.len()
+                )
+                .as_bytes(),
+            )
+            .await;
+        let _ = stream.write_all(msg).await;
+        return;
+    }
+
     let (method, path, body) = match parse_http_request(&buf) {
         Some(t) => t,
         None => {
@@ -515,11 +541,15 @@ async fn handle_mux_proxy_connection(
                     if attempt < 1 {
                         continue;
                     }
+                    breaker.record_failure(&peer_id);
                     break 'send Err(e);
                 }
             };
             match client.send(&method, &path, body.clone()).await {
-                Ok(r) => break 'send Ok(r),
+                Ok(r) => {
+                    breaker.record_success(&peer_id);
+                    break 'send Ok(r);
+                }
                 Err(e) => {
                     warn!("inference-mux: send failed (attempt {attempt}): {e}");
                     if attempt == 0 {
@@ -531,6 +561,7 @@ async fn handle_mux_proxy_connection(
                             }
                         }
                     } else {
+                        breaker.record_failure(&peer_id);
                         break 'send Err(e);
                     }
                 }
