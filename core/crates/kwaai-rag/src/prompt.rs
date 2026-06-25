@@ -72,11 +72,12 @@ pub fn build_chat_messages(
              6. If sources partially address the question, synthesise what they do say \
                 and note what is missing.\n\
              7. Biographical questions about a person (\"Who was X?\", \"Tell me about X\") \
-                require comprehensive answers — include ALL specific facts found across ALL sources: \
-                dates, places, ethnic or geographic origins, ancestry, family connections, \
-                occupations, achievements, and historical associations. Examine every numbered \
-                excerpt for relevant details. A single-sentence answer is never sufficient for \
-                a biographical question; list each fact explicitly.\n\
+                require comprehensive answers — examine every numbered excerpt and list ALL \
+                specific facts those excerpts state: dates, places, origins, ancestry, family \
+                connections, occupations, achievements, and historical associations. \
+                Comprehensiveness means covering every source, NOT adding facts from general \
+                knowledge. A single-sentence answer is never sufficient; list each source-cited \
+                fact explicitly with its bracket citation.\n\
              8. When an excerpt lists multiple items — names, organisations, places, dates — \
                 enumerate ALL of them. Do not stop after 2–3 examples; include every item the \
                 source provides. This applies especially to lists of notable acquaintances, \

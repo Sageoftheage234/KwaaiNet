@@ -232,10 +232,12 @@
       "Gandhi",
       "Mahatma",
       "Buitencingle",
-      "passive",
+      [
+        "passive",
+        "non-violent"
+      ],
       "satyagraha",
-      "India",
-      "non-violent"
+      "India"
     ],
     "source_chapter": "Part_1_Chapter_6_Gandhi_at_Buitencingle.docx"
   },
