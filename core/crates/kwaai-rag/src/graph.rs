@@ -4155,6 +4155,216 @@ impl GraphStore {
         Ok(deleted)
     }
 
+    /// Change an entity's type, migrating all DB references to the new entity_id.
+    ///
+    /// Entity IDs are `sha256(name.lower() + "::" + type)`, so changing the type creates a
+    /// new ID. This method atomically rewrites all tables (entities, chunk links, relations,
+    /// timeline, interactions) from the old ID to the new one.
+    ///
+    /// Returns the new entity_id on success.
+    pub fn retype_entity(&mut self, name: &str, new_type: &str) -> Result<i64> {
+        // Resolve old entity by name (exact then alias search)
+        let old_entity = self
+            .nodes
+            .values()
+            .find(|n| n.name.eq_ignore_ascii_case(name))
+            .or_else(|| {
+                self.nodes.values().find(|n| {
+                    n.aliases
+                        .iter()
+                        .any(|a| a.eq_ignore_ascii_case(name))
+                })
+            })
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("Entity not found: {}", name))?;
+
+        let old_id = old_entity.id;
+        let new_id = entity_id(&old_entity.name, new_type);
+
+        if old_id == new_id {
+            return Ok(new_id); // no-op — already the same type
+        }
+        if self.nodes.contains_key(&new_id) {
+            return Err(anyhow::anyhow!(
+                "Cannot retype: entity '{}' as {} already exists (id={})",
+                name,
+                new_type,
+                new_id
+            ));
+        }
+
+        // ── 1. Collect all relations involving old_id ───────────────────────
+        let mut relations_to_rewrite: Vec<RelationRecord> = vec![];
+        {
+            let rtxn = self.db.begin_read()?;
+            let table = rtxn.open_table(RELATIONS_TABLE)?;
+            for entry in table.iter()? {
+                let (_, v) = entry?;
+                let rel: RelationRecord = serde_json::from_slice(v.value())?;
+                if rel.src_id == old_id || rel.dst_id == old_id {
+                    relations_to_rewrite.push(rel);
+                }
+            }
+        }
+
+        // ── 2. Collect timeline events and interactions for old_id ──────────
+        let timeline_events: Vec<crate::sequence::TimelineEvent> = {
+            let rtxn = self.db.begin_read()?;
+            let table = rtxn.open_table(TIMELINE_TABLE)?;
+            let key = old_id.to_le_bytes();
+            table
+                .get(key.as_ref())?
+                .and_then(|v| serde_json::from_slice(v.value()).ok())
+                .unwrap_or_default()
+        };
+
+        let interactions_old: Vec<(Vec<u8>, Vec<crate::sequence::SequenceInteraction>)> = {
+            let rtxn = self.db.begin_read()?;
+            let table = rtxn.open_table(INTERACTION_TABLE)?;
+            let old_bytes = old_id.to_le_bytes();
+            table
+                .iter()?
+                .filter_map(|e| e.ok())
+                .filter(|(k, _)| {
+                    let kb = k.value();
+                    kb.len() == 16
+                        && (&kb[..8] == old_bytes.as_ref() || &kb[8..] == old_bytes.as_ref())
+                })
+                .filter_map(|(k, v)| {
+                    serde_json::from_slice::<Vec<crate::sequence::SequenceInteraction>>(v.value())
+                        .ok()
+                        .map(|ia| (k.value().to_vec(), ia))
+                })
+                .collect()
+        };
+
+        // ── 3. Write new entity ─────────────────────────────────────────────
+        let new_entity = EntityNode {
+            id: new_id,
+            entity_type: new_type.to_string(),
+            ..old_entity.clone()
+        };
+        {
+            let wtxn = self.db.begin_write()?;
+            {
+                let mut et = wtxn.open_table(ENTITIES_TABLE)?;
+                let val = serde_json::to_vec(&new_entity)?;
+                et.insert(&new_id.to_le_bytes()[..], val.as_slice())?;
+            }
+            wtxn.commit()?;
+        }
+
+        // ── 4. Migrate chunk links ──────────────────────────────────────────
+        let old_chunk_ids: Vec<i64> = {
+            let rtxn = self.db.begin_read()?;
+            let ec = rtxn.open_table(ENTITY_CHUNK_TABLE)?;
+            ec.get(&old_id.to_le_bytes()[..])?
+                .and_then(|v| serde_json::from_slice(v.value()).ok())
+                .unwrap_or_default()
+        };
+        {
+            let wtxn = self.db.begin_write()?;
+            {
+                let mut ec_tbl = wtxn.open_table(ENTITY_CHUNK_TABLE)?;
+                let mut ce_tbl = wtxn.open_table(CHUNK_ENTITY_TABLE)?;
+                // Write new entity's chunk list
+                let val = serde_json::to_vec(&old_chunk_ids)?;
+                ec_tbl.insert(&new_id.to_le_bytes()[..], val.as_slice())?;
+                // Remove old entry
+                ec_tbl.remove(&old_id.to_le_bytes()[..])?;
+                // In each chunk's entity list, replace old_id with new_id
+                for &cid in &old_chunk_ids {
+                    let ck = cid.to_le_bytes();
+                    let mut eids: Vec<i64> = ce_tbl
+                        .get(ck.as_ref())?
+                        .and_then(|v| serde_json::from_slice(v.value()).ok())
+                        .unwrap_or_default();
+                    eids.retain(|&id| id != old_id);
+                    if !eids.contains(&new_id) {
+                        eids.push(new_id);
+                    }
+                    ce_tbl.insert(ck.as_ref(), serde_json::to_vec(&eids)?.as_slice())?;
+                }
+            }
+            wtxn.commit()?;
+        }
+
+        // ── 5. Migrate relations ────────────────────────────────────────────
+        {
+            let wtxn = self.db.begin_write()?;
+            {
+                let mut t = wtxn.open_table(RELATIONS_TABLE)?;
+                for rel in &relations_to_rewrite {
+                    let old_key = relation_key(rel.src_id, rel.dst_id, &rel.relation_type);
+                    t.remove(old_key.as_slice())?;
+                    let new_src = if rel.src_id == old_id { new_id } else { rel.src_id };
+                    let new_dst = if rel.dst_id == old_id { new_id } else { rel.dst_id };
+                    let new_key = relation_key(new_src, new_dst, &rel.relation_type);
+                    let updated = RelationRecord {
+                        src_id: new_src,
+                        dst_id: new_dst,
+                        relation_type: rel.relation_type.clone(),
+                        strength: rel.strength,
+                        evidence_chunk_ids: rel.evidence_chunk_ids.clone(),
+                    };
+                    t.insert(new_key.as_slice(), serde_json::to_vec(&updated)?.as_slice())?;
+                }
+            }
+            wtxn.commit()?;
+        }
+
+        // ── 6. Migrate timeline events ──────────────────────────────────────
+        if !timeline_events.is_empty() {
+            let wtxn = self.db.begin_write()?;
+            {
+                let mut t = wtxn.open_table(TIMELINE_TABLE)?;
+                t.remove(&old_id.to_le_bytes()[..])?;
+                let val = serde_json::to_vec(&timeline_events)?;
+                t.insert(&new_id.to_le_bytes()[..], val.as_slice())?;
+            }
+            wtxn.commit()?;
+        }
+
+        // ── 7. Migrate interactions ─────────────────────────────────────────
+        if !interactions_old.is_empty() {
+            let wtxn = self.db.begin_write()?;
+            {
+                let mut t = wtxn.open_table(INTERACTION_TABLE)?;
+                let old_bytes = old_id.to_le_bytes();
+                let new_bytes = new_id.to_le_bytes();
+                for (old_key, interactions) in &interactions_old {
+                    t.remove(old_key.as_slice())?;
+                    let mut new_key = old_key.clone();
+                    if &new_key[..8] == old_bytes.as_ref() {
+                        new_key[..8].copy_from_slice(&new_bytes);
+                    }
+                    if &new_key[8..] == old_bytes.as_ref() {
+                        new_key[8..].copy_from_slice(&new_bytes);
+                    }
+                    let val = serde_json::to_vec(interactions)?;
+                    t.insert(new_key.as_slice(), val.as_slice())?;
+                }
+            }
+            wtxn.commit()?;
+        }
+
+        // ── 8. Remove old entity ────────────────────────────────────────────
+        {
+            let wtxn = self.db.begin_write()?;
+            {
+                let mut et = wtxn.open_table(ENTITIES_TABLE)?;
+                et.remove(&old_id.to_le_bytes()[..])?;
+            }
+            wtxn.commit()?;
+        }
+
+        // ── 9. Update in-memory node map ────────────────────────────────────
+        self.nodes.remove(&old_id);
+        self.nodes.insert(new_id, new_entity);
+
+        Ok(new_id)
+    }
+
     /// Return all timeline events for a list of entity IDs.
     pub fn get_timeline_events(&self, entity_ids: &[i64]) -> Vec<crate::sequence::TimelineEvent> {
         let rtxn = match self.db.begin_read() {
@@ -4530,7 +4740,9 @@ pub async fn extract_from_text(
                Person:       birthDate, birthPlace, deathDate, nationality, occupation, \
                              affiliation, spouse, parent, sibling, child\n\
                Place:        locationType, historicalNote\n\
-               Organization: foundingDate, dissolutionDate, founder, orgType\n\n\
+               Organization: foundingDate, dissolutionDate, founder, orgType\n\
+               Legislation:  dateEnacted, jurisdiction, effect\n\
+               Publication:  publisher, datePublished, frequency\n\n\
              extraction_confidence: 1.0 = entity is explicitly named and described in the text;\
  0.5 = inferred from context or partially described; 0.2 = uncertain, might be a hallucination.\n\n\
              IMPORTANT RULES:\n\

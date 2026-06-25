@@ -2136,6 +2136,23 @@ pub enum GraphAction {
         description: String,
     },
 
+    /// Change an entity's type (e.g. Organization → Legislation).
+    /// Because entity IDs are derived from name+type, this rewrites all DB references
+    /// (chunk links, relations, timeline, interactions) to the new ID atomically.
+    Retype {
+        /// Entity name (case-insensitive)
+        #[arg(long, value_name = "NAME")]
+        entity: String,
+
+        /// New entity type (e.g. Legislation, Publication, Person, Place, Organization)
+        #[arg(long, value_name = "TYPE")]
+        new_type: String,
+
+        /// Skip confirmation prompt
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
+
     /// Export the knowledge graph to an Obsidian vault
     Export {
         /// Output directory for the vault (created if absent)

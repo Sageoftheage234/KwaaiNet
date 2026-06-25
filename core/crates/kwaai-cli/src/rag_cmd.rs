@@ -4279,6 +4279,81 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                 }
             }
 
+            GraphAction::Retype {
+                entity,
+                new_type,
+                yes,
+            } => {
+                #[cfg(not(feature = "storage"))]
+                bail!("RAG requires the 'storage' feature.");
+
+                #[cfg(feature = "storage")]
+                {
+                    use kwaai_rag::graph::ENTITY_TYPES;
+
+                    // Validate and canonicalize the requested type
+                    let canonical_type = ENTITY_TYPES
+                        .iter()
+                        .find(|t| t.eq_ignore_ascii_case(&new_type))
+                        .copied();
+                    let Some(new_type) = canonical_type else {
+                        eprintln!(
+                            "Unknown entity type: {new_type}\nValid types: {}",
+                            ENTITY_TYPES.join(", ")
+                        );
+                        std::process::exit(1);
+                    };
+
+                    let (rag_cfg, tenant_id) = load_rag_config_for(&kb)?;
+                    let mut store =
+                        kwaai_rag::graph::GraphStore::open(&rag_cfg.data_dir(), tenant_id)
+                            .context("opening graph store")?;
+
+                    let node = store
+                        .find_by_name(&entity)
+                        .or_else(|| store.find_by_name_normalized(&entity))
+                        .cloned();
+
+                    match node {
+                        None => {
+                            eprintln!("Entity not found: {entity}");
+                            std::process::exit(1);
+                        }
+                        Some(ref n) if n.entity_type.eq_ignore_ascii_case(&new_type) => {
+                            println!(
+                                "Entity '{}' is already typed as {}. Nothing to do.",
+                                n.name, n.entity_type
+                            );
+                        }
+                        Some(n) => {
+                            let old_type = &n.entity_type;
+                            println!(
+                                "Retyping '{}': {} → {}",
+                                n.name, old_type, new_type
+                            );
+                            if !yes {
+                                print!("Confirm? [y/N] ");
+                                use std::io::Write;
+                                std::io::stdout().flush()?;
+                                let mut input = String::new();
+                                std::io::stdin().read_line(&mut input)?;
+                                if !input.trim().eq_ignore_ascii_case("y") {
+                                    println!("Aborted.");
+                                    return Ok(());
+                                }
+                            }
+                            let new_id = store
+                                .retype_entity(&n.name, &new_type)
+                                .context("retyping entity")?;
+                            println!(
+                                "✅  '{}' retyped to {} (new id=0x{:x})",
+                                n.name, new_type, new_id
+                            );
+                        }
+                    }
+                }
+            }
+
             GraphAction::Export { output_dir } => {
                 return cmd_export(output_dir, kb).await;
             }
