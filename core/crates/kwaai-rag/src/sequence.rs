@@ -504,11 +504,18 @@ pub fn retrieve_sequence(
         return None;
     }
 
-    // Quality gate: only surface the diagram if at least one event has a specific year —
-    // not a decade approximation like "1920s" or vague phrase like "decades ago".
-    // A 4-digit year that is NOT immediately followed by 's' (decade suffix) is the bar.
-    // "1884" → passes. "February 1914" → passes. "1920s" → fails. "decades ago" → fails.
+    // Quality gate: the PRIMARY entity (not just a neighbour) must have at least one
+    // event with a specific year. A 4-digit year not immediately followed by 's' passes.
+    // "1884" → passes. "February 1914" → passes. "1920s" / "decades ago" → fail.
+    //
+    // We gate on the primary entity only (not neighbours) so a person with no dated
+    // events doesn't get a misleading sequence just because their relatives do.
+    let primary_entity_event_ids: std::collections::HashSet<i64> =
+        entity_ids.iter().copied().collect();
     let has_specific_year = events.iter().any(|e| {
+        if !primary_entity_event_ids.contains(&e.entity_id) {
+            return false;
+        }
         e.date_raw
             .as_deref()
             .map(|d| {
@@ -565,7 +572,9 @@ pub fn retrieve_sequence(
     }
     let prose = prose_lines.join("\n");
 
-    let combined = format!("{mermaid}\n\n---\n\n{prose}");
+    // Prose first so the LLM sees facts before the diagram syntax.
+    // The mermaid block is appended for completeness but may be truncated by max_chars.
+    let combined = format!("{prose}\n\n---\n\n{mermaid}");
 
     // Synthetic ChunkMeta wrapping the diagram
     let chunk_meta = crate::meta_store::ChunkMeta {
@@ -581,9 +590,12 @@ pub fn retrieve_sequence(
         section_type: crate::doc_schema::SectionType::default(),
     };
 
+    // Score 1.9: below entity descriptions (2.05) so they appear first in context,
+    // but above regular vector chunks (0.06–0.15) so timeline events are included.
+    // The reorder_for_context pass places this chunk last due to odd-index reversal.
     Some(crate::retriever::RetrievedChunk {
         chunk_meta,
-        score: 3.0,
+        score: 1.9,
         source_kb: None,
         rerank_score: None,
     })

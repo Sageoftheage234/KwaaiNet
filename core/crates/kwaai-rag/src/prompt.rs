@@ -72,7 +72,18 @@ pub fn build_chat_messages(
                 dates, places, ethnic or geographic origins, ancestry, family connections, \
                 occupations, achievements, and historical associations. Examine every numbered \
                 excerpt for relevant details. A single-sentence answer is never sufficient for \
-                a biographical question; list each fact explicitly.\n\n\
+                a biographical question; list each fact explicitly.\n\
+             8. When an excerpt lists multiple items — names, organisations, places, dates — \
+                enumerate ALL of them. Do not stop after 2–3 examples; include every item the \
+                source provides. This applies especially to lists of notable acquaintances, \
+                children, siblings, or member organisations.\n\
+             9. Write all organisation and place names in full. Do not use abbreviations \
+                (C.A.C., AAC, WPICU) unless you also write the full name in the same sentence, \
+                e.g. \"the Coloured Advisory Council (C.A.C.)\".\n\
+             10. \"From where\" and origin questions require the COMPLETE origin chain: both \
+                the immediate prior location (last stop) AND the original homeland, ancestry, \
+                or province where the person was born or raised. Do not answer with only \
+                the penultimate stop.\n\n\
              Sources:\n{context}"
         ),
     };

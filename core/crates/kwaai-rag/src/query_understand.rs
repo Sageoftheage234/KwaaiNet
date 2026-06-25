@@ -245,16 +245,21 @@ pub fn understand_query_rule(query: &str) -> QueryStructure {
         };
     }
 
-    // Temporal event
+    // Temporal event — only match queries that are genuinely asking WHEN something happened,
+    // not queries that merely mention a place or use "tell me about".
+    // Spatial descriptors ("where was X", "what kind of place") and "tell me about X"
+    // are entity-description queries, not temporal ones, and should not trigger sequence
+    // diagram injection even when the entity has timeline events.
+    // "before the forced removal(s)" is a temporal qualifier, not a question ABOUT the removals.
+    // Only classify as TemporalEvent when "forced removal" is the subject of the question.
+    let forced_removal_trigger = q.contains("forced removal")
+        && !q.contains("before the forced")
+        && !q.contains("prior to the forced");
+
     if q.starts_with("when did ")
-        || q.starts_with("where was ")
         || q.starts_with("what happened ")
-        || q.contains("group areas")
-        || q.contains("forced removal")
-        || q.contains("district six")
-        || q.contains("kloof nek")
-        || q.contains("buitencingle")
-        || q.starts_with("tell me about ")
+        || (q.contains("group areas") && (q.contains("when") || q.contains("how") || q.contains("affect") || q.contains("removal")))
+        || forced_removal_trigger
     {
         return QueryStructure {
             intent: QueryIntent::TemporalEvent,
