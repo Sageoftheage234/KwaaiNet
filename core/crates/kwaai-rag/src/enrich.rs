@@ -174,11 +174,12 @@ pub async fn enrich_entity_descriptions(
                 .cloned()
                 .collect();
 
-            // Fetch a wider pool first (up to 4× fetch_limit), filter by distinctive aliases,
-            // then cap at fetch_limit. This ensures we don't miss valid chunks that happen to
-            // fall beyond the first fetch_limit positions in the unfiltered set.
+            // ── Primary evidence: entity_to_chunks links ──────────────────────────
+            // Fetch a wider pool (up to 4× fetch_limit), filter to chunks where the
+            // full canonical name or a distinctive alias actually appears in the text,
+            // then sort by named-entity density so information-rich chunks come first.
             let pre_filter_limit = chunk_ids.len().min(cfg.fetch_limit * 4);
-            let chunks = match meta.get_chunks(&chunk_ids[..pre_filter_limit]) {
+            let linked_chunks = match meta.get_chunks(&chunk_ids[..pre_filter_limit]) {
                 Ok(c) => c,
                 Err(_) => {
                     report.entities_skipped_no_evidence += 1;
@@ -186,108 +187,92 @@ pub async fn enrich_entity_descriptions(
                 }
             };
 
-            // Keep only chunks where the full entity name or a distinctive alias appears.
-            // This prevents a bare first-name alias from pulling in chunks about unrelated
-            // people who share the same first name, which causes the LLM to fabricate
-            // relationships between the entity and those unrelated people.
-            //
-            // Sort by named-entity density (uppercase word count) so information-rich
-            // chunks — those listing notable associates, dates, organisations — appear
-            // early and are not crowded out by narrative padding.
-            let mut filtered_chunks: Vec<_> = chunks
+            let density_key = |text: &str| -> Reverse<usize> {
+                Reverse(
+                    text.split_whitespace()
+                        .filter(|w| w.chars().next().map(|ch| ch.is_uppercase()).unwrap_or(false))
+                        .count(),
+                )
+            };
+
+            let alias_match = |text_lower: &str| -> bool {
+                text_lower.contains(&canonical_lower)
+                    || distinctive_aliases
+                        .iter()
+                        .any(|a| text_lower.contains(a.to_lowercase().as_str()))
+            };
+
+            let mut primary: Vec<_> = linked_chunks
                 .iter()
                 .flatten()
-                .filter(|c| {
-                    let text_lower = c.text.to_lowercase();
-                    text_lower.contains(&canonical_lower)
-                        || distinctive_aliases
-                            .iter()
-                            .any(|a| text_lower.contains(a.to_lowercase().as_str()))
-                })
+                .filter(|c| alias_match(&c.text.to_lowercase()))
                 .collect();
-            filtered_chunks.sort_by_key(|c| {
-                // Higher score = more uppercase words = more named entities = rank first
-                let density: usize = c
-                    .text
-                    .split_whitespace()
-                    .filter(|w| {
-                        w.chars()
-                            .next()
-                            .map(|ch| ch.is_uppercase())
-                            .unwrap_or(false)
-                    })
-                    .count();
-                std::cmp::Reverse(density)
-            });
-            let evidence_text: String = filtered_chunks
-                .into_iter()
-                .take(cfg.fetch_limit)
-                .map(|c| {
-                    let mut s = String::new();
-                    if let Some(ref sec) = c.section_name {
-                        s.push_str(&format!("[Section: {sec}]\n"));
-                    }
-                    s.push_str(&c.text);
-                    s
-                })
-                .collect::<Vec<_>>()
-                .join("\n---\n");
+            primary.sort_by_key(|c| density_key(&c.text));
 
-            // If distinctive-alias filtering removed everything, the entity's entity_to_chunks
-            // links are all from generic-first-name occurrences (e.g. "Fatima Gool" whose
-            // linked chunks come from a different Fatima in the text). Fall back to a full-corpus
-            // scan that finds any chunk mentioning the canonical name or a distinctive alias.
-            let evidence_text = if evidence_text.is_empty() && !distinctive_aliases.is_empty() {
-                tracing::warn!(
+            // ── Corpus augmentation ────────────────────────────────────────────────
+            // When the entity_to_chunks pool is sparse (< fetch_limit/2 chunks that
+            // pass the alias filter), extraction-time linking was incomplete — typically
+            // because the entity is referred to by pronoun or nickname throughout the
+            // text but was only explicitly named in a few passages. In that case, scan
+            // the full corpus and merge so narrative passages with the canonical name or
+            // a distinctive alias are included, deduplicated by text prefix.
+            let sparse_threshold = cfg.fetch_limit / 2;
+            let need_corpus_scan =
+                primary.len() < sparse_threshold && !distinctive_aliases.is_empty();
+
+            let chunk_to_text = |c: &crate::meta_store::ChunkMeta| -> String {
+                let mut s = String::new();
+                if let Some(ref sec) = c.section_name {
+                    s.push_str(&format!("[Section: {sec}]\n"));
+                }
+                s.push_str(&c.text);
+                s
+            };
+
+            let evidence_text: String = if need_corpus_scan {
+                tracing::debug!(
                     entity = %node.name,
-                    chunk_ids = chunk_ids.len(),
-                    "no distinctive-alias evidence in entity_to_chunks; scanning full corpus"
+                    linked = primary.len(),
+                    threshold = sparse_threshold,
+                    "sparse entity_to_chunks — augmenting with corpus scan"
                 );
-                match meta.all_chunks() {
-                    Ok(all) => {
-                        let mut fallback_chunks: Vec<_> = all
+                let primary_prefixes: std::collections::HashSet<String> = primary
+                    .iter()
+                    .map(|c| c.text.chars().take(60).collect::<String>())
+                    .collect();
+                let mut corpus: Vec<crate::meta_store::ChunkMeta> =
+                    match meta.all_chunks() {
+                        Ok(all) => all
                             .into_iter()
                             .filter_map(|(_id, c)| {
-                                let text_lower = c.text.to_lowercase();
-                                if text_lower.contains(&canonical_lower)
-                                    || distinctive_aliases
-                                        .iter()
-                                        .any(|a| text_lower.contains(a.to_lowercase().as_str()))
+                                let key: String = c.text.chars().take(60).collect();
+                                if alias_match(&c.text.to_lowercase())
+                                    && !primary_prefixes.contains(&key)
                                 {
                                     Some(c)
                                 } else {
                                     None
                                 }
                             })
-                            .collect();
-                        fallback_chunks.sort_by_key(|c| {
-                            let density: usize = c
-                                .text
-                                .split_whitespace()
-                                .filter(|w| {
-                                    w.chars().next().map(|ch| ch.is_uppercase()).unwrap_or(false)
-                                })
-                                .count();
-                            Reverse(density)
-                        });
-                        let fallback: Vec<String> = fallback_chunks
-                            .into_iter()
-                            .take(cfg.fetch_limit)
-                            .map(|c| {
-                                let mut s = String::new();
-                                if let Some(ref sec) = c.section_name {
-                                    s.push_str(&format!("[Section: {sec}]\n"));
-                                }
-                                s.push_str(&c.text);
-                                s
-                            })
-                            .collect();
-                        fallback.join("\n---\n")
-                    }
-                    Err(_) => evidence_text,
-                }
+                            .collect(),
+                        Err(_) => vec![],
+                    };
+                corpus.sort_by_key(|c| density_key(&c.text));
+                // Primary linked chunks first (already sorted by density), then corpus extras.
+                let remaining = cfg.fetch_limit.saturating_sub(primary.len());
+                primary
+                    .into_iter()
+                    .map(|c| chunk_to_text(c))
+                    .chain(corpus.iter().take(remaining).map(|c| chunk_to_text(c)))
+                    .collect::<Vec<_>>()
+                    .join("\n---\n")
             } else {
-                evidence_text
+                primary
+                    .into_iter()
+                    .take(cfg.fetch_limit)
+                    .map(|c| chunk_to_text(c))
+                    .collect::<Vec<_>>()
+                    .join("\n---\n")
             };
             if evidence_text.is_empty() {
                 report.entities_skipped_no_evidence += 1;
