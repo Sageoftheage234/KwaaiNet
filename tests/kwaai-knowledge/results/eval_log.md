@@ -1,4 +1,26 @@
 
+## r103 — 2026-06-25 — **83.8% (186/222)** — Neighbor context fix confirmed; CPU re-enrichment regressed entity descriptions
+
+**Flags:** biographical-expansion=true, model=llama3.1:8b, inference=localhost (CPU)
+
+**Changes since r102:**
+- `enrich.rs`: neighbor context — Person entity evidence now includes descriptions from neighboring Place/Organization entities that explicitly name the person. Fixes the JMH Gool visitor list gap (Shaw, Rhodes, etc. now in description).
+- Re-ran `enrich-entities --entity-types Person --min-mentions 6 --force` on localhost (CPU); overwrote 10 high-mention entities including Yousuf Rassool, Gandhi, JMH Gool, Wahida Gool.
+
+**JMH Gool description now correct:** "...became a celebrated gathering place for notable visitors including Solly Joel, Cecil Rhodes, Mahatma Gandhi, the Prince of Wales, George Bernard Shaw, and Sarojini Naidu."
+
+**Q33 still 2/5 — two problems remain:**
+1. LLM selectively lists only Gandhi, Rhodes, Naidu, Prince of Wales; drops Shaw from the visitor list even though it's in the entity description (model truncates at 4 famous figures)
+2. `Abdurahman` keyword is not in the visitor list (he's a political associate via `associated_with` relation, not a mansion visitor); entity description doesn't mention him in that context
+
+**Regression cause:** CPU-quality re-enrichment degraded several key entity descriptions (Yousuf Rassool, Gandhi, others). These entities previously had GPU-quality descriptions from r100-r102. The neighbor context code is correct but the re-enrichment should have been done with GPU inference only.
+
+**Follow-up needed:** Re-run `enrich-entities --force` with p2p GPU (metro-linux/A6000) when machine comes back online to restore entity description quality.
+
+**Additional note:** Neighbor context filter refined (code not yet in this eval): must now require that the neighbor entity's description explicitly names the Person being enriched — prevents generic area descriptions (District Six) from polluting evidence.
+
+---
+
 ## r102 — 2026-06-25 — **93.7% (208/222)** — First run at max=222; bio-expansion confirms gains; Q33 enumeration regression
 
 **Flags:** biographical-expansion=true, model=llama3.1:8b, p2p://auto

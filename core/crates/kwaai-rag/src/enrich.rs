@@ -287,6 +287,33 @@ pub async fn enrich_entity_descriptions(
             // who owned or lived at that place — so raw corpus scans for the person's
             // name miss the passage but the Place entity's description captures it.
             let neighbor_context: String = if is_person {
+                // Guard: only include a neighbor's description if it explicitly names
+                // the entity being enriched. This prevents generic area descriptions
+                // (e.g., "District Six was a multicultural community...") from
+                // contaminating the evidence — they are Place neighbors but not
+                // specifically about the person. A specific home ("7 Buitencingle
+                // Street... Haji Joosub Maulvi Hamid Gool built his mansion...") DOES
+                // name the person and is directly relevant.
+                let name_lower = node.name.to_lowercase();
+                let relevant_alias: Vec<String> = meaningful_aliases
+                    .iter()
+                    .filter(|a| {
+                        let al = a.to_lowercase();
+                        // Only multi-word or title-bearing aliases as relevance signals;
+                        // single first-name aliases are too generic to use as a filter.
+                        al.split_whitespace().count() >= 2
+                    })
+                    .cloned()
+                    .collect();
+
+                let desc_names_entity = |desc: &str| -> bool {
+                    let dl = desc.to_lowercase();
+                    dl.contains(&name_lower)
+                        || relevant_alias
+                            .iter()
+                            .any(|a| dl.contains(a.to_lowercase().as_str()))
+                };
+
                 store
                     .neighbors_of(node.id)
                     .into_iter()
@@ -296,6 +323,7 @@ pub async fn enrich_entity_descriptions(
                         if (ntype == "place" || ntype == "location" || ntype == "organization")
                             && !neighbor.description.is_empty()
                             && neighbor.description.len() > 40
+                            && desc_names_entity(&neighbor.description)
                         {
                             Some(format!(
                                 "[Neighbor Context: {} ({})]\n{}",
