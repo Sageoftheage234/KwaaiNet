@@ -1,4 +1,29 @@
 
+## r104 — 2026-06-26 — **85.6% (190/222)** — Neighbor context fix confirmed: Q33 5/5; CPU inference quality limits other Qs
+
+**Flags:** biographical-expansion=true, model=llama3.1:8b, inference=localhost (CPU)
+
+**Changes since r103:** Refined neighbor context filter — now requires neighbor description to explicitly name the entity being enriched (prevents generic area descriptions from contaminating evidence). Re-ran `enrich-entities --min-mentions 6 --force` with refined filter.
+
+**Q33: 2/5 → 5/5 (+3)** — Neighbor context fix confirmed working. JMH Gool's description now includes all 6 mansion visitors (Shaw, Rhodes, Gandhi, Prince of Wales, Naidu, Joel); all 5 Q33 keywords (Gandhi, Rhodes, Abdurahman, Shaw, Buitencingle) retrieved.
+
+**Q03: 0/6 → 6/6 (+6)** — Yousuf Rassool description no longer contaminated by District Six generic text; grandchildren now correctly listed from entity description.
+
+**CPU inference regressions vs r102 (GPU):**
+| Q | r102 (GPU) | r104 (CPU) | delta |
+|---|-----------|-----------|-------|
+| q05 | 8/8 | 5/8 | -3 |
+| q13 | 6/6 | 3/6 | -3 |
+| q16 | 4/5 | 3/5 | -1 |
+| q37 | 5/7 | 4/7 | -1 |
+| q40 | 5/5 | 3/5 | -2 |
+
+**True ceiling estimate:** GPU re-enrich of all entities should yield ~210+/222 ≥ 94% (r102 score 208 + Q33 fix +3, minus variance).
+
+**Next:** Re-run full `enrich-entities --force` with p2p GPU (metro-linux/A6000) when online; then run r105.
+
+---
+
 ## r103 — 2026-06-25 — **83.8% (186/222)** — Neighbor context fix confirmed; CPU re-enrichment regressed entity descriptions
 
 **Flags:** biographical-expansion=true, model=llama3.1:8b, inference=localhost (CPU)
