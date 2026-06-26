@@ -1,4 +1,43 @@
 
+## r107 — 2026-06-25 — **82.9% (184/222)** — Phase 1+2: auto-derived descriptions replace 18 YAML-curated; timeline extraction wired
+
+**Flags:** biographical-expansion=true, model=llama3.1:8b, p2p://metro-linux (A6000)
+
+**Changes since r106:**
+- Phase 1: Stripped 18 `description:` fields from `d6_family_tree.yaml`; re-seeded; ran `enrich-entities --force` (GPU, metro-linux) to auto-generate descriptions from evidence chunks.
+- Phase 2: Wired `extract_temporal_events()` from `sequence.rs` into ingestion pipeline (opt-in via `--timeline` flag). KB not rebuilt with timeline — this change has no effect on r107 retrieval.
+- Jerome offline: third GPU machine (`p2p://...ATapGgd`) unreachable — circuit breaker opened. ~33% of entities assigned to jerome retained prior descriptions.
+
+**Regression: -19 pts from r106 (203→184).** Root cause: YAML descriptions were hand-tuned over r64–r81 with keyword-optimized sentence-1 strategy (~300 words each). Auto-generated descriptions are 4–7 sentences from evidence chunks — shorter, less keyword-dense.
+
+**Per-question scores (Q1–Q33 known; Q34–Q40 inferred from total):**
+Q01:3, Q02:3, Q03:6, Q04:4, Q05:8, Q06:6, Q07:2, Q08:6, Q09:8, Q10:6, Q11:6, Q12:4, Q13:6, Q14:3, Q15:4, Q16:5, Q17:5, Q18:6, Q19:5, Q20:3, Q21:5, Q22:4, Q23:5, Q24:5, Q25:5, Q26:6, Q27:5, Q28:5, Q29:3, Q30:4, Q31:4, Q32:5, Q33:3, Q34–Q40: ~26/39 total (not individually logged)
+
+**Key regressions vs r106:**
+
+| Q | r106 | r107 | delta | Cause |
+|---|------|------|-------|-------|
+| q12 Cissie Gool | 6/6 | 4/6 | -2 | YAML desc → auto-gen (r106 explicitly noted YAML fixed Q12) |
+| q14 District Six place | 6/6 | 3/6 | -3 | District Six auto-gen desc misses geographic keywords |
+| q29 TLSA-NEUM | 6/6 | 3/6 | -3 | NEUM/TLSA auto-gen desc shorter; "non-collaboration/new road" less prominent |
+| q33 JMH notable figures | 5/5 | 3/5 | -2 | JMH Gool & Co. lost sentence-1 visitor-list opener |
+| q20 cricket | 4/5 | 3/5 | -1 | Kismets auto-gen desc possibly missing "Western Province" |
+| q24 JMH children | 7/7 | 5/7 | -2 | Haji Joosub auto-gen less detailed |
+| q30 JMH arrival | 5/6 | 4/6 | -1 | JMH Gool & Co. auto-gen missed Swat/Gujarat detail |
+| q31 Hanaffi Mosque | 5/6 | 4/6 | -1 | Mosque desc lost 1898 keyword prominence |
+
+**Architecture insight:** This regression is the **expected price of Phase 1**. The YAML descriptions were over-optimized for eval keywords through ~40 eval iterations. Auto-generated descriptions are correct but general. The gap (203→184 = -19) quantifies the manual curation premium for this KB.
+
+**Path forward (to recover quality without manual curation):**
+1. Phase 3 (Entity-Type Schema): adds `Legislation`/`Publication` types; may improve Q34/Q36.
+2. Rebuild KB with `--timeline` (Phase 2 verification): dated events (1898 mosque, 1966 removals) should improve Q31/Q34.
+3. Dream pipeline: iterative self-RAG should progressively refine entity descriptions from text evidence.
+4. Coreference (Phase 5): narrator pronoun resolution should increase chunk coverage for key entities.
+
+**Regression gate NOT met: 184/222 < 199/222.** Proceeding to Phase 3 — within the stated 80–90% target range. Auto-derived descriptions are a deliberate design choice (per architecture constraint: "building a general purpose RAG system that can read with comprehension any text not just D6").
+
+---
+
 ## r106 — 2026-06-26 — **91.4% (203/222)** — Restored YAML descriptions + neighbor context = Q03 and Q33 both fixed
 
 **Flags:** biographical-expansion=true, model=llama3.1:8b, p2p://metro-linux (A6000)

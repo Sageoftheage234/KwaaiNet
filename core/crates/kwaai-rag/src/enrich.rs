@@ -266,15 +266,15 @@ pub async fn enrich_entity_descriptions(
                 let remaining = cfg.fetch_limit.saturating_sub(primary.len());
                 primary
                     .into_iter()
-                    .map(|c| chunk_to_text(c))
-                    .chain(corpus.iter().take(remaining).map(|c| chunk_to_text(c)))
+                    .map(&chunk_to_text)
+                    .chain(corpus.iter().take(remaining).map(&chunk_to_text))
                     .collect::<Vec<_>>()
                     .join("\n---\n")
             } else {
                 primary
                     .into_iter()
                     .take(cfg.fetch_limit)
-                    .map(|c| chunk_to_text(c))
+                    .map(chunk_to_text)
                     .collect::<Vec<_>>()
                     .join("\n---\n")
             };

@@ -458,8 +458,6 @@ pub async fn extract_and_store_entities_pub(
         let entity_types_cfg = entity_types_cfg.clone();
         let gender_context = gender_context.clone();
         let gliner = gliner.clone();
-        let extract_timeline = extract_timeline;
-
         tokio::spawn(async move {
             let _permit = permit;
             let idx = url_counter.fetch_add(1, Ordering::Relaxed) % urls.len();
