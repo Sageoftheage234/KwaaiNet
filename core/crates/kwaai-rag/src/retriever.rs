@@ -614,7 +614,6 @@ fn build_entity_fact_card(
     (lines.join("\n"), has_content)
 }
 
-
 /// Build a synthetic `RetrievedChunk` from a doc name, text body, and score.
 fn make_synthetic_chunk(doc_name: String, text: String, score: f64) -> RetrievedChunk {
     RetrievedChunk {
@@ -816,17 +815,14 @@ pub(crate) fn inject_entity_descriptions(
         // 2. Fall back to non-name-matched at original thresholds so thematically-relevant
         //    entities (e.g. Bibi Gool for Gandhi/Gool queries) still inject at 0.85+.
         //    Raising this to 0.92 blocked too many helpful injections (-7.6pp regression).
-        let candidate = nm
-            .iter()
-            .find(|(id, _)| desc_ok(*id, true))
-            .or_else(|| {
-                seed_hits
-                    .iter()
-                    .filter(|(_, s)| *s > 0.85)
-                    .chain(seed_hits.iter().filter(|(_, s)| *s > 0.7 && *s <= 0.85))
-                    .filter(|(id, _)| !name_matched.contains(id))
-                    .find(|(id, _)| desc_ok(*id, false))
-            });
+        let candidate = nm.iter().find(|(id, _)| desc_ok(*id, true)).or_else(|| {
+            seed_hits
+                .iter()
+                .filter(|(_, s)| *s > 0.85)
+                .chain(seed_hits.iter().filter(|(_, s)| *s > 0.7 && *s <= 0.85))
+                .filter(|(id, _)| !name_matched.contains(id))
+                .find(|(id, _)| desc_ok(*id, false))
+        });
         let Some((id, _)) = candidate else { return };
         (*id, *id)
     };
