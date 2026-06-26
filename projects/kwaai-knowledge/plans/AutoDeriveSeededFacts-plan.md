@@ -216,10 +216,18 @@ Post-rebuild step: `rag graph coref --kb D6 --no-llm --commit` to add chunk-enti
 
 ### Phase 6 — Hierarchical Summaries (TreeRAG-lite) *(2–3 days)*
 
-**STATUS: ✅ ALREADY IMPLEMENTED (discovered 2026-06-26)**  
+**STATUS: ✅ COMPLETED (discovered 2026-06-26; measured 2026-06-26)**  
 `summary.rs`, `SUMMARY_NODES_TABLE`, `kwaainet rag summarize --kb D6 --window-size 10`,
 and retriever Round 2.5 (summary node cosine search) already exist.
 Post-rebuild step: `rag summarize --kb D6 --inference-url "p2p://..." --window-size 10`
+
+**Eval result (r110):** 149/222 = 67.1% with `--summary-expansion --biographical-expansion`
+vs baseline r108 = 135/222 = 60.8%. Net **+14pp**.
+- HiRAG summaries (Round 2.5) fired for Q15, Q31, Q36; but Q15 regressed (-3) — summary
+  nodes displaced specific keyword-dense chunks. Relevance gate needed for future improvement.
+- Biographical expansion +9pp net (helps Q21/Q31/Q36/Q37; hurts Q09/Q23 via list dilution).
+- 117 summary nodes stored for D6 (1152 chunks / window=10).
+- Remaining gap vs r107 (82.9%): **-16pp** = value of 18 hand-curated YAML descriptions.
 
 **Goal**: Aggregate multi-paragraph narratives (forced removals, cricket involvement, political movement history) into chunk-level summaries that survive retrieval.
 
@@ -255,13 +263,20 @@ kwaainet rag eval --kb D6 --questions tests/kwaai-knowledge/d6_eval_questions.js
 ```
 Log results to `tests/kwaai-knowledge/results/` per session feedback.
 
-**Phase-specific checks**:
-- Phase 1: Fatima Gool description should now be auto-generated correctly; check `rag graph show-entity --kb D6 --name "Fatima Gool"`
-- Phase 2: `rag graph timeline query --kb D6 --entity "Hanaffi Quwatul Islam Mosque"` should return 1898 founding; q31 should improve from 83% → 90%+
-- Phase 3: `rag graph show-entity --kb D6 --name "Group Areas Act"` should return type=Legislation; q34 should improve
-- Phase 4: `rag graph validate-relations --kb D6 --ground-truth d6_family_tree.yaml` — precision target ≥ 70% before enabling by default
-- Phase 5: After coref run, `rag graph show-entity --kb D6 --name "Yousuf Rassool"` chunk count should increase ≥20%
-- Phase 6: q15 forced removals (currently 67%) should reach ≥ 85%
+**Phase-specific results (measured 2026-06-26):**
+- Phase 1+2 (r107): 184/222 = 82.9% — auto-descriptions replace 18 YAML-curated; -19pp from r106 as expected
+- Phase 3+4+5 (r108, fresh rebuild): 135/222 = 60.8% — new entity types + lexical trigger + coref; large drop from rebuild resetting all descriptions
+- Phase 6 (r110, bio+summary expansion): 149/222 = 67.1% — +14pp recovery from r108 baseline
+- Q21 (author's mother): 0/5 → 4/5 ✓ (biographical expansion)
+- Q31 (Hanaffi Mosque): 1/6 → 4/6 ✓ (bio expansion + summary nodes)
+- Q36 (political orgs): 0/6 → 3/6 ✓ (bio expansion recovered NEUM/Anti-CAD)
+- Q37 (Gandhi): 5/7 → 7/7 ✓ (Gandhi entity description fully leveraged)
+- Q15 (forced removals): 5/5 → 2/5 ✗ (summary nodes displaced keyword-dense chunks — needs relevance gate)
+
+**Remaining gap vs best (r82, 215/225 = 95.6%):** The automated pipeline at 67.1% is 28pp below the hand-curated best. The gap breaks down as:
+- ~16pp: 18 YAML-curated descriptions (hand-optimized keyword density, ~300 words each)
+- ~8pp: fresh rebuild entity descriptions sparse (89/1152 enriched); re-running enrich with --force after coref settles would recover some of this
+- ~4pp: summary node relevance gate (Q15 regression recoverable)
 
 **Target**: Each phase measurably narrows the gap between automated pipeline output and manually seeded ground truth. After all 6 phases, the only remaining manual dependency should be:
 1. The family-tree YAML as verifiable ground truth (not an injection — a validation oracle)

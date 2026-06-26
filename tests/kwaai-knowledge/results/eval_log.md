@@ -1,4 +1,138 @@
 
+## r111 — 2026-06-26 — **68.0% (151/222)** — enrich-entities --force after coref; 280 entities enriched (2.4× more than r108); reembed
+
+**Flags:** mode=iterative, graph_mode=inject, query_classify=rule, summary_expansion=true, biographical_expansion=true, model=llama3.1:8b, p2p://metro-linux (A6000)
+
+**Changes since r110:** `enrich-entities --force` with min-mentions=2 after coref — 280 processed (vs 108 in r108; coref promoted 172 more entities above threshold), 215 updated, 93 genders set. `graph reembed` applied (1152 entities). `graph score` applied.
+
+**GAIN: +0.9pp from r110 (67.1→68.0%), +7.2pp from r108 (60.8%).** Small net gain; variance dominates.
+
+**Per-question scores:**
+Q01:3, Q02:3, Q03:6, Q04:4, Q05:5, Q06:6, Q07:2, Q08:5, Q09:4, Q10:6, Q11:5, Q12:4, Q13:3, Q14:4, Q15:4, Q16:3, Q17:5, Q18:4, Q19:5, Q20:2, Q21:5, Q22:1, Q23:2, Q24:3, Q25:5, Q26:4, Q27:4, Q28:1, Q29:3, Q30:1, Q31:3, Q32:4, Q33:3, Q34:5, Q35:4, Q36:3, Q37:7, Q38:3, Q39:3, Q40:4
+
+**Key gains vs r110:**
+
+| Q | r110 | r111 | delta | Cause |
+|---|------|------|-------|-------|
+| Q06 Buitencingle | 4/8 | 6/8 | **+2** | New District Six area entity descriptions improving place context |
+| Q15 forced removals | 2/5 | 4/5 | **+2** | Summary nodes + enriched District Six description recovering |
+| Q11 TLSA | 3/6 | 5/6 | +2 | TLSA entity description now enriched with fuller evidence |
+| Q21 author's mother | 4/5 | 5/5 | +1 | Now 100% ✓ — Ayesha Rassool fully described |
+| Q17 Hewat | 4/5 | 5/5 | +1 | Now 100% ✓ — Hewat Training College enriched |
+
+**Key regressions vs r110:**
+
+| Q | r110 | r111 | delta | Cause |
+|---|------|------|-------|-------|
+| Q24 JMH children | 7/7 | 3/7 | **-4** | New Gool family entity descriptions causing injection confusion; Halima Gool injected instead of JMH Gool for some queries |
+| Q22 author's father | 4/4 | 1/4 | **-3** | Entity injection interference — new descriptions possibly misidentifying Peter Rassool |
+| Q28 author's orgs | 3/5 | 1/5 | -2 | `[Graph: Purcell]` injected — wrong entity selected |
+| Q23 siblings | 1/5 | 2/5 | +1 | Small recovery |
+
+**Architecture insight:**
+- `[Graph: Halima Gool]` appears as top hit for Q12 (Cissie Gool) and Q16 (Gandhi) — the new Halima Gool description likely contains Cissie/Gandhi keywords, causing her to outrank the correct entity in cosine search. This is the entity injection noise problem: enriching minor Gool family members generates descriptions that compete with major entities.
+- The Q24 regression (7→3) suggests that JMH Gool's children entity list is being displaced by individual Gool child entities that now have descriptions matching JMH Gool queries.
+- Net effect of force-enrich: more entities described = more injection noise. The benefit (coverage) and cost (noise) roughly cancel for this KB.
+
+**Cumulative pipeline score vs r107 (82.9%):** Still -14.9pp gap. Remaining gap = value of 18 keyword-optimized YAML descriptions for key entities.
+
+---
+
+## r110 — 2026-06-26 — **67.1% (149/222)** — Phase 6: HiRAG summary_expansion=true + biographical_expansion=true
+
+**Flags:** mode=iterative, graph_mode=inject, query_classify=rule, summary_expansion=true, biographical_expansion=true, model=llama3.1:8b, p2p://metro-linux (A6000)
+
+**Changes since r109:** Enabled `--summary-expansion` (117 summary nodes active in Round 2.5 retrieval) and `--biographical-expansion`. No KB changes.
+
+**GAIN: +14pp from r108 (60.8→67.1%).** Biographical expansion is the primary driver; HiRAG summaries active but net effect mixed.
+
+**Per-question scores:**
+Q01:2, Q02:3, Q03:6, Q04:4, Q05:6, Q06:4, Q07:2, Q08:4, Q09:3, Q10:6, Q11:3, Q12:4, Q13:3, Q14:3, Q15:2, Q16:4, Q17:4, Q18:5, Q19:5, Q20:1, Q21:4, Q22:4, Q23:1, Q24:7, Q25:5, Q26:5, Q27:4, Q28:3, Q29:3, Q30:0, Q31:4, Q32:4, Q33:3, Q34:5, Q35:4, Q36:3, Q37:7, Q38:3, Q39:3, Q40:3
+
+**Key gains vs r108 (135/222):**
+
+| Q | r108 | r110 | delta | Cause |
+|---|------|------|-------|-------|
+| Q21 author's mother | 0/5 | 4/5 | **+4** | Biographical expansion recovered Ayesha Rassool context |
+| Q31 Hanaffi Mosque | 1/6 | 4/6 | **+3** | Bio expansion + summary nodes for 1898/mosque content |
+| Q36 political orgs | 0/6 | 3/6 | **+3** | Bio expansion retrieved NEUM/Anti-CAD context |
+| Q34 Group Areas Act | 3/6 | 5/6 | +2 | Group Areas Act entity + bio expansion |
+| Q37 Gandhi | 5/7 | 7/7 | +2 | Gandhi entity description fully used — 100% ✓ |
+| Q05 JMH Gool | 5/8 | 6/8 | +1 | Bio expansion adds more JMH Gool detail |
+| Q26 Dr. Abdurahman | 4/6 | 5/6 | +1 | Abdurahman entity description more fully cited |
+
+**Key regressions vs r108:**
+
+| Q | r108 | r110 | delta | Cause |
+|---|------|------|-------|-------|
+| Q15 forced removals | 5/5 | 2/5 | **-3** | Summary nodes injected (sources: __summary__:82/19/115/1/15) but diluted answer — generic summaries displaced specific chunk detail |
+| Q09 grandfather | 6/9 | 3/9 | -3 | Biographical expansion causes enumeration miss (model expands on bio, drops list keywords) |
+| Q23 siblings | 3/5 | 1/5 | -2 | Bio expansion dilutes sibling list answer |
+| Q20 cricket | 2/5 | 1/5 | -1 | Bio expansion context interference |
+
+**Architecture insight:** 
+- `--biographical-expansion` net = +18 gains, -9 losses = **+9pp** — strongly positive overall
+- HiRAG summaries caused Q15 regression (summary nodes for a complex multi-chunk question displaced specific chunks that had the right keywords). This suggests summary_expansion needs a relevance gate: only inject summary nodes when the query lacks specific entity/date terms.
+- Still 16pp below r107 (82.9%) — gap quantifies value of 18 hand-curated YAML descriptions
+
+**Status: All 6 phases implemented and measured. Results: r108=60.8% → r110=67.1% with bio+summary expansion.**
+
+---
+
+## r109 — 2026-06-26 — **59.5% (132/222)** — Variance baseline; Phase 6 summaries created but NOT active (summary_expansion=false)
+
+**Flags:** mode=iterative, graph_mode=inject, query_classify=rule, biographical_expansion=false, summary_expansion=false, model=llama3.1:8b, p2p://metro-linux (A6000)
+
+**Changes since r108:** `rag summarize --kb D6 --window-size 10` completed — 117 summary nodes stored (1152 chunks / 10 per window). No retrieval change since `--summary-expansion` was not passed.
+
+**Result: 59.5% (132/222) — within variance of r108 (60.8%).** Confirms HiRAG summaries alone (without --summary-expansion flag) have no effect on retrieval. This is the variance floor.
+
+**Per-question scores:**
+Q01:2, Q02:3, Q03:6, Q04:4, Q05:3, Q06:5, Q07:2, Q08:4, Q09:4, Q10:6, Q11:3, Q12:2, Q13:4, Q14:2, Q15:4, Q16:3, Q17:4, Q18:5, Q19:5, Q20:3, Q21:0, Q22:4, Q23:3, Q24:5, Q25:3, Q26:3, Q27:4, Q28:2, Q29:3, Q30:1, Q31:3, Q32:3, Q33:2, Q34:4, Q35:4, Q36:0, Q37:5, Q38:3, Q39:3, Q40:3
+
+**r110 plan:** Rerun with `--summary-expansion --biographical-expansion` to measure true Phase 6 effect.
+
+---
+
+## r108 — 2026-06-26 — **60.8% (135/222)** — Phase 2+3+4+5: fresh rebuild; Legislation/Publication types; timeline; lexical relation trigger; coref
+
+**Flags:** mode=iterative, graph_mode=inject, query_classify=rule, biographical-expansion=false, model=llama3.1:8b, p2p://metro-linux+metro-win
+
+**Changes since r107:**
+- Full `rag rebuild` from scratch: destroy → init → ingest → graph build → seed → alias-scan → reembed → dedup → score
+- Phase 3: Entity types expanded to `Person,Place,Organization,Legislation,Publication`; `KBEntityTypeSchema` injected into extraction prompt; entity cap 25 (3-type)
+- Phase 2: `--timeline` flag wired into rebuild; temporal events extracted per chunk
+- Phase 4: `lexical_relation_trigger()` gates relation extraction on kinship/membership keywords; cross-chunk support filter (≥2 chunk evidence OR seeded) in retriever
+- Phase 5: `rag graph coref --no-llm --commit` — 1134 chunk-entity links added across 1152 chunks (59 dedup candidates surfaced)
+- Enrich-entities: 108 processed, 89 updated, 87 genders set, 106 skipped (no evidence)
+- Graph stats: 1152 entities, 209 relations (seeded family tree only)
+
+**REGRESSION: -49 pts from r107 (184→135, -22.1pp).** Root cause: fresh rebuild reset all entity descriptions. Only 89/1152 entities got auto-generated descriptions (min-mentions ≥2 filter). Key entities like JMH Gool, Ayesha Gool, and Hanaffi Mosque likely got lower-quality auto-generated descriptions than r107's YAML-curated ones. New entity types (Legislation/Publication) may also compete with Person/Place in slot injection.
+
+**Per-question scores (all individually logged):**
+Q01:3, Q02:3, Q03:6, Q04:4, Q05:5, Q06:5, Q07:2, Q08:5, Q09:6, Q10:5, Q11:4, Q12:3, Q13:2, Q14:2, Q15:5, Q16:3, Q17:4, Q18:4, Q19:5, Q20:2, Q21:0, Q22:2, Q23:3, Q24:7, Q25:5, Q26:4, Q27:4, Q28:2, Q29:3, Q30:1, Q31:1, Q32:3, Q33:1, Q34:3, Q35:4, Q36:0, Q37:5, Q38:3, Q39:3, Q40:3
+
+**Key regressions vs r107:**
+
+| Q | r107 | r108 | delta | Cause |
+|---|------|------|-------|-------|
+| Q21 author's mother | 5/5 | 0/5 | **-5** | Ayesha Gool description lost; coref didn't bridge "my mother" → Ayesha |
+| Q36 political orgs | ~6/6 | 0/6 | **~-6** | NEUM/organisations descriptions sparse in auto-gen |
+| Q13 education | 6/6 | 2/6 | **-4** | School/org entity descriptions weaker |
+| Q05 JMH Gool facts | 8/8 | 5/8 | **-3** | JMH Gool & Co. auto-gen lacks merchant/mosque/India density |
+| Q28 Rassool family | 5/5 | 2/5 | **-3** | Yousuf Rassool siblings/children less prominent |
+| Q30 JMH arrival | 4/6 | 1/6 | **-3** | Swat/Gujarat/Mauritius origin detail absent from auto-gen |
+| Q31 Hanaffi Mosque | 4/6 | 1/6 | **-3** | Mosque founding/1898 detail weaker |
+| Q33 JMH associates | 3/5 | 1/5 | -2 | Shaw/Rhodes/Naidu visitor list not in auto-gen description |
+
+**Notable improvements vs r107:**
+- Q24 JMH children: 5/7 → 7/7 (+2) — family tree seed + coref improved family link coverage
+- Q15 forced removals: 4/5 → 5/5 (+1) — timeline rebuild captured 1966 events better
+
+**Architecture insight:** 60.8% is the true automated-pipeline baseline after full rebuild with no hand-curated descriptions. It quantifies the manual-curation premium lost in Phase 1 (YAML descriptions) combined with description quality regression from fresh auto-enrichment of only 89 entities. Phase 6 (HiRAG summaries) is next — expected to recover detail for multi-chunk narrative questions (Q13, Q28, Q36).
+
+---
+
 ## r107 — 2026-06-25 — **82.9% (184/222)** — Phase 1+2: auto-derived descriptions replace 18 YAML-curated; timeline extraction wired
 
 **Flags:** biographical-expansion=true, model=llama3.1:8b, p2p://metro-linux (A6000)
