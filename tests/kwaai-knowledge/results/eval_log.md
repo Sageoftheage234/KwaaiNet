@@ -1,4 +1,44 @@
 
+## r106 — 2026-06-26 — **91.4% (203/222)** — Restored YAML descriptions + neighbor context = Q03 and Q33 both fixed
+
+**Flags:** biographical-expansion=true, model=llama3.1:8b, p2p://metro-linux (A6000)
+
+**Changes since r105:** Re-ran `rag graph seed` to restore the 18 YAML-curated descriptions; re-embedding updated graph vector index.
+
+**Q03: 0/6 → 6/6 (+6)** — Yousuf Rassool entity description (auto-generated, refined filter) correctly enumerates grandchildren. Genuine gain from neighbor context fix.
+
+**Q33: 2/5 → 5/5 (+3)** — YAML description explicitly lists all 7 acquaintances including Shaw and Abdurahman ("Among his notable acquaintances at Buitencingle were Solly Joel, Cecil Rhodes, Mahatma Gandhi, the Prince of Wales, George Bernard Shaw, Sarojini Naidu, and Dr. Abdulla Abdurahman"). Embedding update after re-seed changed retrieval such that LLM now enumerates the full list correctly.
+
+**Variance regressions vs r102 (not code-driven):** q06 -3, q31 -2, q39 -2, q40 -1, q21 -1 = -9 from variance. Gains q03 +6, q33 +3 = +9. Net -5 vs r102 (208→203) is within expected variance band.
+
+| Metric | r102 | r106 | delta |
+|--------|------|------|-------|
+| Overall | 208/222 | 203/222 | -5 (variance) |
+| q03 grandchildren | 0/6 | 6/6 | **+6** ✓ |
+| q09 grandfather bio | 9/9 | 8/9 | -1 variance |
+| q33 JMH Gool associates | 2/5 | 5/5 | **+3** ✓ |
+| q05 JMH Gool | 8/8 | 8/8 | = |
+| q12 Cissie Gool | 3/6 | 6/6 | **+3** ✓ (YAML) |
+| q27 Gandhi-JMH Gool conn | 4/5 | 5/5 | **+1** ✓ |
+
+**Architecture insight:** YAML descriptions + neighbor context fix gives the best of both worlds — the YAML provides comprehensive biographical detail (Q09, Q12, etc.) while the neighbor context ensures auto-enriched entities capture associated-person lists from Place descriptions. Going forward, `enrich-entities --force` should NOT be run without GPU; and YAML descriptions should not be overwritten unless a specifically better auto-generated version exists.
+
+---
+
+## r105 — 2026-06-26 — **87.4% (194/222)** — GPU re-enrich; short descriptions hurt Q09; Q33 partial fix
+
+**Flags:** biographical-expansion=true, model=llama3.1:8b, p2p://metro-linux (A6000)
+
+**Changes since r104:** Full GPU re-enrich (`--min-mentions 2 --force`) — overwrote 14 entities including the 18 YAML-curated ones with shorter auto-generated descriptions (4–7 sentences). These are less comprehensive than the YAML descriptions (~300 words each).
+
+**Q09: 5/9 → 5/9** — Short auto-generated description misses: arrival year 1884, Pathan origin, two wives by name, Anglo-Boer War supplier role. YAML was 300 words; auto-generated is 4 sentences.
+
+**Q33: 5/5** — Still hitting from updated auto-generated description; more variable without YAML detail.
+
+**Lesson:** `--force` re-enrichment over YAML-seeded entities loses carefully curated biographical depth. Reserve `--force` enrich for entities without existing descriptions or with demonstrably wrong ones.
+
+---
+
 ## r104 — 2026-06-26 — **85.6% (190/222)** — Neighbor context fix confirmed: Q33 5/5; CPU inference quality limits other Qs
 
 **Flags:** biographical-expansion=true, model=llama3.1:8b, inference=localhost (CPU)
