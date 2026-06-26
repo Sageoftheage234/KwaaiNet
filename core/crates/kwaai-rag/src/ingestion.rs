@@ -266,6 +266,10 @@ pub async fn extract_and_store_entities_pub(
     let chunk_batch = graph_cfg.chunk_batch.max(1);
     let store = graph_cfg.store.clone();
     let gliner = Arc::new(graph_cfg.gliner_client.clone());
+    let kb_schemas = Arc::new({
+        let g = store.lock().unwrap_or_else(|e| e.into_inner());
+        g.get_kb_entity_schemas()
+    });
 
     // Channel capacity must be large enough that spawned tasks never block waiting
     // to send while the spawn loop holds the only tokio task slot.  Using a
@@ -458,6 +462,7 @@ pub async fn extract_and_store_entities_pub(
         let entity_types_cfg = entity_types_cfg.clone();
         let gender_context = gender_context.clone();
         let gliner = gliner.clone();
+        let kb_schemas = kb_schemas.clone();
         tokio::spawn(async move {
             let _permit = permit;
             let idx = url_counter.fetch_add(1, Ordering::Relaxed) % urls.len();
@@ -516,6 +521,7 @@ pub async fn extract_and_store_entities_pub(
                 &et,
                 no_relations,
                 hints_opt,
+                &kb_schemas,
             )
             .await
             {
@@ -703,6 +709,7 @@ async fn extract_and_store_entities(
             &et,
             graph_cfg.no_relations,
             hints_opt,
+            &[],
         )
         .await
         {
@@ -1501,6 +1508,7 @@ async fn extract_entity_centric(
                 &et_refs,
                 no_relations,
                 Some(&hints),
+                &[],
             )
             .await
             {
@@ -1701,6 +1709,7 @@ async fn refine_low_confidence_entities(
             &et_refs,
             true, // no_relations — refinement is field-enrichment only
             Some(&hints),
+            &[],
         )
         .await
         {

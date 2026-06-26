@@ -4663,6 +4663,7 @@ pub async fn extract_from_text(
     entity_types: &[&str],
     no_relations: bool,
     gliner_hints: Option<&[String]>,
+    kb_schemas: &[KBEntityTypeSchema],
 ) -> Result<(Vec<ExtractedEntity>, Vec<ExtractedRelation>)> {
     // Skip the LLM entirely when the local pre-screener found no proper nouns.
     // Avoids inference cost on boilerplate, numeric, or table-heavy chunks.
@@ -4728,6 +4729,26 @@ pub async fn extract_from_text(
         _ => String::new(),
     };
 
+    // KB-specific type guidance: examples/anti-examples from the loaded schema.
+    // Empty string when no schemas are loaded (most KBs, new projects).
+    let kb_type_context = if kb_schemas.is_empty() {
+        String::new()
+    } else {
+        let lines = kb_schemas
+            .iter()
+            .map(|s| {
+                let ex = if s.examples.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (e.g. {})", s.examples.join(", "))
+                };
+                format!("  {} — {}{}", s.name, s.description, ex)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!("KB-SPECIFIC ENTITY TYPE GUIDANCE:\n{lines}\n\n")
+    };
+
     let prompt = if no_relations {
         format!(
             "{section_context}\
@@ -4741,6 +4762,7 @@ pub async fn extract_from_text(
              {{\"entities\":[{{\"name\":\"...\",\"type\":\"...\",\"description\":\"1-2 sentences from the text about who/what this entity is and why it matters here\",\"fields\":{{...}},\"extraction_confidence\":0.9}},...]}}\n\n\
              {hints_block}\
              Candidates:\n{candidates_block}\n\n\
+             {kb_type_context}\
              Entity types: {entity_list}\n\n\
              Field keys by entity type — include ONLY keys whose values are a specific date, name, or place literally present in this passage (no inference, no background knowledge):\n\
                Person:       birthDate, birthPlace, deathDate, nationality, occupation, \
@@ -4814,6 +4836,7 @@ Regrettably, Science, Several, Soon, Still, Tell, Whether, Worse.\n\
              \"relations\":[{{\"from\":\"entity name\",\"to\":\"entity name\",\"relation\":\"relation_type\"}},...]}}\n\n\
              {hints_block}\
              Candidates:\n{candidates_block}\n\n\
+             {kb_type_context}\
              Entity types: {entity_list}\n\
              Relation types: {relation_list}\n\n\
              extraction_confidence: 1.0 = entity is explicitly named and described in the text;\

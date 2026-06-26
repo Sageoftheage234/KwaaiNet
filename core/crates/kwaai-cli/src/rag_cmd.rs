@@ -4323,7 +4323,7 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                             eprintln!("Entity not found: {entity}");
                             std::process::exit(1);
                         }
-                        Some(ref n) if n.entity_type.eq_ignore_ascii_case(&new_type) => {
+                        Some(n) if n.entity_type.eq_ignore_ascii_case(new_type) => {
                             println!(
                                 "Entity '{}' is already typed as {}. Nothing to do.",
                                 n.name, n.entity_type
@@ -4344,7 +4344,7 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                                 }
                             }
                             let new_id = store
-                                .retype_entity(&n.name, &new_type)
+                                .retype_entity(n.name.as_str(), new_type)
                                 .context("retyping entity")?;
                             println!(
                                 "✅  '{}' retyped to {} (new id=0x{:x})",
@@ -8329,8 +8329,8 @@ async fn cmd_graph_timeline(action: TimelineAction, kb: &str) -> Result<()> {
                     .filter(|ev| {
                         let desc_ok = desc_filter
                             .as_ref()
-                            .map_or(true, |f| ev.description.to_lowercase().contains(f.as_str()));
-                        let date_ok = date_filter.as_ref().map_or(true, |f| {
+                            .is_none_or(|f| ev.description.to_lowercase().contains(f.as_str()));
+                        let date_ok = date_filter.as_ref().is_none_or(|f| {
                             ev.date_raw
                                 .as_deref()
                                 .unwrap_or("")
@@ -8369,8 +8369,8 @@ async fn cmd_graph_timeline(action: TimelineAction, kb: &str) -> Result<()> {
                 let deleted = graph.delete_timeline_events(eid, &|ev| {
                     let desc_ok = desc_filter
                         .as_ref()
-                        .map_or(true, |f| ev.description.to_lowercase().contains(f.as_str()));
-                    let date_ok = date_filter.as_ref().map_or(true, |f| {
+                        .is_none_or(|f| ev.description.to_lowercase().contains(f.as_str()));
+                    let date_ok = date_filter.as_ref().is_none_or(|f| {
                         ev.date_raw
                             .as_deref()
                             .unwrap_or("")
