@@ -1163,9 +1163,8 @@ async fn cmd_query(
                         drop(spinner.take());
                         let qs = understand_query_rule(&query);
                         let seq_chunk = if matches!(qs.intent, QueryIntent::TemporalEvent) {
-                            let eids = kwaai_rag::sequence::extract_temporal_entity_ids(
-                                &query, &graph,
-                            );
+                            let eids =
+                                kwaai_rag::sequence::extract_temporal_entity_ids(&query, &graph);
                             kwaai_rag::sequence::retrieve_sequence(&query, &eids, &graph)
                         } else {
                             None
