@@ -4114,16 +4114,14 @@ impl GraphStore {
                 .unwrap_or_default();
             let mut merged = existing;
             merged.extend_from_slice(new_events);
-            // Axiom 6 (global event dedup): same (event_class, year) for this entity
-            // across any chunk → keep first seen. The within-chunk Axiom 5 in
-            // resolve_extracted catches intra-chunk duplicates; this catches the
-            // cross-chunk case (same event described in two adjacent chunks).
+            // Axiom 6 (global event dedup): same (event_class, date_sort) for this
+            // entity across any chunk → keep first seen. Using full date_sort (not
+            // just year) avoids collapsing two distinct events of the same class
+            // that happen in the same year but different months (e.g., two separate
+            // meetings in 1900 at different dates).
             let mut seen: std::collections::HashSet<(String, String)> =
                 std::collections::HashSet::new();
-            merged.retain(|e| {
-                let year = &e.date_sort[..e.date_sort.len().min(4)];
-                seen.insert((e.event_class.clone(), year.to_string()))
-            });
+            merged.retain(|e| seen.insert((e.event_class.clone(), e.date_sort.clone())));
             let val = serde_json::to_vec(&merged)?;
             table.insert(key.as_ref(), val.as_slice())?;
         }
@@ -4422,16 +4420,13 @@ impl GraphStore {
                 .unwrap_or_default();
             let mut merged = existing;
             merged.push(interaction.clone());
-            // Global interaction dedup: same (label, year) for this pair across
-            // any chunk → keep first seen. Preserves multiple distinct interactions
-            // with the same label in different years (e.g., Gandhi visits in 1906
-            // and again in 1914) while eliminating cross-chunk duplicates.
+            // Global interaction dedup: same (label, date_sort) for this pair across
+            // any chunk → keep first seen. Uses full date_sort (not year) so that two
+            // distinct interactions with the same label but different months/days are
+            // both preserved (e.g., two "meeting" interactions in different months of 1900).
             let mut seen: std::collections::HashSet<(String, String)> =
                 std::collections::HashSet::new();
-            merged.retain(|ia| {
-                let year = &ia.date_sort[..ia.date_sort.len().min(4)];
-                seen.insert((ia.label.clone(), year.to_string()))
-            });
+            merged.retain(|ia| seen.insert((ia.label.clone(), ia.date_sort.clone())));
             let val = serde_json::to_vec(&merged)?;
             table.insert(key.as_ref(), val.as_slice())?;
         }
