@@ -8110,13 +8110,26 @@ async fn run_timeline_build(
     }
     println!("  Processing {total} entity-linked chunks for timeline events…");
 
+    // Wrap chunk_ids in an Arc so each task can look up its position for adjacent-chunk coref.
+    let chunk_ids = Arc::new(chunk_ids);
+
     let sem = Arc::new(tokio::sync::Semaphore::new(workers.max(1)));
     let done = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let event_total = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let ia_total = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
     let mut handles = Vec::new();
-    for cid in chunk_ids {
+    for (pos, &cid) in chunk_ids.iter().enumerate() {
+        // ±2 neighbours in document order (by chunk_id sort, which mirrors insertion order)
+        const COREF_WINDOW: usize = 2;
+        let adj_start = pos.saturating_sub(COREF_WINDOW);
+        let adj_end = (pos + COREF_WINDOW + 1).min(chunk_ids.len());
+        let adjacent: Vec<i64> = chunk_ids[adj_start..adj_end]
+            .iter()
+            .filter(|&&id| id != cid)
+            .copied()
+            .collect();
+
         let graph = graph.clone();
         let meta = meta.clone();
         let infer_url = infer_url.clone();
@@ -8130,18 +8143,38 @@ async fn run_timeline_build(
             let _permit = sem.acquire().await.ok()?;
             let chunk = meta.get_chunks(&[cid]).ok()?.into_iter().next()??;
 
-            let entity_names: Vec<String> = {
+            // Get entity names linked to this chunk AND derive rule-based coref
+            // resolutions (definite descriptions + gender pronouns) so the LLM
+            // can correctly attribute events to "my grandfather" or "he" rather
+            // than defaulting to the narrator entity.
+            let (entity_names, pronoun_map) = {
                 let g = graph.lock().ok()?;
-                g.get_chunk_entities(cid)
+                let names: Vec<String> = g
+                    .get_chunk_entities(cid)
                     .iter()
                     .filter_map(|&id| g.get_entity(id))
                     .map(|e| e.name.clone())
-                    .collect()
+                    .collect();
+                let candidates = g.coref_candidates_for_chunk(cid, &adjacent);
+                // Rule-based Tier 1 only — fast, deterministic, no LLM call needed here.
+                let desc_res =
+                    kwaai_rag::ner::resolve_definite_descriptions(&chunk.text, &candidates);
+                let pronoun_res =
+                    kwaai_rag::ner::resolve_pronouns_from_candidates(&chunk.text, &candidates);
+                let mut seen = std::collections::HashSet::new();
+                let pmap: Vec<(String, String)> = desc_res
+                    .into_iter()
+                    .chain(pronoun_res)
+                    .filter(|r| seen.insert(r.entity_name.clone()))
+                    .map(|r| (r.surface, r.entity_name))
+                    .collect();
+                (names, pmap)
             };
 
             let (raw_events, raw_interactions) = kwaai_rag::sequence::extract_temporal_events(
                 &chunk.text,
                 &entity_names,
+                &pronoun_map,
                 &infer_url,
                 &model,
             )

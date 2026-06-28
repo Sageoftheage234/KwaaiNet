@@ -586,7 +586,7 @@ pub async fn extract_and_store_entities_pub(
             // Skipped on chunks with no entities (nothing to anchor events to).
             let (raw_events, raw_interactions) = if extract_timeline && !entities.is_empty() {
                 let entity_names: Vec<String> = entities.iter().map(|e| e.name.clone()).collect();
-                crate::sequence::extract_temporal_events(&text, &entity_names, url, &model)
+                crate::sequence::extract_temporal_events(&text, &entity_names, &[], url, &model)
                     .await
                     .unwrap_or_default()
             } else {

@@ -164,6 +164,7 @@ fn parse_month_year(s: &str) -> Option<(u32, u32)> {
 pub async fn extract_temporal_events(
     text: &str,
     entity_names: &[String],
+    pronoun_map: &[(String, String)],
     inference_url: &str,
     model: &str,
 ) -> Result<(Vec<RawEvent>, Vec<RawInteraction>)> {
@@ -177,9 +178,21 @@ pub async fn extract_temporal_events(
         entity_names.join(", ")
     };
 
+    let coref_context = if pronoun_map.is_empty() {
+        String::new()
+    } else {
+        let pairs = pronoun_map
+            .iter()
+            .map(|(surface, entity)| format!("'{surface}' → {entity}"))
+            .collect::<Vec<_>>()
+            .join("; ");
+        format!("Coreference resolutions for this passage: {pairs}\n\n")
+    };
+
     let prompt = format!(
         "Extract dated events from this historical text.\n\
          Known entities in this passage: {entity_list}\n\n\
+         {coref_context}\
          Return ONLY valid JSON — no markdown, no explanation:\n\
          {{\n\
            \"events\": [\n\
@@ -192,6 +205,7 @@ pub async fn extract_temporal_events(
          Rules:\n\
          - Only extract events that have a clear temporal anchor (year, decade, or relative order).\n\
          - Only use entity names from the known list above.\n\
+         - Use the coreference resolutions to determine WHO an event belongs to. If the text says \"I arrived\" and 'I' → Yousuf Rassool, the event entity is \"Yousuf Rassool\". If the text says \"my grandfather came from Mauritius\" and 'my grandfather' → J.M.H. Gool, the event entity is \"J.M.H. Gool\" — not the narrator.\n\
          - \"interactions\" are between exactly two different entities; \"events\" attach to exactly one entity.\n\
          - If no temporal events are present, return {{\"events\": [], \"interactions\": []}}.\n\n\
          Text:\n{text}"

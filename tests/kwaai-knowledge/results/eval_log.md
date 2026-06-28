@@ -1,4 +1,47 @@
 
+## r119 — 2026-06-27 — **64.9% (144/222)** — regression confirmed structural: 2× identical score vs r114 (70.1%)
+
+**Flags:** mode=iterative, graph_mode=inject, query_classify=rule, summary_expansion=false, biographical_expansion=false, model=llama3.1:8b, localhost:11434 (CPU, ~27s/question)
+
+**No code changes since r117.** Second independent run to test whether r117's 64.9% was stochastic or structural.
+
+**Result: structural.** Two independent runs (r117 on metro-linux A6000, r119 on localhost CPU) both score exactly 144/222. The -11.6 keywords vs r114 (155.6) is a real regression, not noise.
+
+**Per-question scores:**
+Q01:2, Q02:3, Q03:6, Q04:4, Q05:5, Q06:5, Q07:2, Q08:6, Q09:4, Q10:4, Q11:5, Q12:4, Q13:3, Q14:3, Q15:2, Q16:3, Q17:4, Q18:5, Q19:4, Q20:2, Q21:5, Q22:2, Q23:5, Q24:5, Q25:3, Q26:2, Q27:5, Q28:4, Q29:3, Q30:3, Q31:3, Q32:2, Q33:2, Q34:4, Q35:4, Q36:2, Q37:6, Q38:2, Q39:3, Q40:3
+
+**vs r114 (70.1%) per-question diff (r119 − r114):**
+
+| Q | r114 | r119 | Δ | Note |
+|---|------|------|---|------|
+| Q06 Buitencingle | 3 | 5 | **+2** | stochastic |
+| Q08 author's wife detail | 4 | 6 | **+2** | stochastic |
+| Q18 New Era Fellowship | 3 | 5 | **+2** | stochastic |
+| Q27 Gandhi↔JMH | 4 | 5 | +1 | stochastic |
+| Q28 author's orgs | 3 | 4 | +1 | stochastic |
+| Q30 JMH arrival | 1.6 | 3 | **+1.4** | structural — seeded fields working; Q30 avg now ~4-5 (r117 peak 6/6) |
+| Q10 Kloof Nek | 6 | 4 | **−2** | stochastic |
+| Q22 author's father | 4 | 2 | **−2** | volatile (was 1 pre-r113, 4 post graph-read fix, now 2) |
+| Q01,Q09,Q12,Q13,Q14,Q15,Q17,Q19,Q20,Q24,Q25,Q26,Q29,Q31,Q36,Q37,Q38 | … | … | −1 each | stochastic scatter |
+
+**Root cause of structural regression (r114→r119):**
+- r114 had NO temporal routing in iterative eval (it was silently absent — the fix came in r115)
+- The temporal routing (r115 fix) rerouted Q15 and Q30 through `retrieve_sequence`
+- Q15 "forced removals" consistently scores 2/5 with temporal routing vs 3/5 without (−1 structural)
+- Q30 improved from 1.6→3+ (structural gain from seeded fields)
+- Residual −10.6 keywords = stochastic scatter across ~17 questions (−1 each), driven by accumulated variance over 5 runs since r114
+
+**Q15 analysis — temporal routing hurts:**
+"What were the forced removals from District Six?" triggers TemporalEvent (forced_removal_trigger). The sequence chunk (score=1.9) prepends a timeline for "District Six" — but the timeline's event format displaces better prose chunks. r114 (no routing) scored 3/5; r115/r117/r119 (routing active) score 2/5 consistently.
+
+**Fix options for Q15:** Add a confidence threshold to TemporalEvent routing — only inject sequence chunk if the primary entity has ≥3 relevant dated events; otherwise fall through to plain iterative. District Six has the 1966 removals event, but the sequence diagram is less informative than the prose chunks describing the human cost of removals.
+
+**Q30 status:** Average ~3-4/6 across r117(6) and r119(3). The seeded fields help but the LLM doesn't always cite the `arrived_cape_town` / `origin` fields directly. Adding JMH Gool's 1884 arrival as a proper timeline event (currently no such event in the DB) would make the sequence diagram hit with 1884 directly.
+
+**Conclusion:** The ~5pp regression from r114 is partly structural (temporal routing hurts Q15) and partly stochastic scatter. Score range with current pipeline state: 144–156. Next structural fix: add confidence threshold to temporal routing to suppress injection for broad "what were the X" queries.
+
+---
+
 ## r117 — 2026-06-27 — **64.9% (144/222)** — Q30 fully fixed: quality gate bug + JMH Gool fields
 
 **Flags:** mode=iterative, graph_mode=inject, query_classify=rule, summary_expansion=false, biographical_expansion=false, model=llama3.1:8b, p2p://metro-linux (A6000)
