@@ -1,4 +1,28 @@
 
+## Timeline rebuild — 2026-06-28 — **v0.4.126 Ax4/Ax5 + kinship** — CPU baseline
+
+**New axioms (v0.4.126):**
+4. Date-range: drop events where normalize_date returns "9999-12-31" (unparseable) or year ∉ [1700, 2099]
+5. Event dedup: drop same (entity_id, event_class, year) pair within a chunk (LLM sometimes emits two phrasings of the same event)
+5b. Interaction dedup: drop same (from_id, to_id) pair within a chunk
+- Rule-based kinship extraction: `extract_kinship_interactions()` — no LLM — emits child_of/spouse_of/member_of etc. from sentence patterns
+- `normalize_date` bug fixed: month+year now parsed before bare year ("February 1914" → "1914-02-01" not "1914-01-01")
+
+**Results vs v0.4.125 CPU (669 events, 93 interactions):**
+- Events: 669 → 337 (−50% — Axiom 4 removing all unparseable and out-of-range dates)
+- Interactions: 93 → 86 (−8%)
+- Gandhi: 0 spurious Yousuf Rassool interactions ✅ (co-presence axiom still holding)
+- JMH Gool: "1652", "1795", "1852-1928", "xiii", "fifties", "50" events all eliminated ✅
+- Cross-chunk duplicates remain (e.g. "1886 — was born" ×2 for JMH Gool) — Axiom 5 deduplicates within chunk only; global dedup at storage time is a follow-up
+
+**Known gaps for v0.4.127:**
+- Weekday "dates" (e.g. "Monday") survive in interactions — date-range axiom not applied to interactions
+- Cross-chunk event dedup needed in `store_timeline_events`
+
+**GPU rebuild pending** — metro-linux still not DHT-discoverable; CPU quality is lower.
+
+---
+
 ## Timeline rebuild — 2026-06-28 — **v0.4.125 knowledge axioms** — CPU baseline (GPU rebuild pending)
 
 **Axioms applied:**
