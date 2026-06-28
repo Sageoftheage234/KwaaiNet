@@ -2226,9 +2226,11 @@ pub enum TimelineAction {
     /// Extract temporal events from all entity-linked chunks and store them in the graph DB.
     /// Run after `graph build` to populate lifeline and interaction data.
     Build {
-        /// Inference URL for event extraction (defaults to config inference_url)
-        #[arg(long, value_name = "URL")]
-        inference_url: Option<String>,
+        /// Inference URL(s) for event extraction (comma-separated or repeated flag).
+        /// Defaults to config inference_url. Multiple URLs are load-balanced across workers
+        /// (e.g. "p2p://PEER1,p2p://PEER2" or --inference-urls URL1 --inference-urls URL2).
+        #[arg(long, value_name = "URL", value_delimiter = ',')]
+        inference_urls: Vec<String>,
 
         /// LLM model name (e.g. "llama3.1:8b")
         #[arg(long, default_value = "llama3.1:8b", value_name = "MODEL")]

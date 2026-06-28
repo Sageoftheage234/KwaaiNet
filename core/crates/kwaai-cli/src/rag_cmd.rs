@@ -2804,10 +2804,15 @@ async fn cmd_graph(action: GraphAction, kb: String) -> Result<()> {
                         "Model: {}  Workers: {}  Inference: {}",
                         graph_cfg.model, graph_cfg.workers, graph_cfg.inference_url
                     ));
+                    let timeline_urls = if graph_cfg.inference_urls.is_empty() {
+                        vec![graph_cfg.inference_url.clone()]
+                    } else {
+                        graph_cfg.inference_urls.clone()
+                    };
                     let (ev_count, ia_count) = run_timeline_build(
                         store.clone(),
                         Arc::new(meta),
-                        Arc::new(graph_cfg.inference_url.clone()),
+                        Arc::new(timeline_urls),
                         Arc::new(graph_cfg.model.clone()),
                         graph_cfg.workers,
                     )
@@ -8091,7 +8096,7 @@ async fn cmd_import(input_dir: std::path::PathBuf, since: u64, kb: String) -> Re
 async fn run_timeline_build(
     graph: Arc<Mutex<GraphStore>>,
     meta: Arc<MetaStore>,
-    infer_url: Arc<String>,
+    infer_urls: Arc<Vec<String>>,
     model: Arc<String>,
     workers: usize,
 ) -> (usize, usize) {
@@ -8117,6 +8122,7 @@ async fn run_timeline_build(
     let done = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let event_total = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let ia_total = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let url_counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
     let mut handles = Vec::new();
     for (pos, &cid) in chunk_ids.iter().enumerate() {
@@ -8132,7 +8138,8 @@ async fn run_timeline_build(
 
         let graph = graph.clone();
         let meta = meta.clone();
-        let infer_url = infer_url.clone();
+        let infer_urls = infer_urls.clone();
+        let url_counter = url_counter.clone();
         let model = model.clone();
         let sem = sem.clone();
         let done = done.clone();
@@ -8141,6 +8148,11 @@ async fn run_timeline_build(
 
         let handle = tokio::spawn(async move {
             let _permit = sem.acquire().await.ok()?;
+            let infer_url = {
+                let idx = url_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                    % infer_urls.len();
+                infer_urls[idx].clone()
+            };
             let chunk = meta.get_chunks(&[cid]).ok()?.into_iter().next()??;
 
             // Get entity names linked to this chunk AND derive rule-based coref
@@ -8470,15 +8482,19 @@ async fn cmd_graph_timeline(action: TimelineAction, kb: &str) -> Result<()> {
             }
 
             TimelineAction::Build {
-                inference_url,
+                inference_urls,
                 model,
                 workers,
                 reset,
             } => {
-                let raw_infer_url = inference_url.unwrap_or_else(|| rag_cfg.inference_url.clone());
+                let raw_urls: Vec<String> = if inference_urls.is_empty() {
+                    vec![rag_cfg.inference_url.clone()]
+                } else {
+                    inference_urls
+                };
 
                 // Resolve p2p:// / mux:// URLs to local HTTP proxies.
-                let infer_url = {
+                let resolved_urls = {
                     use kwaai_p2p_daemon::{P2PClient, DEFAULT_SOCKET_NAME};
                     let sock = std::env::var("KWAAINET_SOCKET")
                         .unwrap_or_else(|_| DEFAULT_SOCKET_NAME.to_string());
@@ -8491,9 +8507,9 @@ async fn cmd_graph_timeline(action: TimelineAction, kb: &str) -> Result<()> {
                             .await
                             .context("p2p daemon not running — start with `kwaainet start`")?,
                     );
-                    let (mut resolved, _handles) =
-                        crate::ollama_proxy::resolve_inference_urls(&[raw_infer_url], &p2p).await?;
-                    resolved.remove(0)
+                    let (resolved, _handles) =
+                        crate::ollama_proxy::resolve_inference_urls(&raw_urls, &p2p).await?;
+                    resolved
                 };
 
                 if reset {
@@ -8501,15 +8517,16 @@ async fn cmd_graph_timeline(action: TimelineAction, kb: &str) -> Result<()> {
                     print_info("Timeline tables cleared.");
                 }
 
+                let url_display = resolved_urls.join(", ");
                 print_box_header(&format!("Timeline Build ({})", kb));
                 print_info(&format!(
-                    "Model: {model}  Workers: {workers}  Inference: {infer_url}"
+                    "Model: {model}  Workers: {workers}  Inference: {url_display}"
                 ));
 
                 let (ev_count, ia_count) = run_timeline_build(
                     Arc::new(Mutex::new(graph)),
                     Arc::new(meta),
-                    Arc::new(infer_url),
+                    Arc::new(resolved_urls),
                     Arc::new(model),
                     workers,
                 )
