@@ -8140,7 +8140,10 @@ async fn run_timeline_build(
             .map(|nid| kwaai_rag::sequence::narrator_kinship_map(nid, &g))
             .unwrap_or_default();
         if !map.is_empty() {
-            println!("  Narrator kinship map: {} role phrase(s) resolved.", map.len());
+            println!(
+                "  Narrator kinship map: {} role phrase(s) resolved.",
+                map.len()
+            );
         }
         Arc::new(map)
     };
@@ -8231,9 +8234,7 @@ async fn run_timeline_build(
                 // but are referenced by first-person kinship role (grandfather, mother, wife, etc.).
                 let clean_lower = clean_text.to_lowercase();
                 for (phrase, (_, entity_name)) in narrator_kinship.as_ref() {
-                    if clean_lower.contains(phrase.as_str())
-                        && seen.insert(entity_name.clone())
-                    {
+                    if clean_lower.contains(phrase.as_str()) && seen.insert(entity_name.clone()) {
                         pmap.push((phrase.clone(), entity_name.clone()));
                     }
                 }
@@ -8455,8 +8456,7 @@ async fn cmd_graph_timeline(action: TimelineAction, kb: &str) -> Result<()> {
                         .into_iter()
                         // Skip birth/death for Person — already shown in the header block above.
                         .filter(|e| {
-                            !(is_person
-                                && (e.event_class == "birth" || e.event_class == "death"))
+                            !(is_person && (e.event_class == "birth" || e.event_class == "death"))
                         })
                         .collect();
                     sorted.sort_by(|a, b| a.date_sort.cmp(&b.date_sort));

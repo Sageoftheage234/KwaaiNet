@@ -2721,13 +2721,26 @@ fn narrator_kinship_grandfather_resolved() {
     g.upsert_entity(narrator).unwrap();
     g.upsert_entity(grandpa).unwrap();
     // Seed grandparent_of: grandpa → narrator (direction matches family-tree YAML)
-    g.upsert_relation(grandpa_id, narrator_id, "grandparent_of", 0).unwrap();
+    g.upsert_relation(grandpa_id, narrator_id, "grandparent_of", 0)
+        .unwrap();
 
     let map = narrator_kinship_map(narrator_id, &g);
-    assert_eq!(map.get("grandfather").map(|(_, n)| n.as_str()), Some("JMH Gool"));
-    assert_eq!(map.get("grandpa").map(|(_, n)| n.as_str()), Some("JMH Gool"));
-    assert_eq!(map.get("my grandfather").map(|(_, n)| n.as_str()), Some("JMH Gool"));
-    assert_eq!(map.get("my grandpa").map(|(_, n)| n.as_str()), Some("JMH Gool"));
+    assert_eq!(
+        map.get("grandfather").map(|(_, n)| n.as_str()),
+        Some("JMH Gool")
+    );
+    assert_eq!(
+        map.get("grandpa").map(|(_, n)| n.as_str()),
+        Some("JMH Gool")
+    );
+    assert_eq!(
+        map.get("my grandfather").map(|(_, n)| n.as_str()),
+        Some("JMH Gool")
+    );
+    assert_eq!(
+        map.get("my grandpa").map(|(_, n)| n.as_str()),
+        Some("JMH Gool")
+    );
 }
 
 #[test]
@@ -2755,11 +2768,18 @@ fn narrator_kinship_grandmother_resolved() {
     let grandma_id = grandma.id;
     g.upsert_entity(narrator).unwrap();
     g.upsert_entity(grandma).unwrap();
-    g.upsert_relation(grandma_id, narrator_id, "grandparent_of", 0).unwrap();
+    g.upsert_relation(grandma_id, narrator_id, "grandparent_of", 0)
+        .unwrap();
 
     let map = narrator_kinship_map(narrator_id, &g);
-    assert_eq!(map.get("grandmother").map(|(_, n)| n.as_str()), Some("Wahida Gool"));
-    assert_eq!(map.get("my grandmother").map(|(_, n)| n.as_str()), Some("Wahida Gool"));
+    assert_eq!(
+        map.get("grandmother").map(|(_, n)| n.as_str()),
+        Some("Wahida Gool")
+    );
+    assert_eq!(
+        map.get("my grandmother").map(|(_, n)| n.as_str()),
+        Some("Wahida Gool")
+    );
 }
 
 #[test]
@@ -2791,13 +2811,18 @@ fn narrator_kinship_parent_of_vs_child_disambiguated() {
     g.upsert_entity(mother).unwrap();
     g.upsert_entity(child).unwrap();
     // mother is parent of narrator (incoming)
-    g.upsert_relation(mother_id, narrator_id, "parent_of", 0).unwrap();
+    g.upsert_relation(mother_id, narrator_id, "parent_of", 0)
+        .unwrap();
     // narrator is parent of child (outgoing)
-    g.upsert_relation(narrator_id, child_id, "parent_of", 0).unwrap();
+    g.upsert_relation(narrator_id, child_id, "parent_of", 0)
+        .unwrap();
 
     let map = narrator_kinship_map(narrator_id, &g);
     // Mother should appear as "mother", child should NOT appear as "parent"
-    assert_eq!(map.get("mother").map(|(_, n)| n.as_str()), Some("Ayesha Rassool"));
+    assert_eq!(
+        map.get("mother").map(|(_, n)| n.as_str()),
+        Some("Ayesha Rassool")
+    );
     assert!(
         map.values().all(|(_, n)| n != "Reza Rassool"),
         "narrator's child must not appear as a kinship role"
