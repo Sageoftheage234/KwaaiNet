@@ -8359,15 +8359,62 @@ async fn cmd_graph_timeline(action: TimelineAction, kb: &str) -> Result<()> {
                     bail!("entity '{}' not found in graph", entity);
                 };
                 let events = graph.get_timeline_events(&[eid]);
-                let entity_name = graph
-                    .get_entity(eid)
+                let entity_obj = graph.get_entity(eid);
+                let entity_name = entity_obj
+                    .as_ref()
                     .map(|e| e.name.clone())
                     .unwrap_or_else(|| entity.clone());
+                let is_person = entity_obj
+                    .as_ref()
+                    .map(|e| e.entity_type.to_lowercase() == "person")
+                    .unwrap_or(false);
                 print_box_header(&format!("Timeline: {} ({})", entity_name, kb));
-                if events.is_empty() {
+
+                // For Person entities, always display birth/death at the top.
+                // Source priority: timeline event → entity fields → placeholder.
+                if is_person {
+                    let birth_from_events = events
+                        .iter()
+                        .filter(|e| e.event_class == "birth")
+                        .min_by(|a, b| a.date_sort.cmp(&b.date_sort))
+                        .map(|e| e.date_raw.clone().unwrap_or_else(|| e.date_sort.clone()));
+                    let death_from_events = events
+                        .iter()
+                        .filter(|e| e.event_class == "death")
+                        .min_by(|a, b| a.date_sort.cmp(&b.date_sort))
+                        .map(|e| e.date_raw.clone().unwrap_or_else(|| e.date_sort.clone()));
+                    let birth_str = birth_from_events
+                        .or_else(|| {
+                            entity_obj
+                                .as_ref()
+                                .and_then(|e| e.fields.get("birthDate"))
+                                .map(|f| f.value.clone())
+                        })
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let death_str = death_from_events
+                        .or_else(|| {
+                            entity_obj
+                                .as_ref()
+                                .and_then(|e| e.fields.get("deathDate"))
+                                .map(|f| f.value.clone())
+                        })
+                        .unwrap_or_else(|| "unknown".to_string());
+                    println!("  [birth       ] {birth_str}");
+                    println!("  [death       ] {death_str}");
+                    println!();
+                }
+
+                if events.is_empty() && !is_person {
                     print_info("No timeline events found. Run `graph timeline build` first.");
                 } else {
-                    let mut sorted = events;
+                    let mut sorted: Vec<_> = events
+                        .into_iter()
+                        // Skip birth/death for Person — already shown in the header block above.
+                        .filter(|e| {
+                            !(is_person
+                                && (e.event_class == "birth" || e.event_class == "death"))
+                        })
+                        .collect();
                     sorted.sort_by(|a, b| a.date_sort.cmp(&b.date_sort));
                     for ev in &sorted {
                         let date = ev.date_raw.as_deref().unwrap_or("(date unknown)");
