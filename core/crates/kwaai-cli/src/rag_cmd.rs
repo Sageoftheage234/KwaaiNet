@@ -8115,6 +8115,36 @@ async fn run_timeline_build(
     }
     println!("  Processing {total} entity-linked chunks for timeline events…");
 
+    // Compute narrator kinship map once for the whole build.
+    // This walks the narrator entity's graph edges to produce a phrase → (id, name) map
+    // (e.g. "my grandfather" → JMH Gool) used to augment per-chunk coref candidates so that
+    // kinship phrases resolve to canonical entity names even when no canonical name appears verbatim.
+    let narrator_kinship: Arc<std::collections::HashMap<String, (i64, String)>> = {
+        let g = graph.lock().unwrap();
+        // Find the narrator entity by looking for an entity whose aliases include "narrator",
+        // "author", "I", or "the narrator". The doc schema default_narrator field can also supply
+        // the canonical name; fall back to scanning alias tokens when not seeded.
+        let narrator_id = g
+            .all_entities()
+            .find(|e| {
+                let n = e.name.to_lowercase();
+                n == "narrator"
+                    || n == "author"
+                    || e.aliases.iter().any(|a| {
+                        let al = a.to_lowercase();
+                        al == "narrator" || al == "author" || al == "i" || al == "the narrator"
+                    })
+            })
+            .map(|e| e.id);
+        let map = narrator_id
+            .map(|nid| kwaai_rag::sequence::narrator_kinship_map(nid, &g))
+            .unwrap_or_default();
+        if !map.is_empty() {
+            println!("  Narrator kinship map: {} role phrase(s) resolved.", map.len());
+        }
+        Arc::new(map)
+    };
+
     // Wrap chunk_ids in an Arc so each task can look up its position for adjacent-chunk coref.
     let chunk_ids = Arc::new(chunk_ids);
 
@@ -8145,6 +8175,7 @@ async fn run_timeline_build(
         let done = done.clone();
         let ev_total = event_total.clone();
         let ia_total = ia_total.clone();
+        let narrator_kinship = narrator_kinship.clone();
 
         let handle = tokio::spawn(async move {
             let _permit = sem.acquire().await.ok()?;
@@ -8187,12 +8218,25 @@ async fn run_timeline_build(
                 let pronoun_res =
                     kwaai_rag::ner::resolve_pronouns_from_candidates(&clean_text, &candidates);
                 let mut seen = std::collections::HashSet::new();
-                let pmap: Vec<(String, String)> = desc_res
+                let mut pmap: Vec<(String, String)> = desc_res
                     .into_iter()
                     .chain(pronoun_res)
                     .filter(|r| seen.insert(r.entity_name.clone()))
                     .map(|r| (r.surface, r.entity_name))
                     .collect();
+                // Fix 2 — Kinship pronoun resolution: augment pmap with narrator graph edges.
+                // "my grandfather" → JMH Gool is resolved by narrator_kinship_map(), which walks
+                // the narrator's `grandparent_of` edges seeded from the family-tree YAML.
+                // This injects entities that aren't mentioned by canonical name in the chunk
+                // but are referenced by first-person kinship role (grandfather, mother, wife, etc.).
+                let clean_lower = clean_text.to_lowercase();
+                for (phrase, (_, entity_name)) in narrator_kinship.as_ref() {
+                    if clean_lower.contains(phrase.as_str())
+                        && seen.insert(entity_name.clone())
+                    {
+                        pmap.push((phrase.clone(), entity_name.clone()));
+                    }
+                }
                 // Whitelist: entities that coref resolves to (e.g. JMH Gool via "my grandfather")
                 let coref_names: std::collections::HashSet<&str> =
                     pmap.iter().map(|(_, n)| n.as_str()).collect();

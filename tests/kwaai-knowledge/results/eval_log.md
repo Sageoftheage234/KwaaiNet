@@ -1,4 +1,25 @@
 
+## Timeline rebuild — 2026-06-28 — **v0.4.128 Axiom 6 full date_sort** — CPU rebuild
+
+**Fix (v0.4.128):**
+- Axiom 6 interaction dedup: changed from `(label, year)` to `(label, date_sort)` key — mirrors the same fix already applied to event dedup
+- Two interactions with the same label but different months in the same year now both survive (e.g., "agreed to marry Wahida" 1900-01-01 ≠ "meeting with Lord Roberts" 1900-12-01)
+
+**Results vs v0.4.127 (337 events, 86 interactions):**
+- Events: 337 (unchanged)
+- Interactions: 86 (unchanged)
+- JMH Gool `[meeting] 1900s — agreed to marry Wahida` ✅ **now present** (was dropped in v0.4.127 by year-based dedup)
+- JMH Gool `[meeting] 1900-12-6 — meeting with Lord Roberts` ✅ also present — both 1900-era events survive
+- `[birth] 1886 — was born` still appears exactly once ✅ — exact-date dedup still working
+- Yousuf Rassool still shows 1795/1806 historical misattribution — narrator attribution axiom needed (separate work)
+
+**Known gaps:**
+- Weekday "dates" (e.g. "Monday") survive in interactions
+- Historical context misattribution to narrator entity (1795/1806 for Yousuf Rassool)
+- GPU rebuild still pending (metro-linux not DHT-discoverable)
+
+---
+
 ## Timeline rebuild — 2026-06-28 — **v0.4.126 Ax4/Ax5 + kinship** — CPU baseline
 
 **New axioms (v0.4.126):**

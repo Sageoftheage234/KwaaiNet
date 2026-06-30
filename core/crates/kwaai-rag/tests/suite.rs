@@ -2494,7 +2494,8 @@ fn inference_url_proxy_required_for_p2p_schemes() {
 // sequence: knowledge axioms + rule-based kinship extraction
 
 use kwaai_rag::sequence::{
-    entity_present_in_text, extract_kinship_interactions, normalize_date, strip_inline_footnotes,
+    entity_present_in_text, extract_kinship_interactions, narrator_kinship_map, normalize_date,
+    strip_inline_footnotes,
 };
 
 #[test]
@@ -2684,4 +2685,130 @@ fn strip_footnotes_letter_citation_removed() {
     assert!(result.contains("new force had been born"));
     assert!(!result.contains("Letter from J. M. H. Gool"));
     assert!(!result.contains("First of 7 pages"));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// narrator_kinship_map — Fix 2
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn make_kinship_graph(dir: &TempDir) -> GraphStore {
+    GraphStore::open(dir.path(), test_tid()).unwrap()
+}
+
+#[test]
+fn narrator_kinship_grandfather_resolved() {
+    let dir = TempDir::new().unwrap();
+    let mut g = make_kinship_graph(&dir);
+
+    let narrator = EntityNode {
+        id: entity_id("Yousuf Rassool", "Person"),
+        name: "Yousuf Rassool".to_string(),
+        entity_type: "Person".to_string(),
+        aliases: vec!["narrator".to_string(), "I".to_string()],
+        gender: Some("Male".to_string()),
+        ..make_entity("Yousuf Rassool", "Person")
+    };
+    let grandpa = EntityNode {
+        id: entity_id("JMH Gool", "Person"),
+        name: "JMH Gool".to_string(),
+        entity_type: "Person".to_string(),
+        aliases: vec!["J.M.H. Gool".to_string()],
+        gender: Some("Male".to_string()),
+        ..make_entity("JMH Gool", "Person")
+    };
+    let narrator_id = narrator.id;
+    let grandpa_id = grandpa.id;
+    g.upsert_entity(narrator).unwrap();
+    g.upsert_entity(grandpa).unwrap();
+    // Seed grandparent_of: grandpa → narrator (direction matches family-tree YAML)
+    g.upsert_relation(grandpa_id, narrator_id, "grandparent_of", 0).unwrap();
+
+    let map = narrator_kinship_map(narrator_id, &g);
+    assert_eq!(map.get("grandfather").map(|(_, n)| n.as_str()), Some("JMH Gool"));
+    assert_eq!(map.get("grandpa").map(|(_, n)| n.as_str()), Some("JMH Gool"));
+    assert_eq!(map.get("my grandfather").map(|(_, n)| n.as_str()), Some("JMH Gool"));
+    assert_eq!(map.get("my grandpa").map(|(_, n)| n.as_str()), Some("JMH Gool"));
+}
+
+#[test]
+fn narrator_kinship_grandmother_resolved() {
+    let dir = TempDir::new().unwrap();
+    let mut g = make_kinship_graph(&dir);
+
+    let narrator = EntityNode {
+        id: entity_id("Yousuf Rassool", "Person"),
+        name: "Yousuf Rassool".to_string(),
+        entity_type: "Person".to_string(),
+        aliases: vec!["narrator".to_string()],
+        gender: Some("Male".to_string()),
+        ..make_entity("Yousuf Rassool", "Person")
+    };
+    let grandma = EntityNode {
+        id: entity_id("Wahida Gool", "Person"),
+        name: "Wahida Gool".to_string(),
+        entity_type: "Person".to_string(),
+        aliases: vec![],
+        gender: Some("Female".to_string()),
+        ..make_entity("Wahida Gool", "Person")
+    };
+    let narrator_id = narrator.id;
+    let grandma_id = grandma.id;
+    g.upsert_entity(narrator).unwrap();
+    g.upsert_entity(grandma).unwrap();
+    g.upsert_relation(grandma_id, narrator_id, "grandparent_of", 0).unwrap();
+
+    let map = narrator_kinship_map(narrator_id, &g);
+    assert_eq!(map.get("grandmother").map(|(_, n)| n.as_str()), Some("Wahida Gool"));
+    assert_eq!(map.get("my grandmother").map(|(_, n)| n.as_str()), Some("Wahida Gool"));
+}
+
+#[test]
+fn narrator_kinship_parent_of_vs_child_disambiguated() {
+    let dir = TempDir::new().unwrap();
+    let mut g = make_kinship_graph(&dir);
+
+    let narrator = make_entity("Yousuf Rassool", "Person");
+    let mother = EntityNode {
+        id: entity_id("Ayesha Rassool", "Person"),
+        name: "Ayesha Rassool".to_string(),
+        entity_type: "Person".to_string(),
+        aliases: vec![],
+        gender: Some("Female".to_string()),
+        ..make_entity("Ayesha Rassool", "Person")
+    };
+    let child = EntityNode {
+        id: entity_id("Reza Rassool", "Person"),
+        name: "Reza Rassool".to_string(),
+        entity_type: "Person".to_string(),
+        aliases: vec![],
+        gender: Some("Male".to_string()),
+        ..make_entity("Reza Rassool", "Person")
+    };
+    let narrator_id = narrator.id;
+    let mother_id = mother.id;
+    let child_id = child.id;
+    g.upsert_entity(narrator).unwrap();
+    g.upsert_entity(mother).unwrap();
+    g.upsert_entity(child).unwrap();
+    // mother is parent of narrator (incoming)
+    g.upsert_relation(mother_id, narrator_id, "parent_of", 0).unwrap();
+    // narrator is parent of child (outgoing)
+    g.upsert_relation(narrator_id, child_id, "parent_of", 0).unwrap();
+
+    let map = narrator_kinship_map(narrator_id, &g);
+    // Mother should appear as "mother", child should NOT appear as "parent"
+    assert_eq!(map.get("mother").map(|(_, n)| n.as_str()), Some("Ayesha Rassool"));
+    assert!(
+        map.values().all(|(_, n)| n != "Reza Rassool"),
+        "narrator's child must not appear as a kinship role"
+    );
+}
+
+#[test]
+fn narrator_kinship_empty_when_no_narrator_in_graph() {
+    let dir = TempDir::new().unwrap();
+    let g = make_kinship_graph(&dir);
+    // Narrator ID that doesn't exist in the graph
+    let map = narrator_kinship_map(i64::MAX, &g);
+    assert!(map.is_empty());
 }

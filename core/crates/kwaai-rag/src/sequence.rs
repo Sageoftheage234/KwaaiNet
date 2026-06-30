@@ -971,3 +971,91 @@ pub fn extract_temporal_entity_ids(query: &str, graph: &GraphStore) -> Vec<i64> 
     candidates.sort_by(|a, b| b.1.cmp(&a.1));
     candidates.into_iter().map(|(id, _)| id).take(3).collect()
 }
+
+/// Build a map from first-person kinship role phrases (e.g. "my grandfather") to the
+/// entity they resolve to, by walking the narrator's edges in the graph.
+///
+/// Returns HashMap<phrase, (entity_id, entity_name)>. Only `grandparent_of`, `parent_of`
+/// (disambiguated via outgoing/incoming direction), and `spouse_of` are mapped — these are
+/// the relation types seeded by the family-tree YAML and present in D6.
+///
+/// Used in timeline build to augment coreference candidates per chunk: when "my grandfather"
+/// appears in a chunk, the narrator's grandparent entity is injected into the entity whitelist
+/// even if its canonical name does not appear verbatim in the chunk text.
+pub fn narrator_kinship_map(
+    narrator_id: i64,
+    graph: &GraphStore,
+) -> std::collections::HashMap<String, (i64, String)> {
+    use std::collections::{HashMap, HashSet};
+
+    // Narrator's directly outgoing parent_of edges → these are the narrator's children.
+    // All other "parent_of" entries in neighbors_of are incoming (entity → narrator).
+    let narrator_children: HashSet<i64> = graph
+        .outgoing_relations(narrator_id)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(_, rel, _, _)| rel == "parent_of")
+        .map(|(id, _, _, _)| id)
+        .collect();
+
+    let mut map: HashMap<String, (i64, String)> = HashMap::new();
+
+    for (nbr_id, rel_type, _) in graph.neighbors_of(narrator_id) {
+        let Some(entity) = graph.get_entity(nbr_id) else {
+            continue;
+        };
+        let name = entity.name.clone();
+        let gender = entity.gender.as_deref().unwrap_or("");
+
+        match rel_type.as_str() {
+            "grandparent_of" => {
+                // Bidirectional, but "grandparent_of" on adj[narrator] always means
+                // the neighbour IS a grandparent of the narrator (the YAML seeds it that way).
+                let (singular, possessive) = match gender {
+                    "Male" => ("grandfather", "grandpa"),
+                    "Female" => ("grandmother", "grandma"),
+                    _ => ("grandparent", "grandparent"),
+                };
+                for phrase in [
+                    singular,
+                    possessive,
+                    &format!("my {singular}"),
+                    &format!("my {possessive}"),
+                ] {
+                    map.entry(phrase.to_string())
+                        .or_insert_with(|| (nbr_id, name.clone()));
+                }
+            }
+            "parent_of" => {
+                if narrator_children.contains(&nbr_id) {
+                    // narrator → child edge; skip
+                    continue;
+                }
+                // parent → narrator edge (narrator's parent)
+                let role = match gender {
+                    "Male" => "father",
+                    "Female" => "mother",
+                    _ => continue,
+                };
+                for phrase in [role, &format!("my {role}")] {
+                    map.entry(phrase.to_string())
+                        .or_insert_with(|| (nbr_id, name.clone()));
+                }
+            }
+            "spouse_of" => {
+                let role = match gender {
+                    "Male" => "husband",
+                    "Female" => "wife",
+                    _ => continue,
+                };
+                for phrase in [role, &format!("my {role}")] {
+                    map.entry(phrase.to_string())
+                        .or_insert_with(|| (nbr_id, name.clone()));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    map
+}
