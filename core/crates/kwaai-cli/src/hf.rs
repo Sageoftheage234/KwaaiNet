@@ -33,7 +33,10 @@ fn safe_join(base: &Path, untrusted: &str) -> Result<PathBuf> {
         }
     }
     if !normalized.starts_with(base) {
-        bail!("Refusing to write outside snapshot directory: {}", untrusted);
+        bail!(
+            "Refusing to write outside snapshot directory: {}",
+            untrusted
+        );
     }
     Ok(normalized)
 }
@@ -324,7 +327,7 @@ pub async fn download(model_id: &str, hf_token: Option<&str>) -> Result<PathBuf>
     let n = files.len();
     for (i, fname) in files.iter().enumerate() {
         let dest = safe_join(&snapshot_dir, fname)
-    .with_context(|| format!("rejecting unsafe filename from HF API: {}", fname))?;
+            .with_context(|| format!("rejecting unsafe filename from HF API: {}", fname))?;
 
         if dest.exists() {
             let size = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
@@ -530,7 +533,7 @@ pub async fn download_for_blocks(
     let n = files.len();
     for (i, fname) in files.iter().enumerate() {
         let dest = safe_join(&snapshot_dir, fname)
-    .with_context(|| format!("rejecting unsafe filename from HF API: {}", fname))?;
+            .with_context(|| format!("rejecting unsafe filename from HF API: {}", fname))?;
 
         if dest.exists() {
             let size = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
