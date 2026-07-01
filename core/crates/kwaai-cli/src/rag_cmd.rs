@@ -2019,8 +2019,20 @@ async fn cmd_rebuild(
         .await?;
 
         // ── Step 4: Graph build ───────────────────────────────────────────
+        // Timeline is always suppressed here and run separately as step 5.5 (after
+        // seeding) so that narrator_kinship_map can see seeded relations such as
+        // "grandparent_of JMH→Yousuf". Without this ordering the map is empty and
+        // kinship-phrase chunks ("my grandfather arrived in 1884") never produce
+        // JMH timeline events.
         println!();
         println!("  ▶ Step 4/8  graph build");
+        // Clone inference args before moving them into GraphAction::Build.
+        let timeline_inference_urls: Vec<String> = inference_urls
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let timeline_model = model.clone();
         cmd_graph(
             GraphAction::Build {
                 inference_url: None,
@@ -2043,7 +2055,7 @@ async fn cmd_rebuild(
                 validation_model: None,
                 validation_floor: 0.7,
                 validation_budget: 200,
-                timeline,
+                timeline: false,
             },
             kb.clone(),
         )
@@ -2063,6 +2075,28 @@ async fn cmd_rebuild(
             .await?;
         } else {
             println!("  ─ Step 5/8  graph seed  (skipped — no --seed-file)");
+        }
+
+        // ── Step 5.5: Timeline extraction (after seed) ───────────────────
+        // Must run AFTER seeding so narrator_kinship_map sees seeded relations
+        // (e.g. grandparent_of JMH→Yousuf from d6_family_tree.yaml).  Without
+        // this ordering "my grandfather arrived in 1884" produces zero JMH events
+        // because the map is empty when timeline extraction runs in step 4.
+        if timeline {
+            println!();
+            println!("  ▶ Step 5.5/8  timeline extract (after seed)");
+            cmd_graph(
+                GraphAction::Timeline {
+                    action: crate::cli::TimelineAction::Build {
+                        inference_urls: timeline_inference_urls,
+                        model: timeline_model,
+                        workers,
+                        reset: true,
+                    },
+                },
+                kb.clone(),
+            )
+            .await?;
         }
 
         // ── Step 6: Alias scan ────────────────────────────────────────────
