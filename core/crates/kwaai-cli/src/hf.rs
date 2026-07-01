@@ -12,6 +12,31 @@ use futures::StreamExt;
 use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
 
+/// Joins `untrusted` onto `base`, rejecting any result that would escape `base`.
+/// Defends against path traversal from untrusted filenames (e.g. HF API responses)
+/// containing `..`, absolute paths, or other directory-escaping sequences.
+fn safe_join(base: &Path, untrusted: &str) -> Result<PathBuf> {
+    let candidate = base.join(untrusted);
+    let mut normalized = PathBuf::new();
+    for component in candidate.components() {
+        match component {
+            std::path::Component::ParentDir => {
+                if !normalized.pop() {
+                    bail!("Path traversal attempt rejected: {}", untrusted);
+                }
+            }
+            std::path::Component::Normal(c) => normalized.push(c),
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => {
+                bail!("Absolute path rejected in filename: {}", untrusted);
+            }
+            std::path::Component::CurDir => {}
+        }
+    }
+    if !normalized.starts_with(base) {
+        bail!("Refusing to write outside snapshot directory: {}", untrusted);
+    }
+    Ok(normalized)
+}
 /// Resolve a HuggingFace model ID to a snapshot directory containing
 /// `.safetensors` weight shards and `config.json`.
 ///
@@ -298,7 +323,8 @@ pub async fn download(model_id: &str, hf_token: Option<&str>) -> Result<PathBuf>
 
     let n = files.len();
     for (i, fname) in files.iter().enumerate() {
-        let dest = snapshot_dir.join(fname);
+        let dest = safe_join(&snapshot_dir, fname)
+    .with_context(|| format!("rejecting unsafe filename from HF API: {}", fname))?;
 
         if dest.exists() {
             let size = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
@@ -503,7 +529,8 @@ pub async fn download_for_blocks(
 
     let n = files.len();
     for (i, fname) in files.iter().enumerate() {
-        let dest = snapshot_dir.join(fname);
+        let dest = safe_join(&snapshot_dir, fname)
+    .with_context(|| format!("rejecting unsafe filename from HF API: {}", fname))?;
 
         if dest.exists() {
             let size = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
