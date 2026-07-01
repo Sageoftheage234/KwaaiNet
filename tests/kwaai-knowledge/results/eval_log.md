@@ -1,4 +1,47 @@
 
+## Timeline rebuild — 2026-07-01 — **v0.4.132 Fix 1b + Fix 2** — metro-linux A6000 (jerome offline)
+
+**Fixes in this rebuild:**
+- **Fix 1b (v0.4.132):** `is_footnote_marker_line` now requires ≥2 digits (`j >= 2`). Single-digit prefix "N Text" (e.g. "3 The Group Areas Act", "1 Introduction") was incorrectly matching as footnote markers and stripping legitimate body content. All real D6 inline footnotes are numbered ≥10.
+- **Fix 1 (v0.4.130, still active):** Strip inline footnotes from chunks before any LLM call. 2+ digit numeric markers and Roman numeral markers (≥2 chars) are removed along with continuation lines.
+- **Fix 2 (v0.4.131, still active):** Narrator kinship map: `narrator_kinship_map()` walks narrator's graph edges at build start to produce phrase→entity map. "my grandfather", "grandfather", "grandpa" → JMH Gool (via seeded `grandparent_of` relation). Applied per-chunk: matching phrases inject the resolved entity into the LLM entity whitelist.
+
+**Event/interaction counts:**
+- v0.4.129 GPU rebuild (no fixes): 206 events, 63 interactions
+- v0.4.131 GPU rebuild (Fix 1 + Fix 2, j>=1 bug): **98 events, 25 interactions** — 52% regression
+- v0.4.132 GPU rebuild (Fix 1b + Fix 2, j>=2 fixed): **197 events, 56 interactions** — recovered
+
+**JMH Gool timeline verification:**
+- ✅ `[arrival] 1884 — came from India to The Cape` — **back** (was missing in v0.4.131 due to j>=1 false positives)
+- ✅ `[event] 1892 — testimony is recorded in Supreme Court transcripts` — present
+- ✅ `[meeting] 1897-04 — platform at meeting of 'Cape Coloured men'` — present
+- ✅ `[meeting] 1906 — British Indian League` — present
+- ✅ `[meeting] 1909 — Transvaal Indians petition` — present
+- ✅ `[meeting] 1916 — married Cissie/Zainunnisa` — present
+- ✅ `[death] April 1940` — **correct** (first rebuild to show JMH's death date)
+- ✅ **Ralph Bunche "visited JMH"** — **GONE** (Fix 1 working correctly)
+- ✅ `Yousuf Rassool whispered to Haji Joosub Maulvi Hamid Gool` interaction — **Fix 2 kinship resolution confirmed working**
+- ❌ `[birth] 1886` — **wrong** (1886 is AH Gool's birth year; misattributed to JMH — needs Axiom 7)
+
+**Gandhi timeline verification:**
+- ✅ `[arrival] 1893 — came to South Africa` — restored
+- ✅ `[arrival] 1897 — received letter from grandfather` — Fix 2 working: JMH→Gandhi correspondence surfaced
+- ✅ `[arrival] 1912-10 — guest at 7 Buitencingle Street` — correct
+- ✅ `[arrival] February-March 1914 — visited Buitencingle` — correct
+- ❌ `[arrival] 1974-76 — attended Boys Grammar School` — misattribution (not Gandhi's event)
+
+**Yousuf Rassool timeline — remaining misattributions (pre-existing, not fixed):**
+- ❌ `[birth] 1900-12-10` — wrong (narrator born ~1930s; "December 1900" is JMH's Lord Roberts meeting)
+- ❌ `[death] after 1925` — wrong (Yousuf published this book in 1984)
+- ❌ 1795, 1806, 1848, 1900 Pan-African, 1903 Indian Opinion, 1912, 1936 — historical events misattributed to narrator because "I" pronoun is in chunks about those events
+- ✅ Actual life events correct: 1938, 1939, 1940s, 1943, 1944, 1952, 1957, November 2005
+
+**Root cause of Yousuf misattributions:** memoir narrator describes historical events (Cape Colony 1795, Gandhi 1893-1914) in first-person historical present. Yousuf is in entity_data for those chunks (as narrator). LLM attributes historical events to the narrator entity. Fix = Axiom 7 (biographical temporal bounds): filter events for Yousuf that predate ~1925.
+
+**Next:** Axiom 7 — biographical temporal bounds. Known bounds: Yousuf born ≥1920, JMH died April 1940. Drop events outside entity's plausible lifetime.
+
+---
+
 ## Timeline rebuild — 2026-06-28 — **v0.4.128 Axiom 6 full date_sort** — CPU rebuild
 
 **Fix (v0.4.128):**
