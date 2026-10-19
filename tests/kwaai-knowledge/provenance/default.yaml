@@ -1,0 +1,27 @@
+# Full-run configuration. Every key is listed; unknown keys are rejected.
+freeze_commit: "486bcf6"
+kwaainet_cmd: kwaainet
+model: llama3.1:8b                 # dream's own default is the literal "default", which Ollama rejects
+inference_url: http://localhost:11434
+dream_flags: {}                     # applied to every arm; arm flags override
+snapshots: [0, 1, 2, 4, 8, 12]
+repeats: 3
+scorer: nli                         # lexical is for smoke tests only
+nli_model: MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli
+nli_window: 384
+nli_stride: 256
+nli_batch_size: 8
+theta: 0.5
+theta_gate: 0.5
+corpus_top_n: 30
+max_unresolved_evidence_share: 0.05
+edit_compat_result: ""              # check_edit_compat JSON; gates are written only if PASS and its binding matches
+eval_enabled: true
+eval_questions: d6_eval_questions.json   # relative to tests/kwaai-knowledge
+eval_cycles: null                    # null = every snapshot (0,1,2,4,8,12)
+primary_phase: post_dream           # or end_of_cycle; preregister before cycle 1
+eval_k: 20
+eval_mode: iterative
+eval_semantic_score: true
+subprocess_timeout_s: 7200
+verify_original_unchanged: true
