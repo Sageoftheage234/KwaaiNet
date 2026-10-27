@@ -58,42 +58,92 @@ def _lower_aliases(info: dict | None) -> set[str]:
     return {a.lower() for a in (info or {}).get("aliases", [])}
 
 
+def normalize_name(s: str) -> str:
+    """graph.rs ``normalize_name`` (~L699): non-alphanumerics to spaces, collapse whitespace, lowercase."""
+    return " ".join("".join(c if c.isalnum() else " " for c in s).split()).lower()
+
+
 def entity_fates(prev_info: dict, cur_info: dict, step: Step) -> dict[int, EntityFate]:
+    """Decide what happened to every entity of the previous state.
+
+    Merge evidence, strongest first:
+      1. the entity's name was newly appended to exactly one survivor's ``aliases``;
+      2. exactly one survivor has the same normalised name (the exact-name merge tier,
+         graph.rs ``find_dedup_candidates_exact`` ~L2896) and its mention_count rose by at least the
+         removed entity's mention_count (``merge_entity_into`` adds them);
+      3. otherwise, survivors whose mention_count rose by an unexplained amount are listed as ambiguous
+         candidates, while the DreamReport says more merges happened than were identified.
+    Tier 3 exists because at 486bcf6 ``merge_entity_into`` reads the canonical's aliases from the
+    in-memory node, which it never updates (~L2230-2240 vs ~L2265-2272): when several aliases merge into
+    one canonical in a cycle, only the last alias name survives in ``aliases``.
+    """
     fates: dict[int, EntityFate] = {}
-    removed = []
-    for e, pi in prev_info.items():
+    if step.phase != "dream":
+        for e in prev_info:
+            fates[e] = EntityFate("kept", e) if e in cur_info else EntityFate("removed", None, "unknown")
+        return fates
+    gone = [e for e in prev_info if e not in cur_info]
+    for e in prev_info:
         if e in cur_info:
             fates[e] = EntityFate("kept", e)
-            continue
-        name = pi["name"].lower()
+    # unexplained mention-count growth of survivors, consumed as merges are assigned
+    growth = {c: ci.get("mention_count", 0) - prev_info[c].get("mention_count", 0)
+              for c, ci in cur_info.items() if c in prev_info}
+    by_norm: dict[str, list[int]] = {}
+    for c, ci in cur_info.items():
+        by_norm.setdefault(normalize_name(ci["name"]), []).append(c)
+
+    def assign(e, c, how):
+        fates[e] = EntityFate("merged", c, "inferred", [how])
+        if c in growth:
+            growth[c] -= prev_info[e].get("mention_count", 0)
+
+    pending = []
+    for e in gone:
+        name = prev_info[e]["name"].lower()
         new_alias = [c for c, ci in cur_info.items()
                      if name in ({a.lower() for a in ci["aliases"]} - _lower_aliases(prev_info.get(c)))]
-        old_alias = [c for c, ci in cur_info.items() if name in {a.lower() for a in ci["aliases"]}]
-        if step.phase != "dream":
-            fates[e] = EntityFate("removed", None, "unknown")  # the gate never deletes entities
-        elif len(new_alias) == 1:
-            fates[e] = EntityFate("merged", new_alias[0], "inferred")
+        if len(new_alias) == 1:
+            assign(e, new_alias[0], "alias appended")
         elif len(new_alias) > 1:
             fates[e] = EntityFate("merged_ambiguous", None, "ambiguous", new_alias)
-        elif old_alias:  # merge does not re-append an alias name already present, so this cannot be confirmed
-            fates[e] = EntityFate("merged_ambiguous", None, "ambiguous", old_alias + ["prune"])
         else:
-            removed.append(e)
+            pending.append(e)
+    still = []
+    for e in pending:
+        mc = prev_info[e].get("mention_count", 0)
+        same = [c for c in by_norm.get(normalize_name(prev_info[e]["name"]), []) if growth.get(c, 0) >= mc]
+        if len(same) == 1:
+            assign(e, same[0], "exact-name tier, mention_count grew")
+        elif len(same) > 1:
+            fates[e] = EntityFate("merged_ambiguous", None, "ambiguous", same)
+        else:
+            still.append(e)
+    merged_reported = int((step.report or {}).get("entities_merged", 0) or 0)
+    merged_found = sum(1 for f in fates.values() if f.status == "merged")
     pruned_reported = int((step.report or {}).get("entities_pruned", 0) or 0)
-    for e in removed:
+    for e in still:
         pi = prev_info[e]
-        consistent = pi.get("degree", 0) == 0 and pi.get("chunk_links", 0) == 0 and pi.get("mention_count", 0) <= 1
-        if not consistent:
+        mc = pi.get("mention_count", 0)
+        prune_ok = pi.get("degree", 0) == 0 and pi.get("chunk_links", 0) == 0 and mc <= 1
+        old_alias = [c for c, ci in cur_info.items() if pi["name"].lower() in {a.lower() for a in ci["aliases"]}]
+        grew = [c for c, g in growth.items() if g >= mc > 0]
+        merge_possible = merged_reported > merged_found and (grew or old_alias)
+        if merge_possible:
+            cands = sorted(set(old_alias) | set(grew), key=str)[:10]
+            fates[e] = EntityFate("merged_ambiguous", None, "ambiguous",
+                                  cands + (["prune"] if prune_ok else []))
+        elif not prune_ok:
             fates[e] = EntityFate("removed", None, "unknown", ["prune preconditions not met in previous state"])
-        elif len(removed) <= pruned_reported:
+        elif len(still) <= pruned_reported:
             fates[e] = EntityFate("removed", None, "inferred", ["prune"])
         else:
             fates[e] = EntityFate("removed", None, "ambiguous", ["prune", "unreported deletion"])
     return fates
 
 
-def _mapped_record_id(f: Fact, emap: dict[int, int]) -> str | None:
-    ids = [emap.get(e) for e in f.entity_ids]
+def _mapped_record_id(f: Fact, emap: dict[int, int], removed: frozenset = frozenset()) -> str | None:
+    ids = [emap.get(e, e if e not in removed else None) for e in f.entity_ids]
     if any(i is None for i in ids):
         return None
     if f.kind == "field":
@@ -107,6 +157,7 @@ def transition(prev: list[Fact], prev_info: dict, cur_raw: list[Fact], cur_info:
     """Return (current facts with origin_ids, events, fates)."""
     fates = entity_fates(prev_info, cur_info, step)
     emap = {e: f.target for e, f in fates.items() if f.target is not None}
+    removed_ids = frozenset(e for e, f in fates.items() if f.target is None)
     cur_by_id = {f.record_id: f for f in cur_raw}
     desc_index: dict[tuple[int, str], list[str]] = {}
     for f in cur_raw:
@@ -141,7 +192,7 @@ def transition(prev: list[Fact], prev_info: dict, cur_raw: list[Fact], cur_info:
                     ev("rewritten", p, "merge", fs[0].confidence, to=cand[0])
                 continue
         else:
-            rid = _mapped_record_id(p, emap)
+            rid = _mapped_record_id(p, emap, removed_ids)
             if p.kind == "relation" and rid is not None and remapped and emap[p.entity_ids[0]] == emap[p.entity_ids[1]]:
                 ev("lost", p, "merge", "inferred", note="re-keyed relation became a self-loop; merge skips those")
                 continue

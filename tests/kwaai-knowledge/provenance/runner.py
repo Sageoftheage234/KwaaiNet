@@ -163,6 +163,8 @@ def run(cfg: Config, snapshot_root: str | Path, out_root: str | Path, run_id: st
                            "flags": arm.flags,
                            **_group_metrics(ge, cls, c0["gate_eligible"], lost_events),
                            "lineage_totals": dict(totals),
+                           "dangling_relations": getattr(st["info"], "dangling_relations", 0),
+                           "self_loop_relations": getattr(st["info"], "self_loops", 0),
                            "descriptions": {**_group_metrics(de, cls, c0["description"], lost_events),
                                             "evidence_level": "entity", "gated": False,
                                             "entities_with_description": len({f.entity_ids[0] for f in de}),

@@ -75,3 +75,18 @@ cycle. Merges rename relations (tracked as rewrites/consolidations, not losses) 
 6. **Virtual vs written gates.** A virtual gate is an immediate counterfactual on one state; the arm's dynamics stay
    ungated. Only a written gate is a longitudinal intervention. Writes need a PASS bound to this runtime.
 7. Descriptions are outside the primary endpoint and the gate, and are reported in their own block.
+
+## Found in the first real-binary pilot (kwaainet 0.7.2, WSL, 2026-10-21)
+Pilot KB: one novel (*The Red Badge of Courage*), 195 entities, 53 stored relations; one dream cycle per arm.
+1. **Dangling relations.** 37 of 53 stored relations pointed at an entity that no longer exists (graph.rs
+   `delete_entity` leaves relations stale until `prune_dangling_relations`, ~L4480–4530, which the dream cycle
+   does not call). They are not claims about any stored entity, so they are excluded from facts and reported
+   per row as `dangling_relations` (and `self_loop_relations`). Before this fix they appeared as 37
+   `unknown` losses per arm and as phantom losses inside gate steps.
+2. **Batch merges lose alias records (upstream behaviour).** `merge_entity_into` builds the canonical's new
+   `aliases` from the in-memory node (~L2230–2240) but its in-memory update (~L2265–2272) changes only
+   `mention_count` and `description`. When several entities merge into one canonical in a cycle, only the last
+   alias name is kept in `aliases`. Merge attribution therefore also uses the exact-name tier (same
+   `normalize_name`, canonical's `mention_count` grew) and, when the DreamReport counts more merges than were
+   identified, reports the remaining removals as **ambiguous** merges rather than unexplained deletions. Worth
+   raising with the KwaaiNet maintainers: it also means alias-based lookup misses merged names.

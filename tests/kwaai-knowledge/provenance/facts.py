@@ -57,6 +57,12 @@ def split_sentences(text: str) -> list[str]:
     return [s.strip() for s in _SENT.split(text.strip()) if s.strip()]
 
 
+class EntityInfo(dict):
+    """entity id -> info, plus graph-level counts that are not facts."""
+    dangling_relations: int = 0
+    self_loops: int = 0
+
+
 def extract_facts(graph_db) -> tuple[list[Fact], dict]:
     """Return (facts, entity_info) for one graph state.
 
@@ -69,13 +75,17 @@ def extract_facts(graph_db) -> tuple[list[Fact], dict]:
 
     entity_info maps entity id -> name, aliases, entity_type, mention_count, degree, chunk_links; the last
     three are the observable prune preconditions (dream.rs ~L974-994).
+
+    Relations whose source or destination entity does not exist ("dangling": graph.rs leaves them after
+    entity deletion until ``prune_dangling_relations`` runs, ~L4494) are not claims about any entity, so they
+    are not facts; they are counted in ``entity_info.dangling_relations``.
     """
     g = GraphReader(graph_db)
     ents = {eid: plain(node) for eid, node, _ in g.entities()}
     ec = g.entity_chunks()
     rels = [((s, d, t), plain(r)) for (s, d, t), r, _ in g.relations()]
     degree: Counter = Counter()
-    for (s, d, _), _r in rels:
+    for (s, d, _), _r in rels:  # graph.rs neighbors_of uses adj, which holds every stored relation
         degree[s] += 1
         degree[d] += 1
     out: list[Fact] = []
@@ -99,7 +109,11 @@ def extract_facts(graph_db) -> tuple[list[Fact], dict]:
                 out.append(Fact(description_record_id(eid, s, occ), "description", (eid,), text, ev,
                                 content_id("description", text), value=s, evidence_level="entity",
                                 entity_names=(name,), gate_eligible=False, entity_has_fields=bool(fields)))
+    dangling = 0
     for (src, dst, rtype), rel in rels:
+        if src not in ents or dst not in ents:
+            dangling += 1
+            continue
         sn = str(ents.get(src, {}).get("name", src))
         dn = str(ents.get(dst, {}).get("name", dst))
         text = relation_text(sn, rtype, dn)
@@ -110,10 +124,12 @@ def extract_facts(graph_db) -> tuple[list[Fact], dict]:
     dup = [k for k, n in ids.items() if n > 1]
     if dup:
         raise ValueError(f"record ids are not unique in {graph_db}: {dup[:5]}")
-    info = {eid: {"name": str(n.get("name", eid)), "aliases": [str(a) for a in n.get("aliases", []) or []],
+    info = EntityInfo({eid: {"name": str(n.get("name", eid)), "aliases": [str(a) for a in n.get("aliases", []) or []],
                   "entity_type": str(n.get("entity_type", "")), "mention_count": int(n.get("mention_count", 0) or 0),
                   "degree": degree.get(eid, 0), "chunk_links": len(ec.get(eid, []))}
-            for eid, n in ents.items()}
+            for eid, n in ents.items()})
+    info.dangling_relations = dangling
+    info.self_loops = sum(1 for (s_, d_, _), _r in rels if s_ == d_)
     return out, info
 
 

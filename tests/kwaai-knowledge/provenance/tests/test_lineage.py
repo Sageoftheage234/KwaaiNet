@@ -142,3 +142,42 @@ def test_descriptions_cover_field_bearing_entities_and_repeated_sentences(tmp_pa
     d = [f for f in facts if f.kind == "description"]
     assert len(d) == 3 and len({f.record_id for f in d}) == 3
     assert all(not f.gate_eligible and f.entity_has_fields and f.evidence_level == "entity" for f in d)
+
+
+# ---- regressions from the first real-binary pilot (KwaaiNet 0.7.2, 2026-10-21) ----
+
+def test_dangling_relations_are_counted_not_treated_as_facts(tmp_path):
+    al, ghost = node("Alice"), node("Ghost")          # ghost is referenced but never stored
+    facts, info = state(tmp_path, "a", [al], [(al, "knows", ghost, [1]), (ghost, "knows", ghost, [1])])
+    assert not [f for f in facts if f.kind == "relation"]
+    assert info.dangling_relations == 2 and info.self_loops == 1
+    # and a fact on a stored entity survives a step even when dangling relations vanish
+    cur_raw, cur_i = state(tmp_path, "b", [al])
+    cur, events, _ = transition(initial(facts), info, cur_raw, cur_i, Step(1, "dream", report={}))
+    assert not [e for e in events if e["event"] == "lost"]
+
+
+def test_exact_name_merge_is_recognised_when_the_alias_record_was_not_kept(tmp_path):
+    person = node("Well", {"x": ("y", [1])}, mention_count=1, etype="Person")
+    place = node("Well", mention_count=2, etype="Place")
+    prev_f, prev_i = state(tmp_path, "a", [person, place])
+    cur_raw, cur_i = state(tmp_path, "b", [node("Well", mention_count=3, etype="Place")])  # no alias appended
+    _, events, fates = transition(initial(prev_f), prev_i, cur_raw, cur_i,
+                                  Step(1, "dream", report={"entities_merged": 1, "entities_pruned": 0}))
+    f = fates[ids(person)]
+    assert (f.status, f.target, f.confidence) == ("merged", ids(place), "inferred")
+    assert lost(events) == {("field", "merge", "inferred")}
+
+
+def test_batch_merges_with_stale_aliases_are_ambiguous_merges_not_unknown_prunes(tmp_path):
+    # graph.rs merge_entity_into never updates the in-memory aliases, so after A and B both merge into C in
+    # one cycle, C.aliases holds only "Bea". A must not be reported as an unexplained deletion.
+    a, b = node("Ann", {"role": ("x", [1])}, mention_count=1), node("Bea", mention_count=1)
+    c = node("Cara", mention_count=3)
+    prev_f, prev_i = state(tmp_path, "a", [a, b, c], links={1: [a]})
+    cur_raw, cur_i = state(tmp_path, "b", [node("Cara", mention_count=5, aliases=["Bea"])])
+    _, events, fates = transition(initial(prev_f), prev_i, cur_raw, cur_i,
+                                  Step(1, "dream", report={"entities_merged": 2, "entities_pruned": 0}))
+    assert fates[ids(b)].status == "merged" and fates[ids(b)].target == ids(c)
+    assert fates[ids(a)].status == "merged_ambiguous" and ids(c) in fates[ids(a)].candidates
+    assert lost(events) == {("field", "merge", "ambiguous")}
