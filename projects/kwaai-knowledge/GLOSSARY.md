@@ -229,6 +229,17 @@ only) or Enforce mode. Distinct from the consolidation gate, which decides when 
 chunk may be evicted. Built but not wired into the pipeline; see
 `plans/NativeProvenance-plan.md`. *(`core/crates/kwaai-provenance/src/gate.rs`)*
 
+**Dream observer** — read-only hooks around a dream cycle: called at the start, after
+each stage that can change the graph (completion, merge, prune, sanitize) and at the
+end, with the graph by shared reference. The default does nothing. The provenance
+adapter uses them to record lineage; see `plans/NativeProvenance-plan.md`.
+*(`core/crates/kwaai-rag/src/dream_observer.rs`)*
+
+**Provenance drift** — graph changes made between observed dream cycles (re-ingestion,
+an unobserved cycle, manual edits). The next observed cycle records them under the actor
+`untracked` and reports them, so study numbers never mix in unobserved history.
+*(`core/crates/kwaai-provenance-rag/src/observer.rs`)*
+
 ---
 
 ## 7. Retrieval

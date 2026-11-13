@@ -1,0 +1,26 @@
+[package]
+name = "kwaai-provenance-rag"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+description = "Observe-only adapter recording kwaai-rag dream-cycle changes as kwaai-provenance lineage"
+
+[dependencies]
+kwaai-rag = { workspace = true }
+kwaai-provenance = { path = "../kwaai-provenance" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+hex = "0.4"
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { workspace = true }
+
+[[bin]]
+name = "provenance-report"
+path = "src/bin/provenance-report.rs"
