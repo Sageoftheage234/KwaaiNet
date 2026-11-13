@@ -14,6 +14,7 @@ hybrid BM25+vector retrieval, dream (iterative self-RAG), and eval harness.
 | `src/retriever.rs` | Hybrid retrieval: BM25 + vector + graph, entity injection |
 | `src/doc_schema.rs` | `DocSchema`, `auto_detect_schema`, `parse_index_seeds` |
 | `src/dream.rs` | Iterative self-RAG loop |
+| `src/dream_observer.rs` | `DreamObserver`: read-only hooks around each dream stage; `NoopObserver` by default |
 | `src/embedder.rs` | `EmbedClient` |
 | `src/eval_retrieve.rs` | Eval harness |
 | `src/family.rs` | Family tree YAML seed injection |
