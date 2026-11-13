@@ -3146,6 +3146,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "kwaai-provenance-rag"
+version = "0.7.3"
+dependencies = [
+ "hex",
+ "kwaai-provenance",
+ "kwaai-rag",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "kwaai-rag"
 version = "0.7.3"
 dependencies = [
@@ -3257,6 +3273,7 @@ dependencies = [
  "kwaai-inference",
  "kwaai-p2p",
  "kwaai-p2p-daemon",
+ "kwaai-provenance-rag",
  "kwaai-rag",
  "kwaai-rpc",
  "kwaai-storage",

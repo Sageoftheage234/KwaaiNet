@@ -99,6 +99,9 @@ kwaai-rag = { workspace = true, optional = true, features = ["pdf"] }
 uuid = { workspace = true, optional = true }
 # Where `rag_ingest` spools an uploaded document for the parsers, which read files.
 tempfile = { version = "3", optional = true }
+# Observe-only provenance for `rag dream` (feature `provenance`). Unpublished,
+# which is fine here: this crate is `publish = false`.
+kwaai-provenance-rag = { path = "../kwaai-provenance-rag", optional = true }
 
 # Trust graph dependencies
 dirs = { workspace = true }
@@ -149,6 +152,11 @@ storage = ["kwaai-storage", "uuid"]
 # as `false` whatever it says.
 ipv6 = ["kwaai-p2p/ipv6", "kwaai-p2p-daemon/ipv6"]
 rag = ["kwaai-rag", "uuid", "dep:tempfile"]
+# Observe-only provenance for `rag dream`: when KWAAI_PROVENANCE_DIR is set, each
+# cycle's graph changes are recorded as lineage there. Never changes the cycle.
+# Off by default. See projects/kwaai-knowledge/plans/NativeProvenance-plan.md.
+#   cargo build --release -p kwaainet --features provenance
+provenance = ["rag", "dep:kwaai-provenance-rag"]
 # Bootstrap-grade build: also serve the legacy /ipfs/kad/1.0.0 so peers that
 # predate /kwaai/kad/1.0.0 are not cut off during the migration. Needs the
 # patched libp2p-kad, which `[patch.crates-io]` cannot carry into a published

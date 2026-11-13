@@ -8327,7 +8327,22 @@ async fn cmd_dream(action: DreamAction, kb: String) -> Result<()> {
                 }
                 println!();
 
-                let report = kwaai_rag::dream::run_dream_cycle(
+                // Observe-only provenance: feature `provenance` + KWAAI_PROVENANCE_DIR.
+                // Without both, this is the no-op observer and the cycle is unchanged.
+                #[cfg(feature = "provenance")]
+                let (mut observer, provenance_status) =
+                    kwaai_provenance_rag::observer_from_env(tenant_id);
+                #[cfg(not(feature = "provenance"))]
+                let (mut observer, provenance_status): (
+                    Box<dyn kwaai_rag::dream::DreamObserver + Send>,
+                    Option<String>,
+                ) = (Box::new(kwaai_rag::dream::NoopObserver), None);
+                if let Some(status) = provenance_status {
+                    println!("  Provenance: {status}");
+                    println!();
+                }
+
+                let report = kwaai_rag::dream::run_dream_cycle_observed(
                     &rag_cfg.data_dir(),
                     tenant_id,
                     &embed,
@@ -8343,6 +8358,7 @@ async fn cmd_dream(action: DreamAction, kb: String) -> Result<()> {
                             let _ = std::io::Write::flush(&mut std::io::stdout());
                         }
                     }),
+                    observer.as_mut(),
                 )
                 .await?;
 

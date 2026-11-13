@@ -2,11 +2,9 @@
 
 **Author:** Jourdane Hamilton
 **Crate:** `kwaai-provenance` (`core/crates/kwaai-provenance/`)
-**Status:** Phases 1 (standalone primitives) and 2 (JSONL persistence) are implemented
-and tested in this branch. Phases 3–6 below are proposals and are not implemented.
-**Related:** the DreamRAG second-cohort provenance claim — after N dream cycles, what
-fraction of graph facts still trace to a source passage, and does gating before vs. after
-consolidation leave fewer unsupported facts?
+**Status:** Phases 1 (standalone primitives) and 2 (JSONL persistence) are in PR #285.
+Phase 3 (observe-only dream-cycle adapter) is implemented and tested on a branch
+stacked on #285. Phases 4–6 below are proposals and are not implemented.
 
 ---
 
@@ -92,6 +90,27 @@ Functional requirements are numbered so the test plan (§8) can trace them.
 | NFR-5 | Passes the repository CI gates: fmt, clippy `-D warnings`, tests on all platforms, Windows `cargo check`, memory integrity, orphaned docs. |
 | NFR-6 | Not published to crates.io (`publish = false`) while experimental. |
 
+Phase 3 (observe-only dream-cycle adapter):
+
+| ID | Requirement |
+|----|-------------|
+| FR-28 | `kwaai-rag` exposes read-only hooks (`DreamObserver`) at cycle start, after each stage that can change the graph (completion, merge, prune, sanitize) and at cycle end. Hooks take the graph by shared reference and return nothing. |
+| FR-29 | `run_dream_cycle` keeps its signature and behaviour, using a no-op observer. |
+| FR-30 | Observing a cycle leaves the graph exactly as an unobserved cycle leaves it. |
+| FR-31 | Every relation and non-empty field value is a fact. The first observed cycle records existing facts as `baseline`; each stage's differences are recorded as extract, evidence-added, rewrite (merge or field-value change) or removal. |
+| FR-32 | A chunk ID absent from the chunk store (including the placeholder `0`) is synthetic and never counts as source text. |
+| FR-33 | Changes between observed cycles are recorded as `untracked` and reported as drift. |
+| FR-34 | Each cycle writes a summary: facts, traceable facts, traceability rate, breakdown by origin, changes per stage, drift, Observe-mode gate counts, lineage digest. |
+| FR-35 | An observer error or panic never reaches the cycle; the cycle's summary is marked incomplete with the reason. |
+| FR-36 | A provenance directory belongs to one KB; another KB, or a log that does not replay, is refused and the cycle runs unobserved. |
+| FR-37 | Off unless `kwaainet` is built with `--features provenance` and `KWAAI_PROVENANCE_DIR` is set. |
+| FR-38 | A report tool replays the log, checks it against the latest summary's digest, and prints a per-cycle table or CSV. |
+
+| ID | Non-functional requirement |
+|----|----------------------------|
+| NFR-7 | `kwaai-rag` gains no dependency, so it stays publishable. The adapter is a separate unpublished crate (`kwaai-provenance-rag`). |
+| NFR-8 | The adapter is a default workspace member, so CI builds and tests it without feature flags. |
+
 ## 4. Design
 
 ### 4.1 Where it sits
@@ -104,7 +123,9 @@ flowchart LR
         cli["kwaai-cli"]
     end
     cli --> rag
-    rag -. "Phase 3: optional, feature-gated,<br/>observe-only adapter (separate PR)" .-> prov
+    adapt["kwaai-provenance-rag<br/>(Phase 3)"] --> prov
+    adapt --> rag
+    cli -. "--features provenance" .-> adapt
     prov --> serde["serde / serde_json"]
     prov --> sha["sha2 0.10 / hex"]
 ```
@@ -199,32 +220,49 @@ flowchart TD
 `GateOutcome::would_block()` reports whether Enforce would have changed the outcome,
 which is the observation signal for measuring false rejections before anything is enforced.
 
-### 4.5 Proposed integration (Phase 3, not in this PR)
+### 4.5 Dream-cycle observation (Phase 3)
+
+```mermaid
+flowchart LR
+    subgraph rag["kwaai-rag (published)"]
+        D["run_dream_cycle_observed"] -- "&GraphStore, &MetaStore" --> T["DreamObserver trait<br/>(no-op default)"]
+    end
+    subgraph adapter["kwaai-provenance-rag (unpublished)"]
+        O["ProvenanceObserver"] --> S["facts::snapshot"]
+        S --> P["plan::plan<br/>(prev vs next)"]
+        P --> L["LineageLog + Gate (Observe)"]
+        L --> F[("lineage.jsonl<br/>cycle-NNNN.json")]
+    end
+    subgraph cli["kwaainet (unpublished)"]
+        C["rag dream run"] -- "--features provenance<br/>+ KWAAI_PROVENANCE_DIR" --> O
+    end
+    O -. implements .-> T
+    C --> D
+```
 
 ```mermaid
 sequenceDiagram
-    participant Dream as dream.rs run_dream_cycle
-    participant Adapter as provenance adapter (feature-gated)
-    participant Log as LineageLog
-    participant Gate as Gate (Observe)
-    participant Store as GraphStore
+    participant Dream as run_dream_cycle_observed
+    participant Obs as ProvenanceObserver
+    participant Graph as GraphStore
 
-    Dream->>Adapter: proposed mutation (merge / relation / prune)
-    Adapter->>Log: propose(LineageEvent)
-    Adapter->>Gate: check(claim, evidence, verifier)
-    Gate-->>Adapter: GateOutcome (applied = Allow)
-    Adapter-->>Dream: continue unchanged
-    Dream->>Store: write (existing code path)
-    alt write succeeded
-        Adapter->>Log: commit(event_id)
-    else write failed
-        Adapter->>Log: fail(event_id, error)
+    Dream->>Obs: cycle_started(&graph, &meta)
+    Obs->>Graph: read facts, read chunk IDs
+    Obs->>Obs: baseline (first cycle) or reconcile drift (later cycles)
+    loop completion, merge, prune, sanitize
+        Dream->>Graph: stage writes (unchanged code)
+        Dream->>Obs: stage_finished(stage, &graph)
+        Obs->>Graph: read facts
+        Obs->>Obs: diff vs previous stage → lineage events, gate (Observe) on new facts
     end
-    Adapter->>Adapter: append LogEntry + GateOutcome to JSONL
+    Dream->>Obs: cycle_finished(&graph, end)
+    Obs->>Obs: catch anything unattributed, write cycle summary
 ```
 
-In Observe mode the adapter only records. The dream loop's mutations, order and results
-are unchanged, which is what makes a baseline-vs-observe comparison valid.
+Observation reads the graph after each stage rather than instrumenting each write, so
+it sees every change a stage made, including those inside `merge_entity_into` and
+`sanitize_relations`, which report only counts. `dream.rs` gains only the hook calls;
+no existing line changed.
 
 ### 4.6 Persistence (Phase 2)
 
@@ -311,6 +349,42 @@ skipped bad lines would report numbers from a different history than the run pro
 The one recoverable case, a torn final line, is dropped only when the caller asks and is
 reported when it happens; repairing the file is a separate, explicit call.
 
+**D12 — Observe by diffing graph state after each stage, not by wrapping each write.**
+The proposed design (record a proposed event before each write, then commit or fail it)
+would have needed changes at every write site in `dream.rs`, `graph.rs` and the merge and
+sanitize internals. Diffing facts after each stage needs one read-only call per stage,
+sees changes made deep inside `merge_entity_into` and `sanitize_relations`, and leaves
+the cycle's code untouched. Cost: events are recorded after the write, so all are
+committed; a failed write leaves no trace in lineage (it is in `cycle_errors`), and a
+change that a stage made and undid within itself is invisible.
+
+**D13 — Hooks in `kwaai-rag`, implementation in a separate crate.** `kwaai-rag` is
+published to crates.io, and a published crate cannot depend on an unpublished one, even
+optionally. So `kwaai-rag` gets a dependency-free trait, and `kwaai-provenance-rag`
+(unpublished) implements it. `kwaainet` is unpublished, so it can depend on the adapter
+behind a feature. The trait is general (any read-only observer), not provenance-specific.
+*Rejected:* a cargo feature in `kwaai-rag` with an optional `kwaai-provenance`
+dependency — it breaks `cargo publish -p kwaai-rag`, or forces `kwaai-provenance` to be
+published before it is reviewed.
+
+**D14 — Facts are relations and non-empty field values.** They are what the graph stores
+evidence for. Descriptions are prose rebuilt from fields; schema types and embeddings
+carry no evidence. Entities appear inside claims by graph ID, so a merge changes a fact's
+claim ID and is recorded as a rewrite, which is what keeps a merged fact's history.
+
+**D15 — Baseline, then drift.** The first observed cycle records what is already there as
+`baseline`, so ingested facts have lineage to their chunks. A later cycle first reconciles
+the log with the graph and records anything changed in between as `untracked`. Without
+this, re-ingesting or running one cycle unobserved would silently mix unobserved history
+into the numbers.
+
+**D16 — Synthetic chunks.** Answers open question 3: the dream cycle's placeholder chunk
+`0`, and any chunk ID not in the chunk store, is recorded as `synthetic:chunk:N`, so a
+fact that depends only on it is untraceable rather than skipped. Open question 5: the
+adapter assigns `seq` as a log-wide counter. Open question 6: the log lives wherever
+`KWAAI_PROVENANCE_DIR` points, one directory per KB, outside the KB directory so a KB
+rebuild cannot delete it.
+
 **D11 — JSONL with a digest, no hash chain.** JSONL is diffable, greppable, appendable and
 readable from Python, which matters for Rust/Python parity. `lineage_digest` pins which
 history a result came from. A per-line hash chain would add tamper evidence but not
@@ -331,7 +405,22 @@ traceability queries as one input.
   `.github/workflows/publish-crates.yml`.
 - Rollback: revert the PR. Nothing else references the crate.
 
+**Phase 3.** `kwaai-rag` gains one new module (`dream_observer.rs`) and hook calls in
+`dream.rs`; no existing line changes and no dependency is added, so it stays publishable.
+`run_dream_cycle` keeps its signature and calls the new `run_dream_cycle_observed` with a
+no-op observer. `kwaainet` calls `run_dream_cycle_observed`; without
+`--features provenance` it passes the no-op observer, so a default build behaves as
+before. Rollback: revert the Phase 3 PR; Phases 1–2 do not depend on it.
+
 ## 7. Security and data-handling considerations
+
+- **Phase 3 cannot change the graph.** Every hook receives `&GraphStore` / `&MetaStore`;
+  the compiler rejects writes through a shared reference. Hooks return nothing, so they
+  cannot alter control flow; errors and panics are caught inside the adapter
+  (`ProvenanceObserver::guarded`). The equivalence test checks the result directly.
+- **Observation cost.** Each stage reads every fact (relations and fields) and the cycle
+  start reads every chunk once to hash it. Linear in graph size; acceptable for
+  experiments, not measured on large graphs.
 
 - **IDs are integrity checks, not authentication.** SHA-256 IDs detect accidental
   corruption and tampering that does not recompute the hash. Anyone can construct a
@@ -393,6 +482,22 @@ Run from `core/`: `cargo test -p kwaai-provenance`. 44 tests: 6 identity, 13 lin
 | NFR-4 | crate doctest; `RUSTDOCFLAGS="-D warnings" cargo doc -p kwaai-provenance --no-deps` |
 | NFR-5 | CI on the PR |
 
+Phase 3, run with `cargo test -p kwaai-provenance-rag` (14 unit, 7 integration) and
+`cargo test -p kwaai-rag dream_observer` (2):
+
+| Requirement | Test(s) |
+|-------------|---------|
+| FR-28, FR-29 | `kwaai_rag::dream_observer::tests::empty_kb_reports_start_and_nothing_to_do_and_matches_unobserved_run` |
+| FR-30 | `observer::observing_does_not_change_the_graph` |
+| FR-31 | `plan::tests::*` (11), `observer::records_baseline_dream_changes_and_traceability` |
+| FR-32 | `facts::tests::chunk_artifacts_mark_placeholders_synthetic`, `records_baseline_dream_changes_and_traceability` |
+| FR-33 | `observer::second_cycle_reconciles_unobserved_changes_as_drift` |
+| FR-34 | `records_baseline_dream_changes_and_traceability`, `a_cycle_with_no_changes_still_advances_the_cycle_number` |
+| FR-36 | `observer::refuses_another_kbs_directory`, `refuses_a_corrupted_lineage_file_and_env_falls_back_to_noop` |
+| FR-38 | `observer::report_tool_prints_cycles_and_detects_a_changed_log` |
+| FR-35 | By construction (`guarded`); no test injects a panic |
+| FR-37 | `cargo check -p kwaainet --all-targets` with and without `--features provenance` |
+
 **What these tests do not show:** semantic correctness of any verifier, behaviour on
 real dream-cycle data, performance at graph scale, or Rust/Python parity. Those belong to
 Phases 3–6.
@@ -414,6 +519,18 @@ Phases 3–6.
 8. Unbounded memory and unbounded graph walks (§7).
 9. `schema_version` is checked for exact equality; there is no migration path yet for
    reading files written by a future schema.
+10. Phase 3 tests drive the dream cycle's graph operations directly; the LLM steps cannot
+    run offline, so no test runs a full `run_dream_cycle` with completions. The observed
+    and unobserved paths differ only by the hook calls, but a full-cycle comparison on a
+    real KB with a fixed model is still to be done (LLM output varies between runs, so it
+    has to compare against a recorded completion set, not a second live run).
+11. Phase 3 records only applied changes: failed writes, and changes a stage makes and
+    reverts within itself, do not appear in lineage.
+12. Descriptions, schema types and entity existence are not tracked as facts.
+13. Dream-added relations are traceable by association (inherited entity chunks), not
+    shown to be supported. Separating the two needs Phase 4.
+14. The `provenance` feature path in `kwaainet` is not built by default CI (CI builds
+    default features); the adapter crate itself is.
 
 ## 10. Rollout
 
@@ -421,7 +538,7 @@ Phases 3–6.
 |-------|-------|-------|
 | 1 | Standalone primitives: identity, lineage log, gate, docs | **This PR** |
 | 2 | Persistence: append-only JSONL writer/reader for `LogEntry` and `GateOutcome`, replay-validated on read; torn-tail handling; atomic snapshots; digest | **This PR** |
-| 3 | Observe-only adapter in `kwaai-rag` behind a cargo feature, default off; separate PR; no change to mutations | Proposed |
+| 3 | Observe-only adapter: read-only hooks in `kwaai-rag`, `kwaai-provenance-rag` adapter, `kwaainet --features provenance`, report tool | **Implemented**, stacked on #285 |
 | 4 | Real verifier(s) behind the `Verifier` trait; calibration against labelled data | Proposed |
 | 5 | Enforce mode and a durable quarantine store | Proposed |
 | 6 | Evaluation: traceability after N cycles, unsupported-fact rate, false-rejection rate, recall@k cost of gating, gate-before vs. gate-after consolidation, Rust/Python parity, reproducible JSONL artifacts | Proposed |
@@ -438,10 +555,10 @@ Phase 3 shows the false-rejection rate.
    (`find_by_name_normalized`), or stay byte-exact and leave merging to lineage events?
 3. **Chunk `0` fallback.** In Phase 3, should a dream relation whose evidence is the
    placeholder `0` be recorded as derived from a synthetic artifact (untraceable), or
-   skipped?
+   skipped? *Answered in Phase 3 by D16.*
 4. **Entity IDs.** The glossary notes entity type is part of the entity ID hash. When a
    dream cycle reclassifies a type, is that an `EntityMerge` or a new event kind?
 5. **Sequence numbers.** Who assigns `seq` in Phase 3 — the adapter (per cycle) or the
-   graph store?
+   graph store? *Answered in Phase 3 by D16.*
 6. **Log location.** Under the KB directory beside the graph, or a separate experiment
-   output directory?
+   output directory? *Answered in Phase 3 by D16.*
