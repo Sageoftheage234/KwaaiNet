@@ -18,6 +18,7 @@ use std::sync::OnceLock;
 use tokio::sync::{mpsc, Semaphore};
 use uuid::Uuid;
 
+pub use crate::dream_observer::{CycleEnd, DreamObserver, DreamStage, NoopObserver};
 use crate::embedder::EmbedClient;
 use crate::graph::{description_from_fields, GraphStore, RELATION_TYPES};
 use crate::meta_store::MetaStore;
@@ -448,6 +449,34 @@ pub async fn run_dream_cycle(
     model: &str,
     progress: Option<impl Fn(usize, usize, &str)>,
 ) -> Result<DreamReport> {
+    run_dream_cycle_observed(
+        data_dir,
+        tenant_id,
+        embed,
+        cfg,
+        inference_urls,
+        model,
+        progress,
+        &mut NoopObserver,
+    )
+    .await
+}
+
+/// [`run_dream_cycle`], calling `observer` at the start, after each stage that
+/// can change the graph, and at the end. The observer receives the graph by
+/// shared reference only and returns nothing, so the cycle's writes and control
+/// flow are the same for every observer. See [`crate::dream_observer`].
+#[allow(clippy::too_many_arguments)]
+pub async fn run_dream_cycle_observed(
+    data_dir: &Path,
+    tenant_id: Uuid,
+    embed: &EmbedClient,
+    cfg: &DreamConfig,
+    inference_urls: &[String],
+    model: &str,
+    progress: Option<impl Fn(usize, usize, &str)>,
+    observer: &mut (dyn DreamObserver + Send),
+) -> Result<DreamReport> {
     let started = std::time::Instant::now();
     let mut cycle_errors: Vec<String> = Vec::new();
     let mut report = DreamReport {
@@ -470,6 +499,7 @@ pub async fn run_dream_cycle(
         // (e.g. alias-scan) runs concurrently against the same KB.
         let meta = MetaStore::open(data_dir, tenant_id).context("open meta store for scoring")?;
         let store = GraphStore::open(data_dir, tenant_id).context("open graph for scoring")?;
+        observer.cycle_started(&store, &meta);
         let document_titles = store.get_document_titles();
         let doc_meta = store.get_doc_metadata();
         let doc_context_line: Option<String> = if doc_meta.is_empty() {
@@ -706,6 +736,7 @@ pub async fn run_dream_cycle(
         // Nothing to do — still score and return.
         let store = GraphStore::open(data_dir, tenant_id).context("open graph for final score")?;
         report.score_after = score_graph(&store).overall;
+        observer.cycle_finished(&store, CycleEnd::NothingToDo);
         report.duration_secs = started.elapsed().as_secs_f64();
         return Ok(report);
     }
@@ -969,6 +1000,8 @@ pub async fn run_dream_cycle(
             }
         }
 
+        observer.stage_finished(DreamStage::Completion, &store);
+
         // ── Guard: a cycle that completed nothing must not still mutate ──────
         //
         // Every failure path in `complete_entity` returns an empty completion,
@@ -1004,6 +1037,7 @@ pub async fn run_dream_cycle(
                  so a dead endpoint cannot erode the graph"
             );
             cycle_errors.extend(failed.iter().map(|r| format!("completion: {r}")));
+            observer.cycle_finished(&store, CycleEnd::SkippedDestructiveStages);
             report.score_after = report.score_before;
             report.duration_secs = started.elapsed().as_secs_f64();
             report.cycle_errors = cycle_errors;
@@ -1044,6 +1078,12 @@ pub async fn run_dream_cycle(
         if !merge_pairs.is_empty() {
             store.rebuild_in_memory().ok();
         }
+        observer.stage_finished(
+            DreamStage::Merge {
+                pairs: &merge_pairs,
+            },
+            &store,
+        );
 
         // ── Step 7: Prune zombies ─────────────────────────────────────────────
         if let Some(ref cb) = progress {
@@ -1074,6 +1114,7 @@ pub async fn run_dream_cycle(
         if !zombie_ids.is_empty() {
             store.rebuild_in_memory().ok();
         }
+        observer.stage_finished(DreamStage::Prune, &store);
 
         // ── Step 8: Relation integrity pass ──────────────────────────────────
         // Runs every cycle to prevent hallucinated relations from accumulating:
@@ -1092,9 +1133,11 @@ pub async fn run_dream_cycle(
             }
             Err(e) => cycle_errors.push(format!("sanitize_relations: {e}")),
         }
+        observer.stage_finished(DreamStage::Sanitize, &store);
 
         // ── Step 9: Final score ───────────────────────────────────────────────
         report.score_after = score_graph(&store).overall;
+        observer.cycle_finished(&store, CycleEnd::Completed);
     }
 
     report.duration_secs = started.elapsed().as_secs_f64();
