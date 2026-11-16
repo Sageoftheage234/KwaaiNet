@@ -34,3 +34,8 @@ verification = ["kwaai-provenance/ollama", "dep:tokio", "dep:chrono"]
 name = "provenance-verify"
 path = "src/bin/provenance-verify.rs"
 required-features = ["verification"]
+
+[[bin]]
+name = "provenance-shadow"
+path = "src/bin/provenance-shadow.rs"
+required-features = ["verification"]

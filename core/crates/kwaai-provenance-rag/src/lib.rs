@@ -18,6 +18,7 @@
 pub mod facts;
 pub mod observer;
 pub mod plan;
+pub mod shadow;
 pub mod verification;
 
 pub use observer::{
