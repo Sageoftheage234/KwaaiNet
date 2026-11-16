@@ -3155,6 +3155,8 @@ dependencies = [
  "anyhow",
  "chrono",
  "hex",
+ "kwaai-provenance",
+ "kwaai-provenance-rag",
  "serde",
  "serde_json",
  "sha2",

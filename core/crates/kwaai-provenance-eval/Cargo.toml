@@ -6,6 +6,8 @@ license.workspace = true
 publish = false
 
 [dependencies]
+kwaai-provenance = { path = "../kwaai-provenance" }
+kwaai-provenance-rag = { path = "../kwaai-provenance-rag" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.10"

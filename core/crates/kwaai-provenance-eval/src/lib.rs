@@ -1,5 +1,6 @@
 //! Offline, observe-only evaluation. No graph or inference dependencies.
 mod identity;
+pub mod phase5;
 pub use identity::{implementation_identity, EvaluatorIdentity};
 
 use anyhow::{bail, ensure, Context, Result};
@@ -15,8 +16,8 @@ use std::{
     time::Instant,
 };
 pub const SCHEMA: u32 = 1;
-/// Run/checkpoint envelope version; corpus, annotation and adapter schemas stay v1.
-pub const RUN_SCHEMA: u32 = 2;
+/// Run/checkpoint v3 retains imported experimental attribution; data schemas stay v1.
+pub const RUN_SCHEMA: u32 = 3;
 pub fn hash(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
@@ -245,7 +246,7 @@ fn validate_evidence(e: &Evidence, m: &Manifest) -> Result<()> {
     );
     Ok(())
 }
-/// Phase 6 normalization contract, NOT the final Phase 5 schema.
+/// Phase 6 normalized contract; actual Phase 5 imports use `phase5::Bundle`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DecisionImport {
@@ -528,6 +529,7 @@ pub struct RunMetadata {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CellResult {
+    pub phase5_attribution: Option<phase5::Attribution>,
     pub schema_version: u32,
     pub evaluator: EvaluatorIdentity,
     pub config_hash: String,
@@ -688,7 +690,11 @@ pub fn run(config: Config, resume: bool) -> Result<()> {
                     output.display()
                 )
             })?;
-            for (policy, expected_metrics) in &recomputed {
+            ensure!(
+                saved.phase5_attribution == recomputed.1,
+                "saved Phase 5 attribution mismatch"
+            );
+            for (policy, expected_metrics) in &recomputed.0 {
                 validate_saved_metrics(&saved.metrics[policy], expected_metrics)
                     .with_context(|| format!("{}: invalid saved metrics for {policy:?}; retain/quarantine this cell before resuming", output.display()))?;
             }
@@ -696,7 +702,7 @@ pub fn run(config: Config, resume: bool) -> Result<()> {
         }
         let start = Instant::now();
         let result = (|| -> Result<CellResult> {
-            let metrics = cell_metrics(
+            let (metrics, phase5_attribution) = cell_metrics(
                 &config,
                 cell,
                 expected,
@@ -705,6 +711,7 @@ pub fn run(config: Config, resume: bool) -> Result<()> {
                 &selections[cell.repetition as usize],
             )?;
             Ok(CellResult {
+                phase5_attribution,
                 schema_version: RUN_SCHEMA,
                 evaluator: evaluator.clone(),
                 config_hash: config_hash.clone(),
@@ -735,6 +742,11 @@ pub fn run(config: Config, resume: bool) -> Result<()> {
     Ok(())
 }
 
+type CellMetrics = (
+    BTreeMap<HypotheticalPolicy, Metrics>,
+    Option<phase5::Attribution>,
+);
+
 /// Re-read and hash retained observations for fresh evaluation AND every resumed cell.
 fn cell_metrics(
     config: &Config,
@@ -743,10 +755,33 @@ fn cell_metrics(
     annotations: &[Annotation],
     m: &Manifest,
     selected: &[String],
-) -> Result<BTreeMap<HypotheticalPolicy, Metrics>> {
+) -> Result<CellMetrics> {
     let raw = fs::read(&cell.path)?;
     ensure!(hash(&raw) == expected, "input changed during run");
-    let imported = FixtureAdapter.normalize(&raw)?;
+    let mut attribution = None;
+    let imported = if serde_json::from_slice::<serde_json::Value>(&raw)?
+        .get("phase5_adapter_version")
+        .is_some()
+    {
+        let result = phase5::import(&raw)?;
+        ensure!(
+            object_hash(&result.original.sidecar.corpus)? == object_hash(m)?,
+            "sidecar corpus mismatch"
+        );
+        let model = config
+            .models
+            .iter()
+            .find(|m| m.identifier == cell.model)
+            .context("missing model")?;
+        ensure!(
+            object_hash(model)? == object_hash(&result.original.sidecar.model)?,
+            "sidecar model mismatch"
+        );
+        attribution = Some(result.attribution()?);
+        result.normalized
+    } else {
+        FixtureAdapter.normalize(&raw)?
+    };
     ensure!(
         imported.corpus_version == m.corpus_version
             && imported.model_identifier == cell.model
@@ -775,7 +810,7 @@ fn cell_metrics(
     for p in &config.policies {
         metrics.insert(*p, evaluate(&imported.records, annotations, m, *p)?);
     }
-    Ok(metrics)
+    Ok((metrics, attribution))
 }
 
 // Explicit deserialize_with makes even nullable fields required: missing != null.
