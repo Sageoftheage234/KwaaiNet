@@ -1,0 +1,45 @@
+{
+  "adapter_version": 1,
+  "producer_schema": "phase6-scripted-fixture-v1",
+  "corpus_version": "98de2c6f606fbf25ba58c29b10573f497923b6323852c76d76e57d61a794e837",
+  "model_identifier": "fixture-model-b",
+  "seed": 43,
+  "cycle": 2,
+  "repetition": 1,
+  "records": [
+    {
+      "claim_id": "fixture-claim-0",
+      "claim_content": "The fictional observatory has three rooms.",
+      "evidence": [
+        {
+          "document_id": "doc:9b331f95797e6a85455f22fa7f7133a5ea5c131bbecad6758444175ef20e882b",
+          "sha256": "b2772a0b5e37a64161d5b319e5087879340daae807181332b1c7a2ec9d8a96e2",
+          "locator": "line:1"
+        }
+      ],
+      "judgment": "unresolved",
+      "traceable": true,
+      "authenticated": null,
+      "authentication_basis": null,
+      "verification_ms": null,
+      "baseline_ms": null
+    },
+    {
+      "claim_id": "fixture-claim-1",
+      "claim_content": "The fictional vessel is red.",
+      "evidence": [
+        {
+          "document_id": "doc:f58904c2c1c638b2bc49a8dbfaad77470931f5a38e9a8723f4d2b44bec880306",
+          "sha256": "5e13aa9c7737573b4d6e40004c561dae4df72dbfd9b71be4fac5e8ce8b164d95",
+          "locator": "line:1"
+        }
+      ],
+      "judgment": "unresolved",
+      "traceable": true,
+      "authenticated": null,
+      "authentication_basis": null,
+      "verification_ms": null,
+      "baseline_ms": null
+    }
+  ]
+}

@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "run_id": "synthetic-smoke",
+  "models": [
+    {
+      "identifier": "fixture-model-a",
+      "digest": null,
+      "parameters": {
+        "backend": "scripted-fixture"
+      }
+    },
+    {
+      "identifier": "fixture-model-b",
+      "digest": null,
+      "parameters": {
+        "backend": "scripted-fixture"
+      }
+    }
+  ],
+  "manifest": "crates/kwaai-provenance-eval/fixtures/manifest.json",
+  "corpus_root": "crates/kwaai-provenance-eval/fixtures/corpus",
+  "sample_count": 2,
+  "seeds": [
+    42,
+    43
+  ],
+  "cycles": 2,
+  "repetitions": 2,
+  "verification": {
+    "mode": "retained-fixture-replay"
+  },
+  "policies": [
+    "baseline",
+    "allow",
+    "reject_unsupported",
+    "require_supported"
+  ],
+  "annotations": "crates/kwaai-provenance-eval/fixtures/annotations.json",
+  "inputs": [
+    {
+      "model": "fixture-model-a",
+      "repetition": 0,
+      "cycle": 1,
+      "path": "crates/kwaai-provenance-eval/fixtures/fixture-model-a-0-1.json"
+    },
+    {
+      "model": "fixture-model-a",
+      "repetition": 0,
+      "cycle": 2,
+      "path": "crates/kwaai-provenance-eval/fixtures/fixture-model-a-0-2.json"
+    },
+    {
+      "model": "fixture-model-a",
+      "repetition": 1,
+      "cycle": 1,
+      "path": "crates/kwaai-provenance-eval/fixtures/fixture-model-a-1-1.json"
+    },
+    {
+      "model": "fixture-model-a",
+      "repetition": 1,
+      "cycle": 2,
+      "path": "crates/kwaai-provenance-eval/fixtures/fixture-model-a-1-2.json"
+    },
+    {
+      "model": "fixture-model-b",
+      "repetition": 0,
+      "cycle": 1,
+      "path": "crates/kwaai-provenance-eval/fixtures/fixture-model-b-0-1.json"
+    },
+    {
+      "model": "fixture-model-b",
+      "repetition": 0,
+      "cycle": 2,
+      "path": "crates/kwaai-provenance-eval/fixtures/fixture-model-b-0-2.json"
+    },
+    {
+      "model": "fixture-model-b",
+      "repetition": 1,
+      "cycle": 1,
+      "path": "crates/kwaai-provenance-eval/fixtures/fixture-model-b-1-1.json"
+    },
+    {
+      "model": "fixture-model-b",
+      "repetition": 1,
+      "cycle": 2,
+      "path": "crates/kwaai-provenance-eval/fixtures/fixture-model-b-1-2.json"
+    }
+  ],
+  "output_dir": "/tmp/kwaai-phase6-fixture-output"
+}
