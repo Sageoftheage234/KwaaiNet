@@ -18,6 +18,7 @@
 pub mod facts;
 pub mod observer;
 pub mod plan;
+pub mod verification;
 
 pub use observer::{
     CycleSummary, OriginCounts, ProvenanceObserver, StageCounts, ENV_DIR, LINEAGE_FILE,
