@@ -1,4 +1,5 @@
 //! Offline, observe-only evaluation. No graph or inference dependencies.
+pub mod history;
 mod identity;
 pub mod phase5;
 pub use identity::{implementation_identity, EvaluatorIdentity};

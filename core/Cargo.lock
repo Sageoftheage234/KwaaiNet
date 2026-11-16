@@ -3167,6 +3167,7 @@ dependencies = [
 name = "kwaai-provenance-rag"
 version = "0.7.3"
 dependencies = [
+ "async-trait",
  "chrono",
  "hex",
  "kwaai-provenance",

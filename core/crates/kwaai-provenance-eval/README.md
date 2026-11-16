@@ -228,3 +228,16 @@ The Phase 5 integration adds `src/phase5.rs` and seven producer source files
 (`kwaai-provenance/src/{lib,identity,schema,gate,verification,shadow}.rs` and
 `kwaai-provenance-rag/src/shadow.rs`) to the fingerprint. See [ADAPTER.md](ADAPTER.md)
 for bundle construction, attribution, metadata authority and authentication denominators.
+
+Historical Phase 7B exports use the separate `history::evaluate_state` API with
+occurrence-scoped annotations and hash-bound historical assessments. They are not
+accepted as Phase 5 bundles. See [Phase 7B design](../../../PHASE7B_DESIGN.md).
+
+Phase 7B v2 evaluation shares capture/export structural validation with archive
+reading and checks retained source bytes, hashes, document identity, reference
+order and assessment failure/status consistency. Native IDs do not merge labels:
+independent annotations use state-occurrence IDs. Evaluation of one state does
+not certify lifecycle/experiment completeness; retain the separate completeness
+report and externally expected archive head. The implementation fingerprint also
+covers facts, graph/meta readers, SQLite store identity, section-zone rules and
+the Ollama verifier source.

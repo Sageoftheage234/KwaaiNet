@@ -17,9 +17,10 @@ hex = "0.4"
 tracing = { workspace = true }
 uuid = { workspace = true }
 tokio = { workspace = true, optional = true }
-chrono = { workspace = true, optional = true }
+chrono = { workspace = true }
 
 [dev-dependencies]
+async-trait = { workspace = true }
 tempfile = "3"
 tokio = { workspace = true }
 
@@ -28,7 +29,7 @@ name = "provenance-report"
 path = "src/bin/provenance-report.rs"
 
 [features]
-verification = ["kwaai-provenance/ollama", "dep:tokio", "dep:chrono"]
+verification = ["kwaai-provenance/ollama", "dep:tokio"]
 
 [[bin]]
 name = "provenance-verify"

@@ -5110,6 +5110,31 @@ impl GraphStore {
         out
     }
 
+    /// Authoritative backing path, rejecting unavailable or replaced file identity.
+    /// Used only by opt-in historical capture; never writes the database.
+    pub fn historical_store_path(&self) -> Result<std::path::PathBuf> {
+        crate::store_identity::identity(&self.conn)
+    }
+
+    /// Strict persisted entity/relation read in one SQLite read transaction.
+    /// Unlike convenience readers, propagates every SQL and decoding error.
+    /// Intended for opt-in research snapshots; does not consult entity caches.
+    pub fn historical_records(&self) -> Result<(Vec<EntityNode>, Vec<RelationRecord>)> {
+        let tx = self.conn.unchecked_transaction()?;
+        fn read<T: serde::de::DeserializeOwned>(
+            tx: &rusqlite::Transaction<'_>,
+            sql: &str,
+        ) -> Result<Vec<T>> {
+            let mut stmt = tx.prepare(sql)?;
+            let rows = stmt.query_map([], |r| r.get::<_, Vec<u8>>(0))?;
+            rows.map(|row| Ok(serde_json::from_slice(&row?)?)).collect()
+        }
+        let entities = read(&tx, "SELECT value FROM entities ORDER BY key")?;
+        let relations = read(&tx, "SELECT value FROM relations ORDER BY key")?;
+        tx.commit()?;
+        Ok((entities, relations))
+    }
+
     /// The chunk ids a relation's evidence actually spans — the centre chunks
     /// widened by the window that was in effect when it was extracted.
     ///
@@ -8172,5 +8197,24 @@ mod extraction_parse_tests {
         assert_eq!(conf(r#","extraction_confidence":true"#), 0.5);
         assert_eq!(conf(r#","extraction_confidence":null"#), 1.0);
         assert_eq!(conf(""), 1.0);
+    }
+}
+
+#[cfg(test)]
+mod historical_record_tests {
+    use super::*;
+    #[test]
+    fn strict_historical_read_rejects_invalid_persisted_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let graph = GraphStore::open(dir.path(), Uuid::new_v4()).unwrap();
+        graph
+            .conn
+            .execute(
+                "INSERT INTO relations (key, value) VALUES (?1, ?2)",
+                params![b"broken".as_slice(), b"not json".as_slice()],
+            )
+            .unwrap();
+        assert!(graph.historical_records().is_err());
+        assert!(graph.all_relation_records().is_empty());
     }
 }

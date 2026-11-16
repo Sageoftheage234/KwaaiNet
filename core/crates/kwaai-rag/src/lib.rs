@@ -35,3 +35,5 @@ pub mod seed_json;
 pub mod sequence;
 pub mod summary;
 pub mod wiki;
+
+mod store_identity;

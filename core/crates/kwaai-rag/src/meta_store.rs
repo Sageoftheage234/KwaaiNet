@@ -82,6 +82,11 @@ impl MetaStore {
         })
     }
 
+    /// Backing path checked against the SQLite VFS file identity.
+    pub fn historical_store_path(&self) -> Result<std::path::PathBuf> {
+        crate::store_identity::identity(&self.db().0)
+    }
+
     fn db(&self) -> MutexGuard<'_, SafeConn> {
         self.conn.lock().unwrap_or_else(|e| e.into_inner())
     }

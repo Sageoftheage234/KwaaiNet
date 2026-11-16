@@ -16,6 +16,7 @@
 #![warn(missing_docs)]
 
 pub mod facts;
+pub mod history;
 pub mod observer;
 pub mod plan;
 pub mod shadow;

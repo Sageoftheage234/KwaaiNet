@@ -82,3 +82,23 @@ observations are preserved separately from these semantic assessments.
 
 Experimental Phase 5 policy comparison and post-stage evaluation are documented in
 [SHADOW_GATING.md](SHADOW_GATING.md). They are opt-in and never enforce mutations.
+
+## Experimental historical state capture
+
+`history::HistoricalObserver` is a separate opt-in DreamObserver preserving full
+persisted claim/evidence states and immutable original passage blobs. Capture/export
+v2 retains direct evidence separately from indexed extraction-window context and
+checks actual SQLite store bindings and legal lifecycle transitions. V1 captures
+are rejected because their omitted context cannot be recovered. It leaves
+existing lineage formats and default CLI behavior unchanged. Use the
+`provenance-history validate|export ARCHIVE` binary for archive validation and
+Phase 4 request export. See [Phase 7B design](../../../PHASE7B_DESIGN.md) and
+[validation](../../../PHASE7B_VALIDATION.md) for boundaries, identity encoding,
+resume protocol and unsupported conditions.
+
+`provenance-history completeness ARCHIVE EXPECTATION.json` emits a machine-readable
+experiment report and exits nonzero if expected cycle/boundary coverage, captures,
+original evidence or an optional externally retained archive head fail validation.
+A parseable archive is not necessarily a complete experiment. Keep full attribution
+in the export envelope; compact per-state verification requests do not charge
+unrelated graph content against the input budget.
