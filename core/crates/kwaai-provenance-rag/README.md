@@ -75,3 +75,7 @@ source entity, so they are traceable by association. Support needs a verifier
 ## Design and limitations
 
 `projects/kwaai-knowledge/plans/NativeProvenance-plan.md`, Phase 3.
+
+Opt-in native factual support verification and the bounded offline evaluator are
+explained in [VERIFICATION.md](VERIFICATION.md). Historical traceability and gate
+observations are preserved separately from these semantic assessments.

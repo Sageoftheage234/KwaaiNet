@@ -69,6 +69,19 @@ pub struct MetaStore {
 // MetaStore is Send + Sync via Mutex<SafeConn>: no additional unsafe needed.
 
 impl MetaStore {
+    /// Open an existing original chunk store without creating or modifying it.
+    /// Intended for offline provenance verification and inspection.
+    pub fn open_read_only(data_dir: &Path, tenant_id: Uuid) -> Result<Self> {
+        let path = data_dir.join(format!("{}.db", tenant_id));
+        let conn =
+            Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .with_context(|| format!("opening read-only meta store at {}", path.display()))?;
+        Ok(Self {
+            conn: Mutex::new(SafeConn(conn)),
+            tenant_id,
+        })
+    }
+
     fn db(&self) -> MutexGuard<'_, SafeConn> {
         self.conn.lock().unwrap_or_else(|e| e.into_inner())
     }

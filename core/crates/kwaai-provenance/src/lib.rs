@@ -6,9 +6,8 @@
 //! verification status separate from the decision applied to a mutation, and
 //! JSONL persistence ([`persist`]) that re-validates everything it reads.
 //!
-//! Nothing here verifies meaning: evidence *association* is not *support*.
-//! The only bundled verifier, [`gate::UnresolvedVerifier`], never reports
-//! `Supported`.
+//! Evidence association is not support. Opt-in semantic verification lives in
+//! [`verification`]; the observer's [`gate::UnresolvedVerifier`] remains unchanged.
 //!
 //! # Example
 //!
@@ -48,6 +47,7 @@ pub mod identity;
 pub mod lineage;
 pub mod persist;
 pub mod schema;
+pub mod verification;
 
 pub use identity::{claim_id, evidence_id};
 pub use schema::{

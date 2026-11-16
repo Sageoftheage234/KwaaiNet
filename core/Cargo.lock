@@ -3138,17 +3138,21 @@ dependencies = [
 name = "kwaai-provenance"
 version = "0.7.3"
 dependencies = [
+ "async-trait",
  "hex",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]
 name = "kwaai-provenance-rag"
 version = "0.7.3"
 dependencies = [
+ "chrono",
  "hex",
  "kwaai-provenance",
  "kwaai-rag",
