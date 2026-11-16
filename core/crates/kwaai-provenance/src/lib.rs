@@ -47,6 +47,7 @@ pub mod identity;
 pub mod lineage;
 pub mod persist;
 pub mod schema;
+pub mod shadow;
 pub mod verification;
 
 pub use identity::{claim_id, evidence_id};

@@ -79,3 +79,6 @@ source entity, so they are traceable by association. Support needs a verifier
 Opt-in native factual support verification and the bounded offline evaluator are
 explained in [VERIFICATION.md](VERIFICATION.md). Historical traceability and gate
 observations are preserved separately from these semantic assessments.
+
+Experimental Phase 5 policy comparison and post-stage evaluation are documented in
+[SHADOW_GATING.md](SHADOW_GATING.md). They are opt-in and never enforce mutations.
