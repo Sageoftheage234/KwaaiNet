@@ -295,13 +295,33 @@ impl DreamObserver for ProvenanceObserver {
         });
         let failure = self.failure.clone();
         if let Some(inner) = self.inner.as_mut() {
-            let summary = inner.summary(end, failure);
-            let path = inner.dir.join(format!("cycle-{:04}.json", inner.cycle));
-            let written = serde_json::to_vec_pretty(&summary)
-                .map_err(|e| e.to_string())
-                .and_then(|bytes| write_atomic(&path, &bytes));
-            match written {
-                Ok(()) => tracing::info!(
+            let result = catch_unwind(AssertUnwindSafe(|| -> Result<(), String> {
+                inner.writer.sync_all().map_err(|e| e.to_string())?;
+
+                let lineage_path = inner.dir.join(LINEAGE_FILE);
+                let persisted = persist::read_file(&lineage_path, TailPolicy::Strict)
+                    .and_then(|read| read.replay())
+                    .map_err(|e| format!("verify {}: {e}", lineage_path.display()))?;
+
+                let expected_entries = inner.log.entries().len();
+                let actual_entries = persisted.entries().len();
+                let expected_digest =
+                    persist::lineage_digest(&inner.log).map_err(|e| e.to_string())?;
+                let actual_digest =
+                    persist::lineage_digest(&persisted).map_err(|e| e.to_string())?;
+
+                if expected_entries != actual_entries || expected_digest != actual_digest {
+                    return Err(format!(
+                        "persisted lineage mismatch: expected {expected_entries} entries ({expected_digest}), found {actual_entries} ({actual_digest})"
+                    ));
+                }
+
+                let summary = inner.summary(end, failure);
+                let path = inner.dir.join(format!("cycle-{:04}.json", inner.cycle));
+                let bytes = serde_json::to_vec_pretty(&summary).map_err(|e| e.to_string())?;
+                write_atomic(&path, &bytes)?;
+
+                tracing::info!(
                     "provenance: cycle {}: {}/{} facts trace to source{}",
                     summary.cycle,
                     summary.traceable,
@@ -311,10 +331,22 @@ impl DreamObserver for ProvenanceObserver {
                     } else {
                         " (incomplete)"
                     }
-                ),
-                Err(e) => tracing::warn!("provenance: could not write {}: {e}", path.display()),
+                );
+                Ok(())
+            }));
+
+            let error = match result {
+                Ok(Ok(())) => None,
+                Ok(Err(e)) => Some(e),
+                Err(_) => Some("observer finalization panicked".to_string()),
+            };
+            if let Some(error) = error {
+                let message = format!("cycle finalization: {error}");
+                tracing::warn!("provenance observer stopped: {message}");
+                if self.failure.is_none() {
+                    self.failure = Some(message);
+                }
             }
-            let _ = inner.writer.sync_all();
         }
     }
 }
