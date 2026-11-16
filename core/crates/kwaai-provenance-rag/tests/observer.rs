@@ -392,3 +392,98 @@ fn report_tool_prints_cycles_and_detects_a_changed_log() {
         .unwrap();
     assert!(!out.status.success());
 }
+
+#[test]
+fn finalization_rejects_persisted_lineage_mismatch() {
+    let tenant = Uuid::new_v4();
+    let kb = tempfile::tempdir().unwrap();
+    let prov = tempfile::tempdir().unwrap();
+
+    build_kb(kb.path(), tenant);
+
+    let mut obs = ProvenanceObserver::open(prov.path(), tenant).unwrap();
+    let meta = MetaStore::open(kb.path(), tenant).unwrap();
+    let graph = GraphStore::open(kb.path(), tenant).unwrap();
+
+    // Record a valid baseline before deliberately changing the file pathname.
+    obs.cycle_started(&graph, &meta);
+    assert_eq!(obs.failure(), None);
+
+    let lineage_path = prov.path().join(LINEAGE_FILE);
+    let moved_path = prov.path().join("lineage-original.jsonl");
+
+    assert!(std::fs::metadata(&lineage_path).unwrap().len() > 0);
+
+    // The observer's open writer continues referencing the renamed file.
+    // Verification will instead reopen the empty replacement by pathname.
+    std::fs::rename(&lineage_path, &moved_path).unwrap();
+    std::fs::write(&lineage_path, b"").unwrap();
+
+    let before = graph_state(kb.path(), tenant);
+
+    obs.cycle_finished(&graph, CycleEnd::NothingToDo);
+
+    assert_eq!(graph_state(kb.path(), tenant), before);
+
+    let error = obs.failure().expect("mismatch must stop observation");
+    assert!(
+        error.contains("persisted lineage mismatch"),
+        "unexpected error: {error}"
+    );
+
+    assert!(
+        !prov.path().join("cycle-0001.json").exists(),
+        "a successful summary must not be published for inconsistent lineage"
+    );
+
+    // The original lineage remains intact at its renamed pathname.
+    let original = persist::read_file(&moved_path, TailPolicy::Strict)
+        .unwrap()
+        .replay()
+        .unwrap();
+
+    assert!(!original.entries().is_empty());
+}
+
+#[test]
+fn finalization_handles_missing_lineage_file() {
+    let tenant = Uuid::new_v4();
+    let kb = tempfile::tempdir().unwrap();
+    let prov = tempfile::tempdir().unwrap();
+
+    build_kb(kb.path(), tenant);
+
+    let mut obs = ProvenanceObserver::open(prov.path(), tenant).unwrap();
+    let meta = MetaStore::open(kb.path(), tenant).unwrap();
+    let graph = GraphStore::open(kb.path(), tenant).unwrap();
+
+    obs.cycle_started(&graph, &meta);
+    assert_eq!(obs.failure(), None);
+
+    let lineage_path = prov.path().join(LINEAGE_FILE);
+    assert!(lineage_path.exists());
+
+    let before = graph_state(kb.path(), tenant);
+
+    // On Linux, unlinking an open file does not invalidate the
+    // observer's existing writer, but reopening by pathname fails.
+    std::fs::remove_file(&lineage_path).unwrap();
+
+    obs.cycle_finished(&graph, CycleEnd::NothingToDo);
+
+    assert_eq!(graph_state(kb.path(), tenant), before);
+
+    let error = obs
+        .failure()
+        .expect("missing lineage must stop observation");
+
+    assert!(
+        error.contains("verify") && error.contains(LINEAGE_FILE),
+        "unexpected error: {error}"
+    );
+
+    assert!(
+        !prov.path().join("cycle-0001.json").exists(),
+        "summary must not be published when lineage verification fails"
+    );
+}
