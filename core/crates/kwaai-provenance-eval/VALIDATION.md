@@ -1,3 +1,127 @@
+# Phase 5 → Phase 6 integration validation
+
+Executed 2026-11-16 in `/home/kwaai/KwaaiNet-Integration`, branch
+`feat/provenance-integration`, base HEAD
+`bc00a14cf9b20a93b297417bf36b80b8e76a05c4`. Changes are uncommitted.
+Neither original development worktree was modified. This section supersedes the
+historical reports below for the integration worktree.
+
+| Exact command (from core/) | Final result |
+| --- | --- |
+| `cargo test -p kwaai-provenance-eval` | **33 passed, 0 failed, 0 ignored**: 2 unit, 22 existing integration, 9 new integration; binary/doc suites have 0 tests |
+| `cargo test -p kwaai-provenance -p kwaai-provenance-rag --all-features` | **83 passed, 0 failed, 1 ignored**, approved loopback-capable run |
+| `cargo fmt --all -- --check` | Passed, exit 0 |
+| `cargo clippy --workspace --all-targets -- -D warnings` | Passed, exit 0 |
+| `cargo check --workspace --all-targets` | Passed, exit 0 |
+| `git diff --check` | Passed |
+
+Combined regression breakdown: provenance unit 45; evidence verification 4 passed,
+1 ignored; provenance-rag unit 14; observer integration 9; shadow integration 7;
+verification integration 3; provenance doc test 1. The ignored test requires a live
+Ollama model. No GPU/model experiment ran. Workspace checks use default features,
+not the hardware feature matrix; the entire workspace test suite was not run.
+
+Environmental exceptions and recovered failures:
+
+- Missing generated dependency patches initially prevented Cargo resolution.
+  `bash patches/fetch-patches.sh` failed sandbox DNS, then passed with approved
+  network access. Only this worktree's ignored dependency directories were generated.
+- The sandbox Phase 4/5 run had 43 passes and 2 failures, 0 ignored in its first
+  unit suite: existing mock HTTP fixtures could not bind loopback (`PermissionDenied`).
+  Cargo stopped before later suites. The identical approved command passed as above;
+  no test code was modified to bypass sockets.
+- Initial workspace Clippy/check attempts failed existing build-script downloads
+  of protoc v28.3. Approved network reruns downloaded the compiler successfully.
+  Cached build-script informational warnings remain; final checks exited 0.
+- Clippy found one new test's unnecessary clone; it was fixed with
+  `std::slice::from_ref`. Final Clippy and tests pass without lint allowances.
+
+Final local logs: `/tmp/phase6-test.log`, `/tmp/phase45-test-approved.log`,
+`/tmp/phase6-fmt.log`, `/tmp/phase6-clippy-final.log`,
+`/tmp/phase6-check-final.log`. Earlier environmental failures are retained in
+`/tmp/phase45-test.log`, `/tmp/phase6-clippy.log`, `/tmp/phase6-check.log`.
+
+## Contract and coverage
+
+Integration adapter v1 consumes actual Phase 5 schema-1 serialized evaluations
+inside the actual CLI framing. Fixtures call the producer's `evaluate` and serde
+serialization, rather than inventing evaluation JSON; negative tests mutate that
+serialization. The separate hash-bound sidecar supplies missing experiment metadata
+as explicitly identified caller assertions. Output normalized schema remains 1;
+run/checkpoint schema is 3, with persisted attribution checked during resume.
+
+The nine new tests exercise the requested twenty scenarios (several use tables):
+
+| Requested scenarios | Test coverage |
+| --- | --- |
+| 1–3 supported, unsupported, unresolved across policies | `actual_serialization_all_nine_policy_decisions` also checks Phase 6 mappings |
+| 4–7 missing/duplicate/incorrect policies, unsupported versions | `rejects_malformed_policies_statuses_versions_and_identity` also covers unknown policy, reason and contradictory status |
+| 8 missing identity | Same table rejects empty original run; sidecar test rejects empty model |
+| 9–11 Invalid, Unverified, promotion | `invalid_and_unverified_remain_distinct`; malformed table rejects Authenticated |
+| 12–13 post-stage, retained replay | Default genuine post-stage fixture; `retained_replay_is_an_unauthenticated_timing_assertion` |
+| 14–16 missing model/corpus and changed sidecar hash | `required_sidecar_metadata_and_hash_binding` |
+| 17 resume changed input | `end_to_end_evaluation_independent_annotations_and_resume_integrity` changes both sidecar and exact imported bytes, even with valid rebound hashes |
+| 18 independent annotations | `producer_labels_are_retained_but_never_become_independent_annotations` covers missing, unresolved and conflicting labels |
+| 19 repeated IDs | `repeated_ids_and_mixed_timing_are_rejected` |
+| 20 successful import/evaluation | End-to-end fresh and resumed run with all three policies |
+
+`evidence_references_are_preserved_and_missing_mappings_rejected` additionally
+checks actual original evidence IDs/content hashes against the retained payload
+and corpus mapping. The existing 22 tests retain resume metric corruption,
+implementation fingerprint, sampling, annotations and checkpoint recovery coverage.
+
+## Exact changed-file inventory
+
+Relative to repository root:
+
+- `core/Cargo.lock`: two path dependency names in the evaluation package entry.
+- `core/crates/kwaai-provenance-eval/Cargo.toml`: actual producer dependencies.
+- `core/crates/kwaai-provenance-eval/src/phase5.rs`: new versioned adapter and attribution.
+- `core/crates/kwaai-provenance-eval/src/lib.rs`: runner dispatch, corpus/model checks,
+  checkpoint v3 and attribution resume checks.
+- `core/crates/kwaai-provenance-eval/src/identity.rs`: integration/producer fingerprint coverage.
+- `core/crates/kwaai-provenance-eval/tests/phase5.rs`: new deterministic integration tests.
+- `core/crates/kwaai-provenance-eval/ADAPTER.md`: authoritative contract documentation.
+- `core/crates/kwaai-provenance-eval/README.md`: reproducibility and schema updates.
+- `core/crates/kwaai-provenance-eval/VALIDATION.md`: this report.
+
+No Phase 5 or Phase 4 source modifications were needed. Production graph behavior,
+Python scaffold and five-cycle pilot are unchanged. No commit, push, merge or PR.
+
+## Research limitations and later-phase readiness
+
+1. There is no authoritative lineage association authentication. Invalid remains
+   Invalid; Unverified remains unknown; no imported record is authenticated.
+2. Model, corpus association, seed, stage and retained proposal timing are caller
+   assertions. Hash binding proves integrity, not truth, authorship or capture time.
+   Available producer metadata is retained; unknown weight digests remain unknown.
+3. Post-stage observations have survivorship bias. Retained replay cannot establish
+   genuine pre-mutation capture. Mixed timing/stage categories fail within a cell;
+   no cross-cell pooled headline metric or causal intervention is produced.
+4. Independent annotations require external collection and audit. Missing, conflicting
+   and unresolved labels remain excluded from binary metrics. Producer labels never
+   become ground truth automatically. No verifier accuracy was estimated.
+5. Fingerprints identify covered source/lock bytes, not a signed binary or attested
+   execution environment. Checkpoints are not a tamper-proof archive. Original
+   retained bundles remain mandatory for resume and audit.
+6. No live interception, enforced gating, historical snapshot exporter, graph
+   intervention, retrieval-quality study or GPU experiment is included.
+7. Producer policy arrays must remain in their documented stable order. An upstream
+   schema change requires a new explicit compatibility contract. Repeated claims
+   within a cell are rejected rather than arbitrarily deduplicated.
+
+Phase 7/8 specifications are not present in the inspected provenance crate docs.
+This integration is ready as an offline input boundary for subsequent controlled
+research with retained records and independently audited annotations. It does not
+establish readiness for live gating, authenticated proposal capture, production
+rollout or causal hallucination-reduction claims. Those uses require trusted
+lineage validation, audited capture boundaries, fixed corpus/model protocols,
+independent labels and an authorized intervention design before proceeding.
+
+---
+
+# Historical Phase 6 reports (different worktree; not current integration results)
+
 # Phase 6 validation report
 
 Executed 2026-11-16 in `/home/kwaai/KwaaiNet-Experiments`, branch

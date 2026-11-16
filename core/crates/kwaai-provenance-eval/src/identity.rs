@@ -31,6 +31,38 @@ fn fingerprint(sources: &[(&str, &[u8])]) -> EvaluatorIdentity {
 pub fn implementation_identity() -> EvaluatorIdentity {
     fingerprint(&[
         (
+            "core/crates/kwaai-provenance/src/lib.rs",
+            include_bytes!("../../kwaai-provenance/src/lib.rs"),
+        ),
+        (
+            "core/crates/kwaai-provenance/src/identity.rs",
+            include_bytes!("../../kwaai-provenance/src/identity.rs"),
+        ),
+        (
+            "core/crates/kwaai-provenance/src/schema.rs",
+            include_bytes!("../../kwaai-provenance/src/schema.rs"),
+        ),
+        (
+            "core/crates/kwaai-provenance/src/gate.rs",
+            include_bytes!("../../kwaai-provenance/src/gate.rs"),
+        ),
+        (
+            "core/crates/kwaai-provenance/src/verification.rs",
+            include_bytes!("../../kwaai-provenance/src/verification.rs"),
+        ),
+        (
+            "core/crates/kwaai-provenance-eval/src/phase5.rs",
+            include_bytes!("phase5.rs"),
+        ),
+        (
+            "core/crates/kwaai-provenance/src/shadow.rs",
+            include_bytes!("../../kwaai-provenance/src/shadow.rs"),
+        ),
+        (
+            "core/crates/kwaai-provenance-rag/src/shadow.rs",
+            include_bytes!("../../kwaai-provenance-rag/src/shadow.rs"),
+        ),
+        (
             "core/crates/kwaai-provenance-eval/src/lib.rs",
             include_bytes!("lib.rs"),
         ),
@@ -69,7 +101,7 @@ mod tests {
         let b = fingerprint(&[("lock", b"def"), ("source", b"abc")]);
         assert_eq!(a, b);
         assert_eq!(implementation_identity(), implementation_identity());
-        assert_eq!(implementation_identity().files.len(), 8);
+        assert_eq!(implementation_identity().files.len(), 16);
     }
 
     #[test]

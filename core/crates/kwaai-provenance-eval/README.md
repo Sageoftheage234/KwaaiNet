@@ -1,7 +1,8 @@
-# Phase 6 controlled provenance evaluation (data schema 1, run schema 2)
+# Phase 6 controlled provenance evaluation (data schema 1, run schema 3)
 
-This standalone Rust evaluation crate has no dependency on DreamRAG, Phase 5,
-Python provenance scaffolding, model runtimes, or production gates. It reads
+This offline Rust evaluation crate imports Phase 5 shadow records through the
+actual producer types and validation logic. Its transitive graph dependency is
+used only for those types; the evaluator does not open a graph or invoke inference. It reads
 retained observations across a model × repetition × consolidation-cycle matrix.
 It never performs consolidation, mutates a graph, downloads models, or runs GPU
 inference. Future actual graph intervention requires a separately authorized
@@ -130,12 +131,12 @@ recovery artifacts, not a tamper-proof archive.
 
 Run metadata, every cell and every completed attempt report contain an `evaluator`
 identity: algorithm version 1, aggregate SHA-256 and a sorted path-to-file-SHA-256
-map. Run/checkpoint envelope schema is now **2**; corpus, annotation, configuration
+map. Run/checkpoint envelope schema is now **3**; corpus, annotation, configuration
 and adapter schemas remain **1**. Old runs without an evaluator identity cannot
 resume: retain them and start a new run ID. No automatic migration invents an
 identity for historical results.
 
-`src/identity.rs` embeds the exact compile-time bytes of these eight files:
+`src/identity.rs` embeds the exact compile-time bytes of these sixteen files:
 
 - `core/crates/kwaai-provenance-eval/src/lib.rs` (including authoritative data,
   metric, configuration and run schemas, policy semantics and evaluation logic)
@@ -222,3 +223,8 @@ improved actual graph quality.
 
 See [ADAPTER.md](ADAPTER.md) for the Phase 5 boundary and
 [VALIDATION.md](VALIDATION.md) for executed checks and limitations.
+
+The Phase 5 integration adds `src/phase5.rs` and seven producer source files
+(`kwaai-provenance/src/{lib,identity,schema,gate,verification,shadow}.rs` and
+`kwaai-provenance-rag/src/shadow.rs`) to the fingerprint. See [ADAPTER.md](ADAPTER.md)
+for bundle construction, attribution, metadata authority and authentication denominators.

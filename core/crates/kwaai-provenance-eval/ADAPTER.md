@@ -1,44 +1,89 @@
-# Phase 5 integration boundary: Phase 6 adapter version 1
+# Phase 5 → Phase 6 integration contract v1
 
-This is a Phase 6 normalized import format, **not** a proposed final Phase 5
-schema. No Phase 5 production code or gate type is imported or duplicated.
-`DecisionAdapter::normalize(raw)` is the extension point. `FixtureAdapter` only
-reads the strict Phase 6 envelope; it must not be pointed directly at unknown
-Phase 5 JSONL or historical Phase 4 lineage records.
+`phase5::import` consumes a strict `Bundle`. The normal `run CONFIG [--resume]`
+CLI detects bundles by `phase5_adapter_version` in each input cell. Existing
+synthetic `FixtureAdapter` inputs remain supported, separately identified.
+No graph is opened by the integration and no verification is rerun.
 
-The envelope requires `adapter_version: 1`, a nonempty `producer_schema`,
-`corpus_version`, `model_identifier`, `seed`, `repetition` (zero-based), `cycle`
-(one-based) and `records`. Full examples are committed under `fixtures/`.
-Each observation carries exact claim ID/content, original evidence references,
-optional verifier judgment, separately optional traceability and authentication
-assessments, optional authentication audit basis and optional paired timings.
-Unknown fields are rejected. Future adapter versions require explicit migration.
-A missing judgment remains null; `unresolved` is an explicit verifier outcome.
+The authoritative serde structs are in `src/phase5.rs`:
 
-A future Phase 5 adapter must:
+- Bundle: `phase5_adapter_version: 1`, `phase6_schema_version: 1`,
+  `source_jsonl` (exact UTF-8 Phase 5 CLI output), `sidecar`, `sidecar_sha256`.
+- Sidecar: `schema_version: 1`, `source_sha256`, `corpus` (validated Phase 6
+  Manifest), `model` (ModelConfig including available digest/parameters), `seed`,
+  `repetition`, `evidence` (original evidence ID → Phase 6 Evidence), and nonempty
+  `assertion_source` identifying the retained experimental protocol.
+- `source_sha256` hashes exact source bytes. `sidecar_sha256` hashes compact serde
+  JSON for the typed Sidecar (struct field order, BTreeMap key order). Use
+  `object_hash(&sidecar)` to construct it. The complete bundle is also byte-hashed
+  by the runner. There are no external mutable sidecar paths.
 
-1. Identify and validate the actual producer schema and preserve the raw export.
-2. Recover original claims/evidence only from authoritative retained snapshots;
-   fail or leave unknown fields unknown when records alone are insufficient.
-3. Validate provenance against the producer's authoritative lineage/signatures;
-   never equate reference presence or a matching hash with authentication.
-4. Bind corpus, model, seed and cycle to upstream execution metadata. Record an
-   auditable authentication method/record identity for any authentication result.
-5. Normalize verifier judgments without converting them into independent labels.
-6. Document and test the mapping with actual producer fixtures before use.
+Create a bundle with Rust's exported Bundle/Sidecar types, retaining the unmodified
+Phase 5 output in `source_jsonl`, then point an InputCell path at its serialized
+JSON. No automatic model/seed discovery is attempted. Missing metadata must be
+provided with a separately structurally validated sidecar; unavailable model
+weight digests remain null. The corpus version must equal the producer header's
+caller-supplied corpus identity. The manifest and model must exactly match the
+Phase 6 experiment configuration, including available digest and parameters.
+Evidence mappings must resolve against manifest document IDs and byte hashes and
+be inside the selected sample. Original evidence IDs, passage hashes, source IDs,
+chunk IDs, entity bindings, metadata, assessments and annotations remain in the
+retained source; document mappings do not replace those references.
 
-`HypotheticalPolicy` is scoped to this offline crate. The provisional analysis
-mapping is baseline/allow = accept all; reject_unsupported = reject only explicit
-unsupported; require_supported = accept only explicit supported. These names
-prepare comparisons with Phase 5 Allow, RejectUnsupported and RequireSupported.
-They make no assertion about Phase 5's final unresolved/error handling. If the
-final producer semantics differ, version this mapping and add compatibility tests
-before comparing results. Decisions are counterfactual acceptance flags; no graph
-writes or enforcement callbacks exist in this crate. Actual intervention must
-use a separately authorized graph experiment, not an option on this replay CLI.
+The parser requires actual Phase 5 `shadow_run`, `shadow_evaluation`,
+`shadow_summary` framing and schema 1, plus verification schema 1. It validates
+request/result identity consistency, recomputes Phase 5 identity/hash validation,
+compares every decision (claim ID, status, context, acceptance and reason) with
+`kwaai_provenance::shadow::compare` through the actual producer `evaluate`, and
+checks the producer summary. Exactly three policies in producer order are
+required; missing, duplicate, unknown, reordered or contradictory policies fail.
 
-Run/checkpoint schema 2 and evaluator implementation identity are independent of
-this adapter-version-1 format. This remediation does not change producer fields
-or provisional policy semantics. Adapter/schema source definitions are included
-in the evaluator fingerprint through `src/lib.rs`; when a real adapter adds a
-source module or schema file, extend the fingerprint coverage list as well.
+| Original status | Allow | RejectUnsupported | RequireSupported |
+| --- | --- | --- | --- |
+| Supported | accept | accept | accept |
+| Unsupported | accept | reject | reject |
+| Unresolved | accept | accept | reject |
+
+Normalized judgment preserves the original status. Phase 6's policy mappings are
+identical, including unresolved handling; baseline also accepts everything.
+Claim content is the exact compact serde JSON of the original Claim struct,
+including identity, kind and components. Independent Phase 6 annotations must use
+that content string. Repeated claim IDs within a cell fail, including identical
+repeats; occurrences across distinct cells remain separate observations.
+
+`Imported` returns both `normalized` and the full original bundle, evaluations and
+header. Normalization alone is not an archival export: retain the complete bundle.
+Run/checkpoint schema **3** adds per-cell `phase5_attribution` with original run,
+cycle, stage, timing kind, adapter/producer/evaluation schema versions, source and
+sidecar hashes, authority disclaimer and provenance counts. Resume recomputes and
+compares this attribution as well as metrics. Older run schemas require a new run.
+
+Every cell must have one original run/cycle/stage/timing category; mixed categories
+fail. No timing is inferred from timestamps, verification success or caller
+proposal declarations. Both timing kinds retain `capture_timing_authenticated:
+false`. Post-stage observations remain post-stage. Retained proposal replay is
+only a caller assertion of prior capture. Headline metrics are per cell; no
+cross-category pooled headline is produced. Do not interpret stage or replay
+comparisons as a controlled intervention.
+
+Phase 5's producer emits `Invalid` or `Unverified`; `Authenticated` is reserved
+but never emitted. Any supplied Authenticated value, including an attempted
+promotion of Invalid/Unverified, fails. Invalid maps to an assessed false with
+an identity/hash failure basis; Unverified maps to null (unknown), never true or
+false. Per-cell provenance counts report both exclusions and total observations;
+authentication-rate denominator includes only Invalid assessments, with numerator
+zero. No authenticated-only semantic metric is implemented. Evidence hashes and
+sidecar bindings prove byte consistency, not association authenticity or execution
+metadata. Traceability remains unknown. No capture duration is synthesized.
+
+Producer ground_truth is retained only for audit, including its source assertion;
+it never populates Phase 6 annotations. Phase 5 supports only sourced binary
+labels in genuine evaluations. Phase 6's separate annotation protocol preserves
+missing, conflicting and unresolved annotations and excludes verifier-origin
+labels. Successful replay establishes neither annotation validity nor correctness.
+
+The implementation fingerprint covers the integration module and the producer
+policy, identity, schema, gate and verification source used by normalization, in
+addition to prior evaluator/workspace/lock/toolchain inputs. Changing raw imports,
+sidecars, config/model/manifest, annotations, schemas or implementation invalidates
+resume. Matching hashes are integrity checks, not signatures or trusted lineage.
