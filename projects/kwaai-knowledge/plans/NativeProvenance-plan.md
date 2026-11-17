@@ -540,11 +540,12 @@ Phases 3–6.
 | 2 | Persistence: append-only JSONL writer/reader for `LogEntry` and `GateOutcome`, replay-validated on read; torn-tail handling; atomic snapshots; digest | **This PR** |
 | 3 | Observe-only adapter: read-only hooks in `kwaai-rag`, `kwaai-provenance-rag` adapter, `kwaainet --features provenance`, report tool | **Implemented**, stacked on #285 |
 | 4 | Opt-in evidence verification: `EvidenceBackend` trait with a mock and an optional Ollama backend (`ollama` feature), original-evidence resolution from the chunk store (read-only), `provenance-verify` CLI (`verification` feature). Calibration against labelled data is **deferred**: no independently labelled set exists yet | **Implemented**, stacked on Phase 3; uncalibrated |
-| 5 | Enforce mode and a durable quarantine store | Proposed |
+| 5 | Shadow gating **without enforcement**: three hypothetical policies (`Allow`, `RejectUnsupported`, `RequireSupported`) evaluated over the same retained Phase 4 assessments, with attributed, serializable decisions (`shadow` modules, `provenance-shadow` CLI). The policy engine has no graph mutation handle; no write is blocked, reordered, rewritten or suppressed | **Implemented**, stacked on Phase 4; shadow only |
+| Deferred | Enforce mode and a durable quarantine store (originally Phase 5): applying the policy to graph writes, a quarantine store beside the lineage log, and a review/release command. Needs a decision on whether the hook gets write access or returns a decision `dream.rs` respects | **Deferred**; not proposed until Observe and shadow data show the false-rejection rate, and Reza and Chris agree on #284 |
 | 6 | Evaluation: traceability after N cycles, unsupported-fact rate, false-rejection rate, recall@k cost of gating, gate-before vs. gate-after consolidation, Rust/Python parity, reproducible JSONL artifacts | Proposed |
 
 Phases 1 and 2 ship together because both stay inside the crate. Each later phase is
-its own PR. Enforcement (Phase 5) is not proposed until Observe data from
+its own PR. Enforcement (deferred; originally Phase 5) is not proposed until Observe data from
 Phase 3 shows the false-rejection rate.
 
 ## 11. Open questions

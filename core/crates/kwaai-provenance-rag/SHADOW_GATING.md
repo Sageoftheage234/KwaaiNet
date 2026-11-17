@@ -178,3 +178,20 @@ pre-mutation gate comparisons, or historical pilot replay without matching retai
 snapshots. Phase 6 needs audited snapshot exports, authentic association validation,
 independent labels and a fixed corpus/model protocol before accuracy, false rejection,
 retrieval cost or causal effects can be claimed.
+
+## Test coverage
+
+The seven integration tests in `tests/shadow.rs` cover every policy/status
+combination, repeatability and stable serialization, identical original
+assessments across policies, cycle/stage/timing attribution, missing evidence,
+conflicting original passages via Phase 4 with a scripted semantic response,
+invalid identities and hash failures, unverified associations, mismatched
+request/result rejection, optional independent-label denominators, empty
+summaries, bounded prefix selection, malformed input, and output overwrite
+refusal. A real temporary KB supplies an actual completed graph snapshot and
+original source passage; post-stage verification leaves persisted graph and
+source bytes unchanged and the reopened graph fact snapshot identical. This is an
+adapter-level graph integration test, not a full live model-driven dream cycle.
+No output claims actual graph changes or hallucination reduction, and stage
+observations cannot establish the counterfactual downstream effect of blocking a
+proposal.
