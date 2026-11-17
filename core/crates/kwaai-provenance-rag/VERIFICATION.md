@@ -29,14 +29,10 @@ Historical `UnresolvedVerifier` gate outcomes remain unresolved observations.
   `verification` enables the evaluation binary in provenance-rag. Default builds
   do not run verification. The existing RAG `pdf` feature is unrelated.
 
-Inspection confirmed branch `feat/provenance-verifier`, parent tip
-`a609e759af8d3a9c9466ac509a8ee778667f9797` on `feat/provenance-observe`.
-On 2026-11-15, `http://localhost:11434/api/tags` reported:
-
-- `llama3.1:8b`: `46e0c10c039e019119339687c3c1757cc81b9da49709a3b3924863ba87ca666e`
-- `nomic-embed-text:latest`: `0a109f422b47e3a30ba2b10eca18548e944e8a23073ee3f3e947efcf3c45e59f`
-
-The embedding model is not used for factual verification.
+This module builds on the Phase 3 observer (`feat/provenance-observe`). Model
+identity is recorded per run: the backend records the Ollama model tag and digest
+it used, and the release validation manifest records the environment for each
+validated release. The embedding model is not used for factual verification.
 
 ## Requests and source identity
 
@@ -125,44 +121,22 @@ The optional live smoke test verifies transport and schema only. No accuracy or
 false rejection rate is reported without independent ground truth. No pilot
 baseline or scientific protocol has been changed.
 
-## Validation executed on 2026-11-15
+## Validation
 
-Commands below ran from `/home/kwaai/KwaaiNet/core` unless otherwise noted.
+Run from `core/`. The repository's patched dependencies must exist first
+(`bash patches/fetch-patches.sh`).
 
-| Exact command | Outcome |
+| Command | What it covers |
 | --- | --- |
-| `cargo test -p kwaai-provenance --all-features` | Initial implementation: 43 unit + 4 integration + 1 doc test passed. |
-| `cargo test -p kwaai-provenance-rag --all-features` | Initial implementation: 14 unit + 9 observer integration tests passed. |
-| `cargo test -p kwaai-provenance -p kwaai-provenance-rag --all-features` | Final transport/adapter/CLI implementation: 45 provenance unit + 4 evidence integration + 14 adapter unit + 9 observer integration + 3 verification integration + 1 doc test passed (76 total). Ran outside sandbox for loopback fixtures. |
-| `cargo test -p kwaai-provenance --no-default-features --test evidence_verification` | 4 deterministic tests passed without model or network. |
-| `cargo test -p kwaai-rag dream_observer` | 2 lifecycle/noninterference tests passed; other RAG tests filtered out. |
-| `cargo test -p kwaai-provenance --features ollama local_ollama_smoke -- --ignored --nocapture` | 1 explicitly selected live smoke passed using installed llama3.1:8b; valid structured supported response with no failure, 4.83 seconds test runtime. No accuracy claim. |
-| `cargo fmt --all -- --check` | Passed. |
-| `cargo clippy -p kwaai-provenance -p kwaai-provenance-rag --all-targets --all-features -- -D warnings` | Passed, including optional Ollama and CLI code. |
-| `cargo clippy --workspace --all-targets -- -D warnings` | Passed outside sandbox; existing daemon build script downloaded protoc. |
-| `cargo check --workspace` | Passed. |
-| `cargo check --workspace --features kwaai-provenance-rag/verification` | Passed. |
-| `git diff --check` | Passed. |
+| `cargo test -p kwaai-provenance -p kwaai-provenance-rag --all-features` | Unit, evidence-verification, observer and verification integration tests, including the Ollama backend against scripted mock HTTP responses. Needs local loopback sockets. |
+| `cargo test -p kwaai-provenance --no-default-features --test evidence_verification` | Deterministic verification tests with no model or network. |
+| `cargo test -p kwaai-rag dream_observer` | Observer lifecycle and graph noninterference. |
+| `cargo test -p kwaai-provenance --features ollama local_ollama_smoke -- --ignored --nocapture` | Optional live smoke test against a local Ollama model. Ignored by default; checks transport and schema only, never accuracy. |
+| `cargo clippy -p kwaai-provenance -p kwaai-provenance-rag --all-targets --all-features -- -D warnings` | Lints, including the optional Ollama and CLI code. |
+| `cargo check --workspace --features kwaai-provenance-rag/verification` | Workspace build with the verifier CLI enabled. |
 
-The live smoke test was added after the combined suite run and then executed
-explicitly; it is ignored during ordinary tests. The final feature-enabled strict
-Clippy run also checked it.
-
-Earlier attempts and environmental failures were not counted as passes:
-
-- The combined feature-enabled test invocation from the repository root using
-  `cargo test --manifest-path core/Cargo.toml -p kwaai-provenance -p kwaai-provenance-rag --all-features`
-  failed when the sandbox refused both HTTP tests' loopback socket binds. The
-  later combined invocation above passed outside the sandbox.
-- The first workspace strict Clippy attempt failed because the existing build
-  script could not resolve github.com to download protoc. The identical command
-  subsequently passed outside the sandbox.
-- One `cargo fmt --all -- --check` invocation from the repository root failed
-  because Cargo.toml is under core; the corrected workspace invocation passed.
-
-No tests under `tests/kwaai-knowledge/provenance/` or the existing pilot baseline
-were modified or used to manufacture labels. The pre-existing untracked
-`tests/kwaai-knowledge/provenance/` directory was left untouched. No corpus was
-ingested, no dream graph mutation code was changed, and no push, merge or PR was
-performed. Broad workspace compilation/Clippy are not a claim that the entire
-workspace test suite or hardware feature matrix was executed.
+Recorded results for each validated release are kept outside the repository, in
+the release validation manifest. Passing these checks establishes software
+behavior only: it is not an accuracy, false-rejection or calibration result, and
+workspace compilation is not a claim that the full workspace test suite or
+hardware feature matrix was run.

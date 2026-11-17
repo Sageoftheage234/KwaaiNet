@@ -539,7 +539,7 @@ Phases 3–6.
 | 1 | Standalone primitives: identity, lineage log, gate, docs | **This PR** |
 | 2 | Persistence: append-only JSONL writer/reader for `LogEntry` and `GateOutcome`, replay-validated on read; torn-tail handling; atomic snapshots; digest | **This PR** |
 | 3 | Observe-only adapter: read-only hooks in `kwaai-rag`, `kwaai-provenance-rag` adapter, `kwaainet --features provenance`, report tool | **Implemented**, stacked on #285 |
-| 4 | Real verifier(s) behind the `Verifier` trait; calibration against labelled data | Proposed |
+| 4 | Opt-in evidence verification: `EvidenceBackend` trait with a mock and an optional Ollama backend (`ollama` feature), original-evidence resolution from the chunk store (read-only), `provenance-verify` CLI (`verification` feature). Calibration against labelled data is **deferred**: no independently labelled set exists yet | **Implemented**, stacked on Phase 3; uncalibrated |
 | 5 | Enforce mode and a durable quarantine store | Proposed |
 | 6 | Evaluation: traceability after N cycles, unsupported-fact rate, false-rejection rate, recall@k cost of gating, gate-before vs. gate-after consolidation, Rust/Python parity, reproducible JSONL artifacts | Proposed |
 
