@@ -222,7 +222,7 @@ or paired analysis for cross-policy comparisons. No shadow decision demonstrates
 improved actual graph quality.
 
 See [ADAPTER.md](ADAPTER.md) for the Phase 5 boundary and
-[VALIDATION.md](VALIDATION.md) for executed checks and limitations.
+[VALIDATION.md](VALIDATION.md) for validation commands, test coverage and limitations.
 
 The Phase 5 integration adds `src/phase5.rs` and seven producer source files
 (`kwaai-provenance/src/{lib,identity,schema,gate,verification,shadow}.rs` and
