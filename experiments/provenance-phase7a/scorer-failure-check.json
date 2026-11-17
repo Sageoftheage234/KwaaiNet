@@ -1,0 +1,11 @@
+{
+  "command": [
+    "python3",
+    "experiments/provenance-phase7a/pilot.py",
+    "score",
+    "experiments/provenance-phase7a/verification-01.jsonl"
+  ],
+  "exit_code": 1,
+  "expected_rejection": true,
+  "stderr": "Traceback (most recent call last):\n  File \"/home/kwaai/KwaaiNet-Integration/experiments/provenance-phase7a/pilot.py\", line 199, in <module>\n    score(args.results)\n  File \"/home/kwaai/KwaaiNet-Integration/experiments/provenance-phase7a/pilot.py\", line 153, in score\n    assert rows[0]['startup_error'] is None, 'No successful live verifier connection'\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: No successful live verifier connection\n"
+}

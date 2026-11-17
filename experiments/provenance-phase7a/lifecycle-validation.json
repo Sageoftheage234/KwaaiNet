@@ -1,0 +1,10 @@
+{
+  "command": [
+    "core/target/debug/provenance-report",
+    "experiments/provenance-phase7a/development-v1/lifecycle",
+    "--csv"
+  ],
+  "exit_code": 0,
+  "stdout": "cycle,end,complete,facts,relation_facts,field_facts,traceable,traceability_rate,extracted,evidence_added,rewritten,removed,drift,lineage_conflicts,gate_checked,gate_would_block\n1,completed,true,262,82,180,262,1,126,7,12,21,0,0,138,138\n2,completed,true,346,110,236,346,1,84,6,0,0,0,0,84,84\n3,completed,true,378,129,249,378,1,32,5,0,0,0,0,32,32\n4,completed,true,382,131,251,382,1,4,0,0,0,0,0,4,4\n5,completed,true,390,135,255,390,1,8,0,0,0,0,0,8,8\n",
+  "stderr": ""
+}

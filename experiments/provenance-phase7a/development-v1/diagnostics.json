@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "snapshot_id": "phase7a-development-v1-a51142ff72050504b9f0727bd758a3cc864f42897f9b2cd8a1074d7eaaf23e02",
+  "files": {
+    "natural-diagnostic-sample.json": "7b640277eeb7ec0550d35ff12de22bbbd92aacbe1f5cec28747f2c5029e02c24",
+    "natural-claims.json": "80fdfc505dfc97ca0e67055ce3bd6df3a343f8ba94408c1b446709154301e6bb",
+    "constructed-challenges.json": "32c0bf549be8d27961eed95bdfef69af2a614d1c34d6902075bbe39e1256714b",
+    "requests.jsonl": "07b8e25c796385631676c14fea653795b7901981c2fe4388783b1829e5647393"
+  },
+  "natural_unlabeled": 3,
+  "constructed": 9,
+  "expectations_per_class": 3,
+  "annotation_status": "No independent annotations; authored expectations only"
+}

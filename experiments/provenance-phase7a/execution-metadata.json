@@ -1,0 +1,23 @@
+{
+  "source_files_unchanged": {
+    "/home/kwaai/.kwaainet/rag/prov-pilot2/f89d5add-4335-4b23-be54-47820a20f155.db": true,
+    "/home/kwaai/.kwaainet/rag/prov-pilot2/graph-f89d5add-4335-4b23-be54-47820a20f155.db": true,
+    "/home/kwaai/.kwaainet/rag/prov-pilot2/metadata.db": true,
+    "/home/kwaai/provenance/prov-pilot2/cycle-0001.json": true,
+    "/home/kwaai/provenance/prov-pilot2/cycle-0002.json": true,
+    "/home/kwaai/provenance/prov-pilot2/cycle-0003.json": true,
+    "/home/kwaai/provenance/prov-pilot2/cycle-0004.json": true,
+    "/home/kwaai/provenance/prov-pilot2/cycle-0005.json": true,
+    "/home/kwaai/provenance/prov-pilot2/kb.json": true,
+    "/home/kwaai/provenance/prov-pilot2/lineage.jsonl": true,
+    "/home/kwaai/dreamrag-corpus/corpuss_final_review/Manhattan Project/documents/Einstein-Szilard Letter.txt": true,
+    "/home/kwaai/dreamrag-corpus/corpuss_final_review/Manhattan Project/documents/Franck Report.html": true,
+    "/home/kwaai/dreamrag-corpus/corpuss_final_review/Manhattan Project/documents/Potsdam Declaration.html": true
+  },
+  "git_head": "4c460d698a32d1378d5a9ca94f5b0451e98e1c4a",
+  "binaries": {
+    "core/target/debug/provenance-verify": "951bdfb4a9545894c22944ae0622cebef1b5bd1cf00aba514fbb1f2c1950d924"
+  },
+  "build_command": "cargo build --locked --offline -p kwaai-provenance-rag --features verification --bin provenance-verify",
+  "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)"
+}

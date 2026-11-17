@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "snapshot_id": "phase7a-development-v1-a51142ff72050504b9f0727bd758a3cc864f42897f9b2cd8a1074d7eaaf23e02",
+  "purpose": "development feasibility only; not publication or held-out data",
+  "tenant": "f89d5add-4335-4b23-be54-47820a20f155",
+  "captured_utc": "2026-11-16T14:10:29.545315+00:00",
+  "files": {
+    "store/f89d5add-4335-4b23-be54-47820a20f155.db": {
+      "source": "/home/kwaai/.kwaainet/rag/prov-pilot2/f89d5add-4335-4b23-be54-47820a20f155.db",
+      "sha256": "9668034bfc2d3d64ab06140f88cdc7ce9f8327d5c3a718ee363fd6554109693b",
+      "bytes": 368640
+    },
+    "store/graph-f89d5add-4335-4b23-be54-47820a20f155.db": {
+      "source": "/home/kwaai/.kwaainet/rag/prov-pilot2/graph-f89d5add-4335-4b23-be54-47820a20f155.db",
+      "sha256": "575e78edd78d3950257ce4bd60e11217b32a4ccd9d574323ee55bd4d5ec695e8",
+      "bytes": 2019328
+    },
+    "store/metadata.db": {
+      "source": "/home/kwaai/.kwaainet/rag/prov-pilot2/metadata.db",
+      "sha256": "ea56752beb8ddc50fb24e8956451af730d5528fde3a8a13c1da339e107bbeff5",
+      "bytes": 368640
+    },
+    "lifecycle/cycle-0001.json": {
+      "source": "/home/kwaai/provenance/prov-pilot2/cycle-0001.json",
+      "sha256": "8a4a7c7bee0d71d39f34b100ddfcbfb70c70a3d79a6afd7628f02433e5109718",
+      "bytes": 1212
+    },
+    "lifecycle/cycle-0002.json": {
+      "source": "/home/kwaai/provenance/prov-pilot2/cycle-0002.json",
+      "sha256": "f40e22386f1ebf0044629ccf0da9fee21973c197c051f6d7349c2bca525d0b74",
+      "bytes": 852
+    },
+    "lifecycle/cycle-0003.json": {
+      "source": "/home/kwaai/provenance/prov-pilot2/cycle-0003.json",
+      "sha256": "8685429d5717fceb181b5bd90a9328923ececf101290c7d8303e9e26daeb99e7",
+      "bytes": 852
+    },
+    "lifecycle/cycle-0004.json": {
+      "source": "/home/kwaai/provenance/prov-pilot2/cycle-0004.json",
+      "sha256": "7f9d3040e7cc6127ec831e3c5396f6af7cdb1008d7a79c3bbb4e4d03ab85aaa4",
+      "bytes": 849
+    },
+    "lifecycle/cycle-0005.json": {
+      "source": "/home/kwaai/provenance/prov-pilot2/cycle-0005.json",
+      "sha256": "6a8ebe5c262444e4c94d55dce9f329bc54019a7386ce35f6d72024f294ae0c04",
+      "bytes": 849
+    },
+    "lifecycle/kb.json": {
+      "source": "/home/kwaai/provenance/prov-pilot2/kb.json",
+      "sha256": "8ed49416c6656d6f469a6a231c98e75cfc06c3db168175d76894fffaac715f1c",
+      "bytes": 80
+    },
+    "lifecycle/lineage.jsonl": {
+      "source": "/home/kwaai/provenance/prov-pilot2/lineage.jsonl",
+      "sha256": "f8dfe87f2c4ee3c93ccbe07c29fbdfaf65dd665fee24eaa9764394d5e2d04c0d",
+      "bytes": 360393
+    },
+    "originals/Einstein-Szilard Letter.txt": {
+      "source": "/home/kwaai/dreamrag-corpus/corpuss_final_review/Manhattan Project/documents/Einstein-Szilard Letter.txt",
+      "sha256": "aabd0687d5015ad7fb52af8aeb138fa69e0dae5c30bc702d4af1c179bc0bba59",
+      "bytes": 3185
+    },
+    "originals/Franck Report.html": {
+      "source": "/home/kwaai/dreamrag-corpus/corpuss_final_review/Manhattan Project/documents/Franck Report.html",
+      "sha256": "585916bd4ad8ebcb95238f3a1baf5118765058ddf756935dde92962f85b73dd7",
+      "bytes": 37241
+    },
+    "originals/Potsdam Declaration.html": {
+      "source": "/home/kwaai/dreamrag-corpus/corpuss_final_review/Manhattan Project/documents/Potsdam Declaration.html",
+      "sha256": "ee52b5f49e601e66157ac28b973dc3d4a5bde083417ae525157bdc6ab37e21ab",
+      "bytes": 11144
+    }
+  },
+  "consistency": "No WAL observed; source hashes stable across copy; not an atomic multi-file historical snapshot"
+}

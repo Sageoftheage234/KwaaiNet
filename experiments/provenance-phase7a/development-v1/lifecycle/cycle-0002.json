@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "cycle": 2,
+  "tenant_id": "f89d5add-4335-4b23-be54-47820a20f155",
+  "end": "completed",
+  "complete": true,
+  "error": null,
+  "facts": 346,
+  "relation_facts": 110,
+  "field_facts": 236,
+  "traceable": 346,
+  "traceability_rate": 1.0,
+  "by_origin": {
+    "baseline": {
+      "facts": 139,
+      "traceable": 139
+    },
+    "dream.completion": {
+      "facts": 197,
+      "traceable": 197
+    },
+    "dream.merge": {
+      "facts": 10,
+      "traceable": 10
+    }
+  },
+  "changes": {
+    "dream.completion": {
+      "extracted": 84,
+      "evidence_added": 6,
+      "rewritten": 0,
+      "removed": 0
+    }
+  },
+  "lineage_conflicts": 0,
+  "gate_checked": 84,
+  "gate_would_block": 84,
+  "source_chunks": 75,
+  "lineage_entries": 830,
+  "lineage_digest": "44a8fd16b18c878805ac50a70ce3f5e3d98296992957f8ba8041e46b3cc29621"
+}
